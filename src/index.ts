@@ -12,7 +12,12 @@
  *   # SSE -> stdio
  *   npx -y supergateway --sse "https://mcp-server.superinterface.app"
  */
-
+import { instrumentApp } from './instrumentation/index.js' // This will initialize the instrumentation
+instrumentApp().catch(err => {
+  logger.error('Fatal error:', err)
+  process.exit(1)
+})
+import { logger } from './logger/index.js'
 import express from 'express'
 import bodyParser from 'body-parser'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
@@ -29,9 +34,6 @@ import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { readFileSync } from 'fs'
 
-const log = (...args: any[]) => console.log('[supergateway]', ...args)
-const logStderr = (...args: any[]) => console.error('[supergateway]', ...args)
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
@@ -41,7 +43,7 @@ function getVersion(): string {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
     return packageJson.version || '1.0.0'
   } catch (err) {
-    console.error('[supergateway] Unable to retrieve version:', err)
+    logger.error('Unable to retrieve version:', err)
     return 'unknown'
   }
 }
@@ -53,19 +55,18 @@ const stdioToSse = async (
   ssePath: string,
   messagePath: string
 ) => {
-  log('Starting...')
-  log('Supergateway is supported by Superinterface - https://superinterface.ai')
-  log(`  - port: ${port}`)
-  log(`  - stdio: ${stdioCmd}`)
+  logger.info('Starting...')
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
   if (baseUrl) {
-    log(`  - baseUrl: ${baseUrl}`)
+    logger.info(`  - baseUrl: ${baseUrl}`)
   }
-  log(`  - ssePath: ${ssePath}`)
-  log(`  - messagePath: ${messagePath}`)
+  logger.info(`  - ssePath: ${ssePath}`)
+  logger.info(`  - messagePath: ${messagePath}`)
 
   const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
   child.on('exit', (code, signal) => {
-    logStderr(`Child exited: code=${code}, signal=${signal}`)
+    logger.error(`Child exited: code=${code}, signal=${signal}`)
     process.exit(code ?? 1)
   })
 
@@ -82,8 +83,12 @@ const stdioToSse = async (
     return bodyParser.json()(req, res, next)
   })
 
+  app.get("/health", (req, res) => {
+    res.send("OK")
+  })
+
   app.get(ssePath, async (req, res) => {
-    log(`New SSE connection from ${req.ip}`)
+    logger.info(`New SSE connection from ${req.ip}`)
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     await server.connect(sseTransport)
@@ -96,22 +101,22 @@ const stdioToSse = async (
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       const line = JSON.stringify(msg)
-      log(`SSE → Child (session ${sessionId}): ${line}`)
+      logger.info(`SSE → Child (session ${sessionId}): ${line}`)
       child.stdin.write(line + '\n')
     }
 
     sseTransport.onclose = () => {
-      log(`SSE connection closed (session ${sessionId})`)
+      logger.info(`SSE connection closed (session ${sessionId})`)
       delete sessions[sessionId]
     }
 
     sseTransport.onerror = err => {
-      logStderr(`SSE error (session ${sessionId}):`, err)
+      logger.error(`SSE error (session ${sessionId}):`, err)
       delete sessions[sessionId]
     }
 
     req.on('close', () => {
-      log(`Client disconnected (session ${sessionId})`)
+      logger.info(`Client disconnected (session ${sessionId})`)
       delete sessions[sessionId]
     })
   })
@@ -127,7 +132,7 @@ const stdioToSse = async (
     const session = sessions[sessionId]
 
     if (session?.transport?.handlePostMessage) {
-      log(`POST to SSE transport (session ${sessionId})`)
+      logger.info(`POST to SSE transport (session ${sessionId})`)
       await session.transport.handlePostMessage(req, res)
     } else {
       res.status(503).send(`No active SSE connection for session ${sessionId}`)
@@ -135,9 +140,9 @@ const stdioToSse = async (
   })
 
   app.listen(port, () => {
-    log(`Listening on port ${port}`)
-    log(`SSE endpoint: http://localhost:${port}${ssePath}`)
-    log(`POST messages: http://localhost:${port}${messagePath}`)
+    logger.info(`Listening on port ${port}`)
+    logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
+    logger.info(`POST messages: http://localhost:${port}${messagePath}`)
   })
 
   let buffer = ''
@@ -149,33 +154,33 @@ const stdioToSse = async (
       if (!line.trim()) return
       try {
         const jsonMsg = JSON.parse(line)
-        log('Child → SSE:', jsonMsg)
+        logger.info('Child → SSE:', jsonMsg)
 
         // Broadcast to all sessions
         for (const [sid, session] of Object.entries(sessions)) {
           try {
             session.transport.send(jsonMsg)
           } catch (err) {
-            logStderr(`Failed to send to session ${sid}:`, err)
+            logger.error(`Failed to send to session ${sid}:`, err)
             delete sessions[sid]
           }
         }
       } catch {
-        logStderr(`Child non-JSON: ${line}`)
+        logger.error(`Child non-JSON: ${line}`)
       }
     })
   })
 
   child.stderr.on('data', (chunk: Buffer) => {
-    logStderr(`Child stderr: ${chunk.toString('utf8')}`)
+    logger.info(`Child stderr: ${chunk.toString('utf8')}`)
   })
 }
 
 const sseToStdio = async (sseUrl: string) => {
-  logStderr('Starting...')
-  logStderr('Supergateway is supported by Superinterface - https://superinterface.ai')
-  logStderr(`  - sse: ${sseUrl}`)
-  logStderr('Connecting to SSE...')
+  logger.info('Starting...')
+  logger.info('Supergateway is supported by Superinterface - https://superinterface.ai')
+  logger.info(`  - sse: ${sseUrl}`)
+  logger.info('Connecting to SSE...')
 
   const sseTransport = new SSEClientTransport(new URL(sseUrl))
   const sseClient = new Client(
@@ -184,15 +189,15 @@ const sseToStdio = async (sseUrl: string) => {
   )
 
   sseTransport.onerror = err => {
-    logStderr('SSE error:', err)
+    logger.error('SSE error:', err)
   }
   sseTransport.onclose = () => {
-    logStderr('SSE connection closed')
+    logger.error('SSE connection closed')
     process.exit(1)
   }
 
   await sseClient.connect(sseTransport)
-  logStderr('SSE connected')
+  logger.info('SSE connected')
 
   const stdioServer = new Server(
     sseClient.getServerVersion() ?? { name: 'supergateway', version: getVersion() },
@@ -211,13 +216,13 @@ const sseToStdio = async (sseUrl: string) => {
   stdioServer.transport!.onmessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
-      logStderr('Stdio → SSE:', message)
+      logger.info('Stdio → SSE:', message)
       const req = message as JSONRPCRequest
       let result
       try {
         result = await sseClient.request(req, z.any())
       } catch (err) {
-        logStderr('Request error:', err)
+        logger.error('Request error:', err)
         const errorCode =
           err && typeof err === 'object' && 'code' in err
             ? (err as any).code
@@ -246,15 +251,15 @@ const sseToStdio = async (sseUrl: string) => {
           ? { error: { ...result.error } }
           : { result: { ...result } }
       )
-      logStderr('Response:', response)
+      logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {
-      logStderr('SSE → Stdio:', message)
+      logger.info('SSE → Stdio:', message)
       process.stdout.write(JSON.stringify(message) + '\n')
     }
   }
 
-  logStderr('Stdio server listening')
+  logger.info('Stdio server listening')
 }
 
 const main = async () => {
@@ -294,16 +299,20 @@ const main = async () => {
   const hasSse = Boolean(argv.sse)
 
   if (hasStdio && hasSse) {
-    logStderr('Error: Specify only one of --stdio or --sse, not both')
+    logger.error('Error: Specify only one of --stdio or --sse, not both')
     process.exit(1)
   }
   else if (!hasStdio && !hasSse) {
-    logStderr('Error: You must specify one of --stdio or --sse')
+    logger.error('Error: You must specify one of --stdio or --sse')
     process.exit(1)
   }
 
   if (hasStdio) {
-    await stdioToSse(argv.stdio!, argv.port, argv.baseUrl, argv.ssePath, argv.messagePath)
+    const port = parseInt(process.env.PORT ?? argv.port?.toString() ?? '8000', 10)
+    const baseUrl = process.env.BASE_URL ?? argv.baseUrl ?? ''
+    const ssePath = process.env.SSE_PATH ?? argv.ssePath ?? '/sse'
+    const messagePath = process.env.MESSAGE_PATH ?? argv.messagePath ?? '/message'
+    await stdioToSse(argv.stdio!, port, baseUrl, ssePath, messagePath)
   }
   else {
     await sseToStdio(argv.sse!)
@@ -311,6 +320,6 @@ const main = async () => {
 }
 
 main().catch(err => {
-  logStderr('Fatal error:', err)
+  logger.error('Fatal error:', err)
   process.exit(1)
 })

@@ -68,6 +68,9 @@ importers:
       pino-pretty:
         specifier: ^13.0.0
         version: 13.0.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.18.0
       yargs:
         specifier: ^17.7.2
         version: 17.7.2

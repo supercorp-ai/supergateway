@@ -1,6 +1,6 @@
 {
-  "name": "supergateway",
-  "version": "2.1.0",
+  "name": "@beamlit/supergateway",
+  "version": "1.0.0",
   "description": "Run MCP stdio servers over SSE or visa versa",
   "repository": {
     "type": "git",
@@ -15,7 +15,7 @@
     "bridge"
   ],
   "bin": {
-    "supergateway": "dist/index.js"
+    "supergateway": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -62,5 +62,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module"
 }

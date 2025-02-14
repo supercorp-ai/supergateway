@@ -46,6 +46,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
     logger.info(`  - stdio: ${stdioCmd}`);
     let wsTransport = null;
     let child = null;
+    let isReady = false;
     // Cleanup function
     const cleanup = () => {
         if (wsTransport) {
@@ -60,6 +61,21 @@ const stdioToWebSocket = async (stdioCmd, port) => {
     // Handle process termination
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
+    const app = express();
+    app.get("/health", (req, res) => {
+        if (child?.killed) {
+            res.status(500).send("Child process has been killed");
+        }
+        if (!isReady) {
+            res.status(500).send("Server is not ready");
+        }
+        else {
+            res.send("OK");
+        }
+    });
+    app.listen(port + 1, () => {
+        logger.info(`Health check endpoint listening on port ${port + 1}`);
+    });
     try {
         child = spawn(stdioCmd, { shell: true });
         child.on('exit', (code, signal) => {
@@ -68,21 +84,6 @@ const stdioToWebSocket = async (stdioCmd, port) => {
             process.exit(code ?? 1);
         });
         const server = new Server({ name: 'supergateway', version: getVersion() }, { capabilities: {} });
-        // Create and start WebSocket server
-        wsTransport = new WebSocketServerTransport(port);
-        await wsTransport.start();
-        await server.connect(wsTransport);
-        wsTransport.onmessage = (msg) => {
-            const line = JSON.stringify(msg);
-            logger.info(`WebSocket → Child: ${line}`);
-            child.stdin.write(line + '\n');
-        };
-        wsTransport.onclose = () => {
-            logger.info('WebSocket connection closed');
-        };
-        wsTransport.onerror = err => {
-            logger.error('WebSocket error:', err);
-        };
         // Handle child process output
         let buffer = '';
         child.stdout.on('data', (chunk) => {
@@ -107,15 +108,21 @@ const stdioToWebSocket = async (stdioCmd, port) => {
         child.stderr.on('data', (chunk) => {
             logger.info(`Child stderr: ${chunk.toString('utf8')}`);
         });
-        // Simple health check endpoint
-        const app = express();
-        app.get("/health", (req, res) => {
-            res.send("OK");
-        });
-        app.listen(port + 1, () => {
-            logger.info(`Health check endpoint listening on port ${port + 1}`);
-            logger.info(`WebSocket endpoint: ws://localhost:${port}`);
-        });
+        wsTransport = new WebSocketServerTransport(port);
+        await server.connect(wsTransport);
+        wsTransport.onmessage = (msg) => {
+            const line = JSON.stringify(msg);
+            logger.info(`WebSocket → Child: ${line}`);
+            child.stdin.write(line + '\n');
+        };
+        wsTransport.onclose = () => {
+            logger.info('WebSocket connection closed');
+        };
+        wsTransport.onerror = err => {
+            logger.error('WebSocket error:', err);
+        };
+        isReady = true;
+        logger.info(`WebSocket endpoint: ws://localhost:${port}`);
     }
     catch (err) {
         logger.error(`Failed to start: ${err.message}`);

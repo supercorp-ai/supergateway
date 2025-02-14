@@ -53,6 +53,7 @@ const stdioToWebSocket = async (
 
   let wsTransport: WebSocketServerTransport | null = null
   let child: ChildProcessWithoutNullStreams | null = null
+  let isReady = false
 
   // Cleanup function
   const cleanup = () => {
@@ -70,6 +71,21 @@ const stdioToWebSocket = async (
   process.on('SIGINT', cleanup)
   process.on('SIGTERM', cleanup)
 
+  const app = express()
+  app.get("/health", (req: any, res: any) => {
+    if (child?.killed) {
+      res.status(500).send("Child process has been killed")
+    }
+    if (!isReady) {
+      res.status(500).send("Server is not ready")
+    } else {
+      res.send("OK")
+    }
+  })
+  app.listen(port + 1, () => {
+    logger.info(`Health check endpoint listening on port ${port + 1}`)
+  })
+
   try {
     child = spawn(stdioCmd, { shell: true })
     child.on('exit', (code, signal) => {
@@ -82,25 +98,6 @@ const stdioToWebSocket = async (
       { name: 'supergateway', version: getVersion() },
       { capabilities: {} }
     )
-
-    // Create and start WebSocket server
-    wsTransport = new WebSocketServerTransport(port)
-    await wsTransport.start()
-    await server.connect(wsTransport)
-
-    wsTransport.onmessage = (msg: JSONRPCMessage) => {
-      const line = JSON.stringify(msg)
-      logger.info(`WebSocket → Child: ${line}`)
-      child!.stdin.write(line + '\n')
-    }
-
-    wsTransport.onclose = () => {
-      logger.info('WebSocket connection closed')
-    }
-
-    wsTransport.onerror = err => {
-      logger.error('WebSocket error:', err)
-    }
 
     // Handle child process output
     let buffer = ''
@@ -126,16 +123,25 @@ const stdioToWebSocket = async (
       logger.info(`Child stderr: ${chunk.toString('utf8')}`)
     })
 
-    // Simple health check endpoint
-    const app = express()
-    app.get("/health", (req, res) => {
-      res.send("OK")
-    })
+    wsTransport = new WebSocketServerTransport(port)
+    await server.connect(wsTransport)
 
-    app.listen(port + 1, () => {
-      logger.info(`Health check endpoint listening on port ${port + 1}`)
-      logger.info(`WebSocket endpoint: ws://localhost:${port}`)
-    })
+    wsTransport.onmessage = (msg: JSONRPCMessage) => {
+      const line = JSON.stringify(msg)
+      logger.info(`WebSocket → Child: ${line}`)
+      child!.stdin.write(line + '\n')
+    }
+
+    wsTransport.onclose = () => {
+      logger.info('WebSocket connection closed')
+    }
+
+    wsTransport.onerror = err => {
+      logger.error('WebSocket error:', err)
+    }
+
+    isReady = true
+    logger.info(`WebSocket endpoint: ws://localhost:${port}`)
   } catch (err: any) {
     logger.error(`Failed to start: ${err.message}`)
     cleanup()
@@ -156,7 +162,7 @@ const main = async () => {
     })
     .help()
     .parseSync()
-  
+
   const port = parseInt(process.env.PORT ?? argv.port?.toString() ?? '8000', 10)
   await stdioToWebSocket(argv.stdio!, port)
 }

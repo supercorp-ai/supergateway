@@ -23,14 +23,11 @@ import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { JSONRPCMessage, JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { fileURLToPath } from 'url'
-import { z } from 'zod'
 import { join, dirname } from 'path'
 import { readFileSync } from 'fs'
 import { WebSocketServerTransport } from './server/websocket-transport.js'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -45,133 +42,6 @@ function getVersion(): string {
     return 'unknown'
   }
 }
-
-const webSocketToSse = async (
-  sseUrl: string,
-  port: number,
-) => {
-  logger.info('Starting...')
-  logger.info(`  - port: ${port}`)
-  logger.info(`  - sse: ${sseUrl}`)
-  logger.info('Not implemented yet')
-  process.exit(1)
-}
-//   let wsTransport: WebSocketServerTransport | null = null
-
-//   // Cleanup function
-//   const cleanup = () => {
-//     if (wsTransport) {
-//       wsTransport.close().catch((error: Error) => {
-//         logger.error('Error stopping WebSocket server:', error)
-//       })
-//     }
-//   }
-
-//   // Handle process termination
-//   process.on('SIGINT', cleanup)
-//   process.on('SIGTERM', cleanup)
-
-//   try {
-//     // Create and start WebSocket server
-//     wsTransport = new WebSocketServerTransport(port)
-//     await wsTransport.start()
-
-//     const server = new Server(
-//       { name: 'supergateway', version: getVersion() },
-//       { capabilities: {} }
-//     )
-//     await server.connect(wsTransport)
-
-//     const sseTransport = new SSEClientTransport(new URL(sseUrl))
-//     const client = new Client(
-//       { name: 'supergateway', version: getVersion() },
-//       { capabilities: {} }
-//     )
-
-//     sseTransport.onerror = (error: Error) => {
-//       logger.error(`SSE error: ${error.message}`)
-//     }
-
-//     sseTransport.onclose = () => {
-//       logger.error('SSE connection closed')
-//       process.exit(1)
-//     }
-
-//     const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
-//       jsonrpc: req.jsonrpc || '2.0',
-//       id: req.id,
-//       ...payload,
-//     })
-
-//     wsTransport.onmessage = async (msg: JSONRPCMessage) => {
-//       const isRequest = 'method' in msg && 'id' in msg
-//       if (isRequest) {
-//         logger.info('WebSocket → SSE:', msg)
-//         const req = msg as JSONRPCRequest
-//         let result
-//         try {
-//           result = await client.request(req, z.any())
-//         } catch (err) {
-//           logger.error(`Request error: ${err}`)
-//           const errorCode =
-//             err && typeof err === 'object' && 'code' in err
-//               ? (err as any).code
-//               : -32000
-//           let errorMsg =
-//             err && typeof err === 'object' && 'message' in err
-//               ? (err as any).message
-//               : 'Internal error'
-//           // Remove the prefix if it is already present.
-//           const prefix = `MCP error ${errorCode}:`
-//           if (errorMsg.startsWith(prefix)) {
-//             errorMsg = errorMsg.slice(prefix.length).trim()
-//           }
-//           const errorResp = wrapResponse(req, {
-//             error: {
-//               code: errorCode,
-//               message: errorMsg,
-//             },
-//           })
-
-//           return errorResp
-//         }
-//         const response = wrapResponse(
-//           req,
-//           result.hasOwnProperty('error')
-//             ? { error: { ...result.error } }
-//             : { result: { ...result } }
-//         )
-//         logger.info(`${msg.method} → ${response.id}`)
-//         return response
-//       } else {
-//         logger.info(`${msg.jsonrpc}`)
-//         return msg
-//       }
-//     }
-
-//     client.onclose = () => {
-//       logger.error('SSE connection closed')
-//       process.exit(1)
-//     }
-
-//     await client.connect(sseTransport)
-//     logger.info('Connected to SSE server')
-
-//     wsTransport.onclose = () => {
-//       logger.info('WebSocket connection closed')
-//       process.exit(1)
-//     }
-
-//   } catch (error: unknown) {
-//     if (error instanceof Error) {
-//       logger.error(`Failed to start: ${error.message}`)
-//     } else {
-//       logger.error('Failed to start with unknown error')
-//     }
-//     cleanup()
-//     process.exit(1)
-//   }
-// }
 
 const stdioToWebSocket = async (
   stdioCmd: string,
@@ -213,10 +83,10 @@ const stdioToWebSocket = async (
       { capabilities: {} }
     )
 
-
     // Create and start WebSocket server
     wsTransport = new WebSocketServerTransport(port)
-    
+    await wsTransport.start()
+    await server.connect(wsTransport)
 
     wsTransport.onmessage = (msg: JSONRPCMessage) => {
       const line = JSON.stringify(msg)
@@ -256,8 +126,6 @@ const stdioToWebSocket = async (
       logger.info(`Child stderr: ${chunk.toString('utf8')}`)
     })
 
-    await server.connect(wsTransport)
-
     // Simple health check endpoint
     const app = express()
     app.get("/health", (req, res) => {
@@ -281,10 +149,6 @@ const main = async () => {
       type: 'string',
       description: 'Command to run an MCP server over Stdio'
     })
-    .option('sse', {
-      type: 'string',
-      description: 'URL of an MCP server to connect to over SSE'
-    })
     .option('port', {
       type: 'number',
       default: 8000,
@@ -292,16 +156,9 @@ const main = async () => {
     })
     .help()
     .parseSync()
-
+  
   const port = parseInt(process.env.PORT ?? argv.port?.toString() ?? '8000', 10)
-  if (argv.stdio) {
-    await stdioToWebSocket(argv.stdio!, port)
-  } else if (argv.sse) {
-    await webSocketToSse(argv.sse!, port)
-  } else {
-    logger.error('No stdio or sse option provided')
-    process.exit(1)
-  }
+  await stdioToWebSocket(argv.stdio!, port)
 }
 
 main().catch(err => {

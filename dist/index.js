@@ -24,9 +24,12 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 import { join, dirname } from 'path';
 import { readFileSync } from 'fs';
 import { WebSocketServerTransport } from './server/websocket-transport.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 function getVersion() {
@@ -40,6 +43,105 @@ function getVersion() {
         return 'unknown';
     }
 }
+const webSocketToSse = async (sseUrl, port) => {
+    logger.info('Starting...');
+    logger.info(`  - port: ${port}`);
+    logger.info(`  - sse: ${sseUrl}`);
+    let wsTransport = null;
+    // Cleanup function
+    const cleanup = () => {
+        if (wsTransport) {
+            wsTransport.close().catch((error) => {
+                logger.error('Error stopping WebSocket server:', error);
+            });
+        }
+    };
+    // Handle process termination
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    try {
+        // Create and start WebSocket server
+        wsTransport = new WebSocketServerTransport(port);
+        await wsTransport.start();
+        const server = new Server({ name: 'supergateway', version: getVersion() }, { capabilities: {} });
+        await server.connect(wsTransport);
+        const sseTransport = new SSEClientTransport(new URL(sseUrl));
+        const client = new Client({ name: 'supergateway', version: getVersion() }, { capabilities: {} });
+        sseTransport.onerror = (error) => {
+            logger.error(`SSE error: ${error.message}`);
+        };
+        sseTransport.onclose = () => {
+            logger.error('SSE connection closed');
+            process.exit(1);
+        };
+        const wrapResponse = (req, payload) => ({
+            jsonrpc: req.jsonrpc || '2.0',
+            id: req.id,
+            ...payload,
+        });
+        wsTransport.onmessage = async (msg) => {
+            const isRequest = 'method' in msg && 'id' in msg;
+            if (isRequest) {
+                logger.info('WebSocket → SSE:', msg);
+                const req = msg;
+                let result;
+                try {
+                    result = await client.request(req, z.any());
+                }
+                catch (err) {
+                    logger.error(`Request error: ${err}`);
+                    const errorCode = err && typeof err === 'object' && 'code' in err
+                        ? err.code
+                        : -32000;
+                    let errorMsg = err && typeof err === 'object' && 'message' in err
+                        ? err.message
+                        : 'Internal error';
+                    // Remove the prefix if it is already present.
+                    const prefix = `MCP error ${errorCode}:`;
+                    if (errorMsg.startsWith(prefix)) {
+                        errorMsg = errorMsg.slice(prefix.length).trim();
+                    }
+                    const errorResp = wrapResponse(req, {
+                        error: {
+                            code: errorCode,
+                            message: errorMsg,
+                        },
+                    });
+                    return errorResp;
+                }
+                const response = wrapResponse(req, result.hasOwnProperty('error')
+                    ? { error: { ...result.error } }
+                    : { result: { ...result } });
+                logger.info(`${msg.method} → ${response.id}`);
+                return response;
+            }
+            else {
+                logger.info(`${msg.jsonrpc}`);
+                return msg;
+            }
+        };
+        client.onclose = () => {
+            logger.error('SSE connection closed');
+            process.exit(1);
+        };
+        await client.connect(sseTransport);
+        logger.info('Connected to SSE server');
+        wsTransport.onclose = () => {
+            logger.info('WebSocket connection closed');
+            process.exit(1);
+        };
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            logger.error(`Failed to start: ${error.message}`);
+        }
+        else {
+            logger.error('Failed to start with unknown error');
+        }
+        cleanup();
+        process.exit(1);
+    }
+};
 const stdioToWebSocket = async (stdioCmd, port) => {
     logger.info('Starting...');
     logger.info(`  - port: ${port}`);
@@ -70,7 +172,6 @@ const stdioToWebSocket = async (stdioCmd, port) => {
         const server = new Server({ name: 'supergateway', version: getVersion() }, { capabilities: {} });
         // Create and start WebSocket server
         wsTransport = new WebSocketServerTransport(port);
-        await wsTransport.start();
         await server.connect(wsTransport);
         wsTransport.onmessage = (msg) => {
             const line = JSON.stringify(msg);
@@ -129,6 +230,10 @@ const main = async () => {
         type: 'string',
         description: 'Command to run an MCP server over Stdio'
     })
+        .option('sse', {
+        type: 'string',
+        description: 'URL of an MCP server to connect to over SSE'
+    })
         .option('port', {
         type: 'number',
         default: 8000,
@@ -137,7 +242,16 @@ const main = async () => {
         .help()
         .parseSync();
     const port = parseInt(process.env.PORT ?? argv.port?.toString() ?? '8000', 10);
-    await stdioToWebSocket(argv.stdio, port);
+    if (argv.stdio) {
+        await stdioToWebSocket(argv.stdio, port);
+    }
+    else if (argv.sse) {
+        await webSocketToSse(argv.sse, port);
+    }
+    else {
+        logger.error('No stdio or sse option provided');
+        process.exit(1);
+    }
 };
 main().catch(err => {
     logger.error('Fatal error:', err);

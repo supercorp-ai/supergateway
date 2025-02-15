@@ -11,6 +11,9 @@ importers:
       '@beamlit/sdk':
         specifier: ^0.0.55
         version: 0.0.55(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.744.0)(@browserbasehq/sdk@2.3.0)(@browserbasehq/stagehand@1.12.0(@playwright/test@1.50.1)(deepmerge@4.3.1)(dotenv@16.4.7)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(zod@3.24.2))(@ibm-cloud/watsonx-ai@1.5.0(@langchain/core@0.3.40(openai@4.84.0(ws@8.18.0)(zod@3.24.2))))(@smithy/util-utf8@2.3.0)(fast-xml-parser@4.4.1)(ibm-cloud-sdk-core@5.1.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(playwright@1.50.1)(react@19.0.0)
+      '@hey-api/client-fetch':
+        specifier: ^0.8.1
+        version: 0.8.1
       '@modelcontextprotocol/sdk':
         specifier: ^1.4.1
         version: 1.5.0
@@ -71,6 +74,9 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.18.0
+      yaml:
+        specifier: ^2.7.0
+        version: 2.7.0
       yargs:
         specifier: ^17.7.2
         version: 17.7.2
@@ -629,6 +635,9 @@ packages:
 
   '@hey-api/client-fetch@0.5.7':
     resolution: {integrity: sha512-hLpID6NCs8+stbz935UyvyGOXY44oLBSOy7ZEpwXxj977A/0U41iihDQllDoCJrxtbe06DnDgwPOn6/xnRJ71w==}
+
+  '@hey-api/client-fetch@0.8.1':
+    resolution: {integrity: sha512-AaVNVLBl7N9Fun7QDnb00YDubAFjB9ICi5U6kmzcJSnnQTQGRMsuBBRupQV5ERdMMFt71zjSDym7Z+gLVe8m3A==}
 
   '@ibm-cloud/watsonx-ai@1.5.0':
     resolution: {integrity: sha512-jhZrpktR27xTHnCRw4agWsg1HnaIEvdrE1+3t40BzLCjqVgoLEdZh4Rw7/i6U9R/31VjqsD/UZMohNK21vBJmw==}
@@ -4597,6 +4606,8 @@ snapshots:
       yargs: 17.7.2
 
   '@hey-api/client-fetch@0.5.7': {}
+
+  '@hey-api/client-fetch@0.8.1': {}
 
   '@ibm-cloud/watsonx-ai@1.5.0(@langchain/core@0.3.40(openai@4.84.0(ws@8.18.0)(zod@3.24.2)))':
     dependencies:

@@ -17,15 +17,15 @@
 //   logger.error('Fatal error:', err)
 //   process.exit(1)
 // })
-import { logger } from './logger/index.js';
-import express from 'express';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { spawn } from 'child_process';
+import express from 'express';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
-import { readFileSync } from 'fs';
+import { logger } from './logger/index.js';
 import { WebSocketServerTransport } from './server/websocket-transport.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,7 +36,7 @@ function getVersion() {
         return packageJson.version || '1.0.0';
     }
     catch (err) {
-        logger.error('Unable to retrieve version:', err);
+        logger.error(`Unable to retrieve version: ${err.message}`);
         return 'unknown';
     }
 }
@@ -51,7 +51,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
     const cleanup = () => {
         if (wsTransport) {
             wsTransport.close().catch(err => {
-                logger.error('Error stopping WebSocket server:', err);
+                logger.error(`Error stopping WebSocket server: ${err.message}`);
             });
         }
         if (child) {
@@ -95,7 +95,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
                     return;
                 try {
                     const jsonMsg = JSON.parse(line);
-                    logger.info('Child → WebSocket:', jsonMsg);
+                    logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`);
                     // Broadcast to all connected clients
                     wsTransport?.broadcast(jsonMsg).catch(err => {
                         logger.error('Failed to broadcast message:', err);
@@ -124,7 +124,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
             logger.info(`WebSocket connection closed: ${clientId}`);
         };
         wsTransport.onerror = err => {
-            logger.error('WebSocket error:', err);
+            logger.error(`WebSocket error: ${err.message}`);
         };
         isReady = true;
         logger.info(`WebSocket endpoint: ws://localhost:${port}`);
@@ -152,6 +152,6 @@ const main = async () => {
     await stdioToWebSocket(argv.stdio, port);
 };
 main().catch(err => {
-    logger.error('Fatal error:', err);
+    logger.error(`Fatal error: ${err.message}`);
     process.exit(1);
 });

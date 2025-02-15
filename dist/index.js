@@ -96,8 +96,9 @@ const stdioToWebSocket = async (stdioCmd, port) => {
                 try {
                     const jsonMsg = JSON.parse(line);
                     logger.info('Child → WebSocket:', jsonMsg);
-                    wsTransport?.send(jsonMsg).catch(err => {
-                        logger.error('Failed to send message:', err);
+                    // Broadcast to all connected clients
+                    wsTransport?.broadcast(jsonMsg).catch(err => {
+                        logger.error('Failed to broadcast message:', err);
                     });
                 }
                 catch {
@@ -108,6 +109,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
         child.stderr.on('data', (chunk) => {
             logger.info(`Child stderr: ${chunk.toString('utf8')}`);
         });
+        const session = {};
         wsTransport = new WebSocketServerTransport(port);
         await server.connect(wsTransport);
         wsTransport.onmessage = (msg) => {
@@ -115,8 +117,11 @@ const stdioToWebSocket = async (stdioCmd, port) => {
             logger.info(`WebSocket → Child: ${line}`);
             child.stdin.write(line + '\n');
         };
-        wsTransport.onclose = () => {
-            logger.info('WebSocket connection closed');
+        wsTransport.onconnection = (clientId) => {
+            logger.info(`New WebSocket connection: ${clientId}`);
+        };
+        wsTransport.ondisconnection = (clientId) => {
+            logger.info(`WebSocket connection closed: ${clientId}`);
         };
         wsTransport.onerror = err => {
             logger.error('WebSocket error:', err);

@@ -139,8 +139,8 @@ declare const Settings: z.ZodObject<{
     }>>;
     deploy: z.ZodDefault<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
-    type: string;
     name: string;
+    type: string;
     workspace: string;
     environment: string;
     remote: boolean;
@@ -173,8 +173,8 @@ declare const Settings: z.ZodObject<{
     deploy: boolean;
 }, {
     workspace: string;
-    type?: string | undefined;
     name?: string | undefined;
+    type?: string | undefined;
     environment?: string | undefined;
     remote?: boolean | undefined;
     agent?: {

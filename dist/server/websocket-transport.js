@@ -1,118 +1,90 @@
-import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 const SUBPROTOCOL = "mcp";
 /**
  * Server transport for WebSocket: this will create a WebSocket server that clients can connect to.
  */
 export class WebSocketServerTransport {
-    _server;
-    _socket;
-    _port;
-    _isStarting = false;
+    port;
+    wss;
+    clients = new Map();
+    clientIdCounter = 0;
     onclose;
     onerror;
-    onmessage;
+    messageHandler;
+    onconnection;
+    ondisconnection;
+    set onmessage(handler) {
+        this.messageHandler = handler ? (msg, _clientId) => handler(msg) : undefined;
+    }
     constructor(port) {
-        this._port = port;
+        this.port = port;
+        this.wss = new WebSocketServer({ port: this.port });
     }
     async start() {
-        // Prevent concurrent starts
-        if (this._isStarting) {
-            throw new Error("WebSocket server is already starting");
-        }
-        // If server exists, close it first
-        if (this._server) {
-            await this.close();
-        }
-        this._isStarting = true;
-        try {
-            return await new Promise((resolve, reject) => {
-                this._server = new WebSocketServer({
-                    port: this._port,
-                    handleProtocols: (protocols) => {
-                        return protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false;
-                    }
-                });
-                this._server.on('error', (error) => {
-                    this._isStarting = false;
-                    reject(error);
-                    this.onerror?.(error);
-                });
-                this._server.on('connection', (socket, request) => {
-                    if (this._socket) {
-                        // Only allow one connection at a time
-                        socket.close();
-                        return;
-                    }
-                    this._socket = socket;
-                    socket.on('error', (error) => {
-                        this.onerror?.(error);
-                    });
-                    socket.on('close', () => {
-                        this._socket = undefined;
-                        this.onclose?.();
-                    });
-                    socket.on('message', (data) => {
-                        let message;
-                        try {
-                            message = JSONRPCMessageSchema.parse(JSON.parse(data.toString()));
-                        }
-                        catch (error) {
-                            this.onerror?.(error);
-                            return;
-                        }
-                        this.onmessage?.(message);
-                    });
-                    this._isStarting = false;
-                    resolve();
-                });
-                // Add timeout to prevent hanging if no connection is made
-                setTimeout(() => {
-                    if (this._isStarting) {
-                        this._isStarting = false;
-                        resolve(); // Resolve anyway after server is listening
-                    }
-                }, 1000);
+        this.wss.on('connection', (ws) => {
+            const clientId = `client_${++this.clientIdCounter}`;
+            this.clients.set(clientId, ws);
+            this.onconnection?.(clientId);
+            ws.on('message', (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    this.messageHandler?.(msg, clientId);
+                }
+                catch (err) {
+                    this.onerror?.(new Error(`Failed to parse message: ${err}`));
+                }
             });
-        }
-        catch (error) {
-            this._isStarting = false;
-            throw error;
-        }
-    }
-    async close() {
-        if (this._socket) {
-            this._socket.close();
-            this._socket = undefined;
-        }
-        if (this._server) {
-            await new Promise((resolve, reject) => {
-                this._server?.close((err) => {
-                    if (err) {
-                        reject(err);
-                    }
-                    else {
-                        resolve();
-                    }
-                });
+            ws.on('close', () => {
+                this.clients.delete(clientId);
+                this.ondisconnection?.(clientId);
+                if (this.clients.size === 0) {
+                    this.onclose?.();
+                }
             });
-            this._server = undefined;
-        }
-        this._isStarting = false;
+            ws.on('error', (err) => {
+                this.onerror?.(err);
+            });
+        });
     }
-    send(message) {
-        return new Promise((resolve, reject) => {
-            if (!this._socket) {
-                reject(new Error("No client connected"));
-                return;
+    async send(msg, clientId) {
+        const data = JSON.stringify(msg);
+        const deadClients = [];
+        if (clientId) {
+            // Send to specific client
+            const client = this.clients.get(clientId);
+            if (client?.readyState === WebSocket.OPEN) {
+                client.send(data);
             }
-            this._socket.send(JSON.stringify(message), (error) => {
-                if (error) {
-                    reject(error);
+            else {
+                this.clients.delete(clientId);
+                this.ondisconnection?.(clientId);
+            }
+        }
+        else {
+            // Broadcast to all clients
+            for (const [id, client] of this.clients.entries()) {
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send(data);
                 }
                 else {
-                    resolve();
+                    deadClients.push(id);
                 }
+            }
+        }
+        // Cleanup dead clients
+        deadClients.forEach(id => {
+            this.clients.delete(id);
+            this.ondisconnection?.(id);
+        });
+    }
+    async broadcast(msg) {
+        return this.send(msg);
+    }
+    async close() {
+        return new Promise((resolve) => {
+            this.wss.close(() => {
+                this.clients.clear();
+                resolve();
             });
         });
     }

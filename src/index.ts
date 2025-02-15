@@ -17,16 +17,16 @@
 //   logger.error('Fatal error:', err)
 //   process.exit(1)
 // })
-import { logger } from './logger/index.js'
-import express from 'express'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
-import yargs from 'yargs'
-import { hideBin } from 'yargs/helpers'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
-import { fileURLToPath } from 'url'
-import { join, dirname } from 'path'
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
+import express from 'express'
 import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+import yargs from 'yargs'
+import { hideBin } from 'yargs/helpers'
+import { logger } from './logger/index.js'
 import { WebSocketServerTransport } from './server/websocket-transport.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -37,8 +37,8 @@ function getVersion(): string {
     const packageJsonPath = join(__dirname, '../package.json')
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
     return packageJson.version || '1.0.0'
-  } catch (err) {
-    logger.error('Unable to retrieve version:', err)
+  } catch (err: any) {
+    logger.error(`Unable to retrieve version: ${err.message}`)
     return 'unknown'
   }
 }
@@ -59,7 +59,7 @@ const stdioToWebSocket = async (
   const cleanup = () => {
     if (wsTransport) {
       wsTransport.close().catch(err => {
-        logger.error('Error stopping WebSocket server:', err)
+        logger.error(`Error stopping WebSocket server: ${err.message}`)
       })
     }
     if (child) {
@@ -109,9 +109,9 @@ const stdioToWebSocket = async (
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)
-          logger.info('Child → WebSocket:', jsonMsg)
+          logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
           wsTransport?.send(jsonMsg).catch(err => {
-            logger.error('Failed to send message:', err)
+            logger.error(`Failed to send message: ${err.message}`)
           })
         } catch {
           logger.error(`Child non-JSON: ${line}`)
@@ -137,7 +137,7 @@ const stdioToWebSocket = async (
     }
 
     wsTransport.onerror = err => {
-      logger.error('WebSocket error:', err)
+      logger.error(`WebSocket error: ${err.message}`)
     }
 
     isReady = true
@@ -168,6 +168,6 @@ const main = async () => {
 }
 
 main().catch(err => {
-  logger.error('Fatal error:', err)
+  logger.error(`Fatal error: ${err.message}`)
   process.exit(1)
 })

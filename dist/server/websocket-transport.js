@@ -1,4 +1,5 @@
 import { WebSocket, WebSocketServer } from "ws";
+import { v4 as uuidv4 } from 'uuid';
 const SUBPROTOCOL = "mcp";
 /**
  * Server transport for WebSocket: this will create a WebSocket server that clients can connect to.
@@ -14,7 +15,13 @@ export class WebSocketServerTransport {
     onconnection;
     ondisconnection;
     set onmessage(handler) {
-        this.messageHandler = handler ? (msg, _clientId) => handler(msg) : undefined;
+        this.messageHandler = handler ? (msg, clientId) => {
+            return handler({
+                ...msg,
+                // @ts-ignore
+                id: clientId + ":" + msg.id
+            });
+        } : undefined;
     }
     constructor(port) {
         this.port = port;
@@ -22,7 +29,7 @@ export class WebSocketServerTransport {
     }
     async start() {
         this.wss.on('connection', (ws) => {
-            const clientId = `client_${++this.clientIdCounter}`;
+            const clientId = uuidv4();
             this.clients.set(clientId, ws);
             this.onconnection?.(clientId);
             ws.on('message', (data) => {
@@ -47,17 +54,20 @@ export class WebSocketServerTransport {
         });
     }
     async send(msg, clientId) {
+        const [cId, msgId] = clientId?.split(":") ?? [];
+        // @ts-ignore
+        msg.id = msgId;
         const data = JSON.stringify(msg);
         const deadClients = [];
-        if (clientId) {
+        if (cId) {
             // Send to specific client
-            const client = this.clients.get(clientId);
+            const client = this.clients.get(cId);
             if (client?.readyState === WebSocket.OPEN) {
                 client.send(data);
             }
             else {
-                this.clients.delete(clientId);
-                this.ondisconnection?.(clientId);
+                this.clients.delete(cId);
+                this.ondisconnection?.(cId);
             }
         }
         else {

@@ -97,7 +97,7 @@ const stdioToWebSocket = async (stdioCmd, port) => {
                     const jsonMsg = JSON.parse(line);
                     logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`);
                     // Broadcast to all connected clients
-                    wsTransport?.broadcast(jsonMsg).catch(err => {
+                    wsTransport?.send(jsonMsg, jsonMsg.id).catch(err => {
                         logger.error('Failed to broadcast message:', err);
                     });
                 }

@@ -1,9 +1,6 @@
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { WebSocket, WebSocketServer } from "ws";
-import { IncomingMessage } from "http";
-import { Socket } from "net";
-import { logger } from "../logger/index.js";
 import { v4 as uuidv4 } from 'uuid';
 const SUBPROTOCOL = "mcp";
 
@@ -24,6 +21,11 @@ export class WebSocketServerTransport implements Transport {
 
   set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
     this.messageHandler = handler ? (msg, clientId) => {
+      // @ts-ignore
+      if (msg.id === undefined) {
+        return handler(msg);
+      }
+      // @ts-ignore
       return handler({
         ...msg,
         // @ts-ignore
@@ -82,17 +84,13 @@ export class WebSocketServerTransport implements Transport {
         this.clients.delete(cId);
         this.ondisconnection?.(cId);
       }
-    } else {
-      // Broadcast to all clients
-      for (const [id, client] of this.clients.entries()) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(data);
-        } else {
-          deadClients.push(id);
-        }
+    } 
+
+    for (const [id, client] of this.clients.entries()) {
+      if (client.readyState !== WebSocket.OPEN) {
+        deadClients.push(id);
       }
     }
-
     // Cleanup dead clients
     deadClients.forEach(id => {
       this.clients.delete(id);

@@ -16,6 +16,11 @@ export class WebSocketServerTransport {
     ondisconnection;
     set onmessage(handler) {
         this.messageHandler = handler ? (msg, clientId) => {
+            // @ts-ignore
+            if (msg.id === undefined) {
+                return handler(msg);
+            }
+            // @ts-ignore
             return handler({
                 ...msg,
                 // @ts-ignore
@@ -70,15 +75,9 @@ export class WebSocketServerTransport {
                 this.ondisconnection?.(cId);
             }
         }
-        else {
-            // Broadcast to all clients
-            for (const [id, client] of this.clients.entries()) {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(data);
-                }
-                else {
-                    deadClients.push(id);
-                }
+        for (const [id, client] of this.clients.entries()) {
+            if (client.readyState !== WebSocket.OPEN) {
+                deadClients.push(id);
             }
         }
         // Cleanup dead clients

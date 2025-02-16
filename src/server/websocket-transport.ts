@@ -1,7 +1,7 @@
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { v4 as uuidv4 } from "uuid";
 import { WebSocket, WebSocketServer } from "ws";
-import { v4 as uuidv4 } from 'uuid';
 const SUBPROTOCOL = "mcp";
 
 /**
@@ -20,18 +20,20 @@ export class WebSocketServerTransport implements Transport {
   ondisconnection?: (clientId: string) => void;
 
   set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
-    this.messageHandler = handler ? (msg, clientId) => {
-      // @ts-ignore
-      if (msg.id === undefined) {
-        return handler(msg);
-      }
-      // @ts-ignore
-      return handler({
-        ...msg,
-        // @ts-ignore
-        id: clientId + ":" + msg.id
-      })
-    } : undefined;
+    this.messageHandler = handler
+      ? (msg, clientId) => {
+          // @ts-ignore
+          if (msg.id === undefined) {
+            return handler(msg);
+          }
+          // @ts-ignore
+          return handler({
+            ...msg,
+            // @ts-ignore
+            id: clientId + ":" + msg.id,
+          });
+        }
+      : undefined;
   }
 
   constructor(port: number) {
@@ -40,12 +42,12 @@ export class WebSocketServerTransport implements Transport {
   }
 
   async start(): Promise<void> {
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on("connection", (ws: WebSocket) => {
       const clientId = uuidv4();
       this.clients.set(clientId, ws);
       this.onconnection?.(clientId);
 
-      ws.on('message', (data: Buffer) => {
+      ws.on("message", (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
           this.messageHandler?.(msg, clientId);
@@ -54,7 +56,7 @@ export class WebSocketServerTransport implements Transport {
         }
       });
 
-      ws.on('close', () => {
+      ws.on("close", () => {
         this.clients.delete(clientId);
         this.ondisconnection?.(clientId);
         if (this.clients.size === 0) {
@@ -62,7 +64,7 @@ export class WebSocketServerTransport implements Transport {
         }
       });
 
-      ws.on('error', (err) => {
+      ws.on("error", (err) => {
         this.onerror?.(err);
       });
     });
@@ -71,11 +73,11 @@ export class WebSocketServerTransport implements Transport {
   async send(msg: JSONRPCMessage, clientId?: string): Promise<void> {
     const [cId, msgId] = clientId?.split(":") ?? [];
     // @ts-ignore
-    msg.id = msgId;
+    msg.id = parseInt(msgId);
     const data = JSON.stringify(msg);
     const deadClients: string[] = [];
 
-    if (cId) {      
+    if (cId) {
       // Send to specific client
       const client = this.clients.get(cId);
       if (client?.readyState === WebSocket.OPEN) {
@@ -84,7 +86,7 @@ export class WebSocketServerTransport implements Transport {
         this.clients.delete(cId);
         this.ondisconnection?.(cId);
       }
-    } 
+    }
 
     for (const [id, client] of this.clients.entries()) {
       if (client.readyState !== WebSocket.OPEN) {
@@ -92,7 +94,7 @@ export class WebSocketServerTransport implements Transport {
       }
     }
     // Cleanup dead clients
-    deadClients.forEach(id => {
+    deadClients.forEach((id) => {
       this.clients.delete(id);
       this.ondisconnection?.(id);
     });

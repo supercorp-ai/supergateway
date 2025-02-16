@@ -1,5 +1,5 @@
+import { v4 as uuidv4 } from "uuid";
 import { WebSocket, WebSocketServer } from "ws";
-import { v4 as uuidv4 } from 'uuid';
 const SUBPROTOCOL = "mcp";
 /**
  * Server transport for WebSocket: this will create a WebSocket server that clients can connect to.
@@ -15,29 +15,31 @@ export class WebSocketServerTransport {
     onconnection;
     ondisconnection;
     set onmessage(handler) {
-        this.messageHandler = handler ? (msg, clientId) => {
-            // @ts-ignore
-            if (msg.id === undefined) {
-                return handler(msg);
-            }
-            // @ts-ignore
-            return handler({
-                ...msg,
+        this.messageHandler = handler
+            ? (msg, clientId) => {
                 // @ts-ignore
-                id: clientId + ":" + msg.id
-            });
-        } : undefined;
+                if (msg.id === undefined) {
+                    return handler(msg);
+                }
+                // @ts-ignore
+                return handler({
+                    ...msg,
+                    // @ts-ignore
+                    id: clientId + ":" + msg.id,
+                });
+            }
+            : undefined;
     }
     constructor(port) {
         this.port = port;
         this.wss = new WebSocketServer({ port: this.port });
     }
     async start() {
-        this.wss.on('connection', (ws) => {
+        this.wss.on("connection", (ws) => {
             const clientId = uuidv4();
             this.clients.set(clientId, ws);
             this.onconnection?.(clientId);
-            ws.on('message', (data) => {
+            ws.on("message", (data) => {
                 try {
                     const msg = JSON.parse(data.toString());
                     this.messageHandler?.(msg, clientId);
@@ -46,14 +48,14 @@ export class WebSocketServerTransport {
                     this.onerror?.(new Error(`Failed to parse message: ${err}`));
                 }
             });
-            ws.on('close', () => {
+            ws.on("close", () => {
                 this.clients.delete(clientId);
                 this.ondisconnection?.(clientId);
                 if (this.clients.size === 0) {
                     this.onclose?.();
                 }
             });
-            ws.on('error', (err) => {
+            ws.on("error", (err) => {
                 this.onerror?.(err);
             });
         });
@@ -61,7 +63,7 @@ export class WebSocketServerTransport {
     async send(msg, clientId) {
         const [cId, msgId] = clientId?.split(":") ?? [];
         // @ts-ignore
-        msg.id = msgId;
+        msg.id = parseInt(msgId);
         const data = JSON.stringify(msg);
         const deadClients = [];
         if (cId) {
@@ -81,7 +83,7 @@ export class WebSocketServerTransport {
             }
         }
         // Cleanup dead clients
-        deadClients.forEach(id => {
+        deadClients.forEach((id) => {
             this.clients.delete(id);
             this.ondisconnection?.(id);
         });

@@ -27,7 +27,7 @@ export const logger = new Proxy({} as any, {
 
       // Get OpenTelemetry logger
       try {
-        const otelLogger = logs.getLogger("beamlit");
+        const otelLogger = logs.getLogger("blaxel");
         if (otelLogger) {
           (target as any).__otelLogger = otelLogger;
         }

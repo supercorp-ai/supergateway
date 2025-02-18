@@ -40,11 +40,11 @@ process.on("SIGTERM", () => {
  * Retrieve authentication headers.
  */
 async function authHeaders() {
-    const getAuthenticationHeaders = await import("@beamlit/sdk/authentication/authentication.js");
+    const getAuthenticationHeaders = await import("@blaxel/sdk/authentication/authentication.js");
     const headers = await getAuthenticationHeaders.getAuthenticationHeaders();
     return {
-        "x-beamlit-authorization": headers?.["X-Beamlit-Authorization"] || "",
-        "x-beamlit-workspace": headers?.["X-Beamlit-Workspace"] || "",
+        "x-blaxel-authorization": headers?.["X-blaxel-Authorization"] || "",
+        "x-blaxel-workspace": headers?.["X-blaxel-Workspace"] || "",
     };
 }
 /**

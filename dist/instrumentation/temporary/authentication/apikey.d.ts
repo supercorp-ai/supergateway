@@ -1,6 +1,6 @@
 import { Credentials } from "./types.js";
 /**
- * Handles API key authentication for Beamlit API requests.
+ * Handles API key authentication for blaxel API requests.
  */
 export declare class ApiKeyAuth {
     private credentials;

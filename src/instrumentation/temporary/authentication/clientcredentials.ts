@@ -44,8 +44,8 @@ export class ClientCredentials {
     }
 
     return {
-      "X-Beamlit-Authorization": `Bearer ${this.credentials.access_token}`,
-      "X-Beamlit-Workspace": this.workspace_name,
+      "X-blaxel-Authorization": `Bearer ${this.credentials.access_token}`,
+      "X-blaxel-Workspace": this.workspace_name,
     };
   }
 
@@ -114,10 +114,10 @@ export class ClientCredentials {
     }
 
     req.headers.set(
-      "X-Beamlit-Authorization",
+      "X-blaxel-Authorization",
       `Bearer ${this.credentials.access_token}`
     );
-    req.headers.set("X-Beamlit-Workspace", this.workspace_name);
+    req.headers.set("X-blaxel-Workspace", this.workspace_name);
   }
 
   /**
@@ -135,7 +135,7 @@ export class ClientCredentials {
       grant_type: "refresh_token",
       refresh_token: this.credentials.refresh_token,
       device_code: this.credentials.device_code,
-      client_id: "beamlit",
+      client_id: "blaxel",
     };
 
     try {

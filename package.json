@@ -1,5 +1,5 @@
 {
-  "name": "@beamlit/supergateway",
+  "name": "@blaxel/supergateway",
   "version": "1.0.0",
   "description": "Run MCP stdio servers over SSE or visa versa",
   "repository": {
@@ -25,7 +25,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@beamlit/sdk": "^0.0.55",
+    "@blaxel/sdk": "^0.0.55",
     "@hey-api/client-fetch": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.4.1",
     "@opentelemetry/api": "^1.9.0",

@@ -8,7 +8,7 @@ importers:
 
   .:
     dependencies:
-      '@beamlit/sdk':
+      '@blaxel/sdk':
         specifier: ^0.0.55
         version: 0.0.55(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.744.0)(@browserbasehq/sdk@2.3.0)(@browserbasehq/stagehand@1.12.0(@playwright/test@1.50.1)(deepmerge@4.3.1)(dotenv@16.4.7)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(zod@3.24.2))(@ibm-cloud/watsonx-ai@1.5.0(@langchain/core@0.3.40(openai@4.84.0(ws@8.18.0)(zod@3.24.2))))(@smithy/util-utf8@2.3.0)(fast-xml-parser@4.4.1)(ibm-cloud-sdk-core@5.1.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(playwright@1.50.1)(react@19.0.0)
       '@hey-api/client-fetch':
@@ -436,7 +436,7 @@ packages:
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
 
-  '@beamlit/sdk@0.0.55':
+  '@blaxel/sdk@0.0.55':
     resolution: {integrity: sha512-6oTz6qtPj9DdaDrrvM6LBIA4HXBkWJUQ9Z7dim+f+uEXRC8sCxVeCTV6rqC5YGduMFTm0GMLsmS0jtyDLtgf6A==}
     engines: {node: '>=18'}
 
@@ -4260,7 +4260,7 @@ snapshots:
 
   '@bcoe/v8-coverage@0.2.3': {}
 
-  '@beamlit/sdk@0.0.55(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.744.0)(@browserbasehq/sdk@2.3.0)(@browserbasehq/stagehand@1.12.0(@playwright/test@1.50.1)(deepmerge@4.3.1)(dotenv@16.4.7)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(zod@3.24.2))(@ibm-cloud/watsonx-ai@1.5.0(@langchain/core@0.3.40(openai@4.84.0(ws@8.18.0)(zod@3.24.2))))(@smithy/util-utf8@2.3.0)(fast-xml-parser@4.4.1)(ibm-cloud-sdk-core@5.1.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(playwright@1.50.1)(react@19.0.0)':
+  '@blaxel/sdk@0.0.55(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.744.0)(@browserbasehq/sdk@2.3.0)(@browserbasehq/stagehand@1.12.0(@playwright/test@1.50.1)(deepmerge@4.3.1)(dotenv@16.4.7)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(zod@3.24.2))(@ibm-cloud/watsonx-ai@1.5.0(@langchain/core@0.3.40(openai@4.84.0(ws@8.18.0)(zod@3.24.2))))(@smithy/util-utf8@2.3.0)(fast-xml-parser@4.4.1)(ibm-cloud-sdk-core@5.1.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(openai@4.84.0(ws@8.18.0)(zod@3.24.2))(playwright@1.50.1)(react@19.0.0)':
     dependencies:
       '@fastify/cors': 10.0.2
       '@fastify/websocket': 11.0.2

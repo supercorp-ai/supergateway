@@ -56,19 +56,19 @@ const Settings = z.object({
   baseUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://api.blaxel.com/v0"),
+    .default("https://api.blaxel.ai/v0"),
   appUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://app.blaxel.com"),
+    .default("https://app.blaxel.ai"),
   runUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://run.blaxel.com"),
+    .default("https://run.blaxel.ai"),
   registryUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://us.registry.blaxel.com"),
+    .default("https://us.registry.blaxel.ai"),
   logLevel: z.string().default("INFO"),
   enableOpentelemetry: z.boolean().default(false),
   agent: SettingsAgent.default({ chain: null, functions: null }),

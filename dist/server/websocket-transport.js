@@ -15,20 +15,19 @@ export class WebSocketServerTransport {
     onconnection;
     ondisconnection;
     set onmessage(handler) {
-        this.messageHandler = handler
-            ? (msg, clientId) => {
-                // @ts-ignore
-                if (msg.id === undefined) {
-                    return handler(msg);
-                }
-                // @ts-ignore
-                return handler({
-                    ...msg,
-                    // @ts-ignore
-                    id: clientId + ":" + msg.id,
-                });
+        this.messageHandler = handler ? (msg, clientId) => {
+            // @ts-ignore
+            if (msg.id === undefined) {
+                console.log("Broadcast message:", msg);
+                return handler(msg);
             }
-            : undefined;
+            // @ts-ignore
+            return handler({
+                ...msg,
+                // @ts-ignore
+                id: clientId + ":" + msg.id
+            });
+        } : undefined;
     }
     constructor(port) {
         this.port = port;

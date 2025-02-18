@@ -1,5 +1,5 @@
 /**
- * Handles API key authentication for Beamlit API requests.
+ * Handles API key authentication for blaxel API requests.
  */
 export class ApiKeyAuth {
     credentials;
@@ -19,9 +19,9 @@ export class ApiKeyAuth {
      */
     async getHeaders() {
         return {
-            "X-Beamlit-Api-Key": this.credentials.apiKey || "",
-            // "X-Beamlit-Authorization": `Bearer ${this.credentials.apiKey || ""}`,
-            "X-Beamlit-Workspace": this.workspaceName,
+            "X-blaxel-Api-Key": this.credentials.apiKey || "",
+            // "X-blaxel-Authorization": `Bearer ${this.credentials.apiKey || ""}`,
+            "X-blaxel-Workspace": this.workspaceName,
         };
     }
     /**
@@ -29,7 +29,7 @@ export class ApiKeyAuth {
      * @param req - The request to intercept and modify.
      */
     intercept(req) {
-        req.headers.set("X-Beamlit-Api-Key", this.credentials.apiKey || "");
-        req.headers.set("X-Beamlit-Workspace", this.workspaceName);
+        req.headers.set("X-blaxel-Api-Key", this.credentials.apiKey || "");
+        req.headers.set("X-blaxel-Workspace", this.workspaceName);
     }
 }

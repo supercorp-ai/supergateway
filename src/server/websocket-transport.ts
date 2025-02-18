@@ -20,20 +20,19 @@ export class WebSocketServerTransport implements Transport {
   ondisconnection?: (clientId: string) => void;
 
   set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
-    this.messageHandler = handler
-      ? (msg, clientId) => {
-          // @ts-ignore
-          if (msg.id === undefined) {
-            return handler(msg);
-          }
-          // @ts-ignore
-          return handler({
-            ...msg,
-            // @ts-ignore
-            id: clientId + ":" + msg.id,
-          });
-        }
-      : undefined;
+    this.messageHandler = handler ? (msg, clientId) => {
+      // @ts-ignore
+      if (msg.id === undefined) {
+        console.log("Broadcast message:", msg);
+        return handler(msg);
+      }
+      // @ts-ignore
+      return handler({
+        ...msg,
+        // @ts-ignore
+        id: clientId + ":" + msg.id
+      })
+    } : undefined;
   }
 
   constructor(port: number) {
@@ -86,8 +85,8 @@ export class WebSocketServerTransport implements Transport {
         this.clients.delete(cId);
         this.ondisconnection?.(cId);
       }
-    }
-
+    } 
+    
     for (const [id, client] of this.clients.entries()) {
       if (client.readyState !== WebSocket.OPEN) {
         deadClients.push(id);

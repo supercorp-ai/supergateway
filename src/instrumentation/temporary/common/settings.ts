@@ -52,23 +52,23 @@ const Settings = z.object({
   environment: z.string().default("production"),
   remote: z.boolean().default(false),
   type: z.string().default("agent"),
-  name: z.string().default("beamlit-agent"),
+  name: z.string().default("blaxel-agent"),
   baseUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://api.beamlit.com/v0"),
+    .default("https://api.blaxel.ai/v0"),
   appUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://app.beamlit.com"),
+    .default("https://app.blaxel.ai"),
   runUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://run.beamlit.com"),
+    .default("https://run.blaxel.ai"),
   registryUrl: z
     .string()
     .regex(/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Invalid URL format")
-    .default("https://us.registry.beamlit.com"),
+    .default("https://us.registry.blaxel.ai"),
   logLevel: z.string().default("INFO"),
   enableOpentelemetry: z.boolean().default(false),
   agent: SettingsAgent.default({ chain: null, functions: null }),
@@ -151,11 +151,11 @@ function handleNestedEnvironment(
  * @returns The initialized settings object.
  */
 function init(options: Partial<Settings> = {}): Settings {
-  // Try to read beamlit.yaml from current directory
+  // Try to read blaxel.yaml from current directory
   let yamlData: Partial<Settings> = {};
   try {
     const yamlFile = fs.readFileSync(
-      path.join(process.cwd(), "beamlit.yaml"),
+      path.join(process.cwd(), "blaxel.yaml"),
       "utf8"
     );
     yamlData = yaml.parse(yamlFile);
@@ -205,11 +205,11 @@ function init(options: Partial<Settings> = {}): Settings {
 
   // Special handling for dev environment
   if (process.env.BL_ENV === "dev") {
-    envData.baseUrl = process.env.BL_BASE_URL || "https://api.beamlit.dev/v0";
-    envData.runUrl = process.env.BL_RUN_URL || "https://run.beamlit.dev";
+    envData.baseUrl = process.env.BL_BASE_URL || "https://api.blaxel.dev/v0";
+    envData.runUrl = process.env.BL_RUN_URL || "https://run.blaxel.dev";
     envData.registryUrl =
-      process.env.BL_REGISTRY_URL || "https://eu.registry.beamlit.dev";
-    envData.appUrl = process.env.BL_APP_URL || "https://app.beamlit.dev";
+      process.env.BL_REGISTRY_URL || "https://eu.registry.blaxel.dev";
+    envData.appUrl = process.env.BL_APP_URL || "https://app.blaxel.dev";
   }
   const context = currentContext();
 

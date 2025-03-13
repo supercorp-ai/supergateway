@@ -29,6 +29,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { readFileSync } from 'fs'
+import { WebSocketServerTransport } from './websocket.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -323,6 +324,133 @@ async function sseToStdio(args: SseToStdioArgs) {
   logger.info('Stdio server listening')
 }
 
+interface StdioToWsArgs {
+  stdioCmd: string
+  port: number
+  baseUrl: string
+  messagePath: string
+  logger: Logger
+  healthEndpoints: string[]
+  healthPort: number
+}
+async function stdioToWs(args: StdioToWsArgs) {
+  const { stdioCmd, port, baseUrl, messagePath, logger, healthEndpoints, healthPort } = args
+
+  logger.info('Starting...')
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
+  if (baseUrl) {
+    logger.info(`  - baseUrl: ${baseUrl}`)
+  }
+  logger.info(`  - messagePath: ${messagePath}`)
+
+  let wsTransport: WebSocketServerTransport | null = null
+  let child: ChildProcessWithoutNullStreams | null = null
+  let isReady = false
+
+  // Cleanup function
+  const cleanup = () => {
+    if (wsTransport) {
+      wsTransport.close().catch(err => {
+        logger.error(`Error stopping WebSocket server: ${err.message}`)
+      })
+    }
+    if (child) {
+      child.kill()
+    }
+  }
+
+  // Handle process termination
+  process.on('SIGINT', cleanup)
+  process.on('SIGTERM', cleanup)
+
+  if (healthEndpoints.length > 0) {
+    const app = express()
+    for (const ep of healthEndpoints) {
+      app.get(ep, (_req: express.Request, res: express.Response) => {
+        if (child?.killed) {
+          res.status(500).send("Child process has been killed")
+      }
+      if (!isReady) {
+        res.status(500).send("Server is not ready")
+      } else {
+        res.send("OK")
+        }
+      })
+    }
+    app.listen(healthPort, () => {
+      logger.info(`Health check endpoint listening on port ${healthPort}`)
+    })
+  } 
+
+  try {
+    child = spawn(stdioCmd, { shell: true })
+    child.on('exit', (code, signal) => {
+      logger.error(`Child exited: code=${code}, signal=${signal}`)
+      cleanup()
+      process.exit(code ?? 1)
+    })
+
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} }
+    )
+
+    // Handle child process output
+    let buffer = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      lines.forEach(line => {
+        if (!line.trim()) return
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
+          // Broadcast to all connected clients
+          wsTransport?.send(jsonMsg, jsonMsg.id).catch(err => {
+            logger.error('Failed to broadcast message:', err)
+          })
+        } catch {
+          logger.error(`Child non-JSON: ${line}`)
+        }
+      })
+    })
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      logger.info(`Child stderr: ${chunk.toString('utf8')}`)
+    })
+
+    wsTransport = new WebSocketServerTransport("0.0.0.0", port, messagePath)
+    await server.connect(wsTransport)
+
+    wsTransport.onmessage = (msg: JSONRPCMessage) => {
+      const line = JSON.stringify(msg)
+      logger.info(`WebSocket → Child: ${line}`)
+      child!.stdin.write(line + '\n')
+    }
+
+    wsTransport.onconnection = (clientId: string) => {
+      logger.info(`New WebSocket connection: ${clientId}`)
+    }
+
+    wsTransport.ondisconnection = (clientId: string) => {
+      logger.info(`WebSocket connection closed: ${clientId}`)
+    }
+
+    wsTransport.onerror = (err: Error) => {
+      logger.error(`WebSocket error: ${err.message}`)
+    }
+
+    isReady = true
+    logger.info(`WebSocket endpoint: ws://localhost:${port}`)
+  } catch (err: any) {
+    logger.error(`Failed to start: ${err.message}`)
+    cleanup()
+    process.exit(1)
+  }
+}
+
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .option('stdio', {
@@ -336,12 +464,12 @@ async function main() {
     .option('port', {
       type: 'number',
       default: 8000,
-      description: '(stdio→SSE) Port to run on'
+      description: '(stdio→SSE or stdio→WS) Port to run on'
     })
     .option('baseUrl', {
       type: 'string',
       default: '',
-      description: '(stdio→SSE) Base URL for SSE clients'
+      description: '(stdio→SSE or stdio→WS) Base URL for SSE or WS clients'
     })
     .option('ssePath', {
       type: 'string',
@@ -368,34 +496,59 @@ async function main() {
       default: [],
       description: 'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz'
     })
+    .option('healthPort', {
+      type: 'number',
+      default: 8080,
+      description: 'Port to run health endpoints on'
+    })
+    .option('ws', {
+      type: 'boolean',
+      default: false,
+      description: 'Enable WebSocket support'
+    })
     .help()
     .parseSync()
 
   const hasStdio = Boolean(argv.stdio)
   const hasSse = Boolean(argv.sse)
+  const hasWs = Boolean(argv.ws)
 
-  if (hasStdio && hasSse) {
-    logStderr('Error: Specify only one of --stdio or --sse, not both')
+  if (hasStdio && hasSse && hasWs) {
+    logStderr('Error: Specify only one of --stdio or --sse or --ws, not all')
     process.exit(1)
-  } else if (!hasStdio && !hasSse) {
-    logStderr('Error: You must specify one of --stdio or --sse')
+  } else if (!hasStdio && !hasSse && !hasWs) {
+    logStderr('Error: You must specify one of --stdio or --sse or --ws')
     process.exit(1)
   }
 
   try {
     if (hasStdio) {
-      await stdioToSse({
-        stdioCmd: argv.stdio!,
-        port: argv.port,
-        baseUrl: argv.baseUrl,
-        ssePath: argv.ssePath,
-        messagePath: argv.messagePath,
+      if (argv.ws) {
+        await stdioToWs({
+          stdioCmd: argv.stdio!,
+          port: argv.port,
+          baseUrl: argv.baseUrl,
+          messagePath: argv.messagePath,
+          logger: argv.logLevel === 'none'
+            ? noneLogger
+            : { info: log, error: logStderr },
+          healthEndpoints: argv.healthEndpoint as string[],
+          healthPort: argv.healthPort
+        })
+      } else {
+        await stdioToSse({
+          stdioCmd: argv.stdio!,
+          port: argv.port,
+          baseUrl: argv.baseUrl,
+          ssePath: argv.ssePath,
+          messagePath: argv.messagePath,
         logger: argv.logLevel === 'none'
           ? noneLogger
           : { info: log, error: logStderr },
         enableCors: argv.cors,
-        healthEndpoints: argv.healthEndpoint as string[]
-      })
+          healthEndpoints: argv.healthEndpoint as string[]
+        })
+      }
     } else {
       await sseToStdio({
         sseUrl: argv.sse!,

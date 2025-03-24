@@ -13,6 +13,7 @@ import { onSignals } from '../lib/onSignals.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
+  proxy?: boolean
   logger: Logger
 }
 
@@ -38,8 +39,12 @@ export async function sseToStdio(args: SseToStdioArgs) {
     process.exit(1)
   }
 
-  await sseClient.connect(sseTransport)
-  logger.info('SSE connected')
+  if (args.proxy) {
+    logger.info('SSE proxy mode enabled')
+  } else {
+    await sseClient.connect(sseTransport)
+    logger.info('SSE connected')
+  }
 
   const stdioServer = new Server(
     sseClient.getServerVersion() ?? {

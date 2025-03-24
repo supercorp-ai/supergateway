@@ -109,6 +109,11 @@ async function main() {
       description:
         'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz',
     })
+    .option('proxy', {
+      type: 'boolean',
+      default: false,
+      description: '(sse→stdio) Proxy mode, will not trigger auto-connect',
+    })
     .help()
     .parseSync()
 
@@ -164,6 +169,7 @@ async function main() {
       if (argv.outputTransport === 'stdio') {
         await sseToStdio({
           sseUrl: argv.sse!,
+          proxy: argv.proxy,
           logger,
         })
       } else {

@@ -109,6 +109,12 @@ async function main() {
       description:
         'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz',
     })
+    .option('header', {
+      type: 'array',
+      default: [],
+      description:
+        'Headers to be added to the request headers, e.g. --header "Authorization: Bearer <token>"',
+    })
     .help()
     .parseSync()
 
@@ -165,6 +171,7 @@ async function main() {
         await sseToStdio({
           sseUrl: argv.sse!,
           logger,
+          headers: argv.header as string[],
         })
       } else {
         logStderr(`Error: sse→${argv.outputTransport} not supported`)

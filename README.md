@@ -34,6 +34,16 @@ npx -y supergateway \
     --ssePath /sse --messagePath /message
 ```
 
+You can also pass header(s) when sending requests. This is useful for Auth:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --port 8000 --baseUrl http://localhost:8000 \
+    --ssePath /sse --messagePath /message \
+    --header "Authorization: Bearer <token>"
+```
+
 - **Subscribe to events**: `GET http://localhost:8000/sse`
 - **Send messages**: `POST http://localhost:8000/message`
 

@@ -14,17 +14,30 @@ import { onSignals } from '../lib/onSignals.js'
 export interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
+  headers?: string[]
 }
 
 export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger } = args
+  const { sseUrl, logger, headers: _headers = [] } = args
+  const headers = buildHeaders(_headers, logger)
 
   logger.info(`  - sse: ${sseUrl}`)
   logger.info('Connecting to SSE...')
 
   onSignals({ logger })
 
-  const sseTransport = new SSEClientTransport(new URL(sseUrl))
+  const sseTransport = new SSEClientTransport(new URL(sseUrl), {
+    eventSourceInit: {
+      fetch: (...props: Parameters<typeof fetch>) => {
+        const [url, init = {}] = props
+        return fetch(url, { ...init, headers: { ...init.headers, ...headers } })
+      },
+    },
+    requestInit: {
+      headers,
+    },
+  })
+
   const sseClient = new Client(
     { name: 'supergateway', version: getVersion() },
     { capabilities: {} },
@@ -103,4 +116,25 @@ export async function sseToStdio(args: SseToStdioArgs) {
   }
 
   logger.info('Stdio server listening')
+}
+
+function buildHeaders(
+  headers: string[],
+  logger: Logger,
+): Record<string, string> {
+  return headers.reduce<Record<string, string>>((acc, header) => {
+    const colonIndex = header.indexOf(':')
+    if (colonIndex === -1) {
+      logger.error(`Invalid header format: ${header}, ignoring`)
+      return acc
+    }
+    const key = header.slice(0, colonIndex).trim()
+    const value = header.slice(colonIndex + 1).trim()
+    if (!key || !value) {
+      logger.error(`Invalid header format: ${header}, ignoring`)
+      return acc
+    }
+    acc[key] = value
+    return acc
+  }, {})
 }

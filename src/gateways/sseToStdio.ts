@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
-import { parseHeaders } from '../utils/headerUtils.js'
+import { parseHeaders } from '../lib/parseHeaders.js'
 
 export interface SseToStdioArgs {
   sseUrl: string

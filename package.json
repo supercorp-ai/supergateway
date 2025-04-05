@@ -1,6 +1,6 @@
 {
   "name": "supergateway",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Run MCP stdio servers over SSE or visa versa",
   "repository": {
     "type": "git",

@@ -3,12 +3,14 @@ import bodyParser from 'body-parser'
 import cors from 'cors'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { parseHeaders } from '../lib/parseHeaders.js'
+import { Session } from 'inspector/promises'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -33,6 +35,113 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
+class ChildProcessPool {
+  private maxConcurrency: number
+  private activeProcesses: Set<ChildProcessWithoutNullStreams> = new Set()
+  private idleProcesses: ChildProcessWithoutNullStreams[] = []
+  private queue: Array<() => void> = []
+  private logger: Logger
+
+  constructor(
+    private stdioCmd: string,
+    maxConcurrency: number,
+    logger: Logger,
+    prefork: number = 0,
+  ) {
+    this.maxConcurrency = maxConcurrency
+    this.logger = logger
+    // 预创建子进程
+    for (let i = 0; i < Math.min(prefork, maxConcurrency); i++) {
+      this.idleProcesses.push(this.createChild())
+    }
+    logger.info(`Preforked ${prefork} child processes`)
+  }
+
+  async acquire(): Promise<ChildProcessWithoutNullStreams> {
+    // 优先使用空闲进程
+    if (this.idleProcesses.length > 0) {
+      const child = this.idleProcesses.shift()!
+      this.activeProcesses.add(child)
+      this.logger.info(
+        `Reusing child process, active: ${this.activeProcesses.size}`,
+      )
+      return child
+    }
+
+    if (this.activeProcesses.size < this.maxConcurrency) {
+      const child = this.createChild()
+      this.activeProcesses.add(child)
+      this.logger.info(
+        `New child created, active: ${this.activeProcesses.size}`,
+      )
+      return child
+    }
+
+    this.logger.info(
+      `Waiting for available process (${this.queue.length} queued)`,
+    )
+    return new Promise((resolve) => {
+      this.queue.push(() => {
+        const child = this.idleProcesses.shift() || this.createChild()
+        this.activeProcesses.add(child)
+        resolve(child)
+      })
+    })
+  }
+
+  release(child: ChildProcessWithoutNullStreams) {
+    // 检查进程是否存活
+    if (child.exitCode === null && !child.killed) {
+      this.activeProcesses.delete(child)
+      this.idleProcesses.push(child)
+      this.logger.info(
+        `Process released to pool, active: ${this.activeProcesses.size}, idle: ${this.idleProcesses.length}`,
+      )
+
+      // 清空旧监听器和缓冲区
+      child.stdout.removeAllListeners('data')
+      child.stderr.removeAllListeners('data')
+      child.removeAllListeners('exit')
+
+      // 触发等待队列
+      if (this.queue.length > 0) {
+        const next = this.queue.shift()!
+        next()
+      }
+    } else {
+      this.logger.info('Cannot release exited process')
+    }
+  }
+
+  private createChild(): ChildProcessWithoutNullStreams {
+    const child = spawn(this.stdioCmd, { shell: true })
+
+    child.on('exit', (code, signal) => {
+      this.activeProcesses.delete(child)
+      this.idleProcesses = this.idleProcesses.filter((p) => p !== child)
+      this.logger.error(
+        `Child exited, active: ${this.activeProcesses.size}, code=${code}`,
+      )
+      this.checkQueue()
+    })
+
+    child.on('error', (err) => {
+      this.activeProcesses.delete(child)
+      this.idleProcesses = this.idleProcesses.filter((p) => p !== child)
+      this.logger.error(`Child error: ${err.message}`)
+    })
+
+    return child
+  }
+
+  private checkQueue() {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift()!
+      next()
+    }
+  }
+}
+
 export async function stdioToSse(args: StdioToSseArgs) {
   const {
     stdioCmd,
@@ -47,6 +156,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
   } = args
 
   const headers = parseHeaders(cliHeaders, logger)
+  const prefork = parseInt(process.env.MCP_STDIO_PROCESS_PRE_FORK || '1', 10)
+  const maxConcurrency = parseInt(process.env.MCP_STDIO_PROCESS_MAX || '10', 10)
+  const pool = new ChildProcessPool(stdioCmd, maxConcurrency, logger, prefork)
+
+  logger.info(`Starting with max concurrency: ${maxConcurrency}`)
 
   logger.info(
     `  - Headers: ${cliHeaders.length ? JSON.stringify(cliHeaders) : '(none)'}`,
@@ -66,16 +180,16 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   onSignals({ logger })
 
-  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
-  child.on('exit', (code, signal) => {
-    logger.error(`Child exited: code=${code}, signal=${signal}`)
-    process.exit(code ?? 1)
-  })
+  // const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
+  // child.on('exit', (code, signal) => {
+  //   logger.error(`Child exited: code=${code}, signal=${signal}`)
+  //   process.exit(code ?? 1)
+  // })
 
-  const server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
+  // const server = new Server(
+  //   { name: 'supergateway', version: getVersion() },
+  //   { capabilities: {} },
+  // )
 
   const sessions: Record<
     string,
@@ -111,14 +225,74 @@ export async function stdioToSse(args: StdioToSseArgs) {
       headers,
     })
 
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = await pool.acquire()
+    } catch (err) {
+      logger.error('Failed to acquire child process:', err)
+      res.status(503).send('Service unavailable')
+      return
+    }
+
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
+    const server = new McpServer(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
     await server.connect(sseTransport)
 
     const sessionId = sseTransport.sessionId
     if (sessionId) {
       sessions[sessionId] = { transport: sseTransport, response: res }
     }
+    let buffer = ''
 
+    // 处理子进程输出，仅发送到当前会话
+    const onStdoutData = (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      lines.forEach((line) => {
+        if (!line.trim()) return
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
+          sseTransport.send(jsonMsg)
+        } catch (err) {
+          logger.error(`Child non-JSON: ${line}`, err)
+        }
+      })
+    }
+
+    child.stdout.on('data', onStdoutData)
+
+    // 处理子进程退出
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      logger.error(
+        `Child exited (session ${sessionId}): code=${code}, signal=${signal}`,
+      )
+      sseTransport.close()
+    }
+
+    child.on('exit', onExit)
+
+    // 在客户端断开处理中
+    req.on('close', () => {
+      logger.info(`Client disconnected (session ${sessionId})`)
+      delete sessions[sessionId]
+
+      // 停止当前会话的数据处理
+      child.stdout.off('data', onStdoutData)
+      child.off('exit', onExit)
+
+      // 重置子进程状态
+      child.stdin.write(JSON.stringify({ method: 'reset' }) + '\n')
+
+      // 释放回进程池
+      pool.release(child)
+    })
+
+    // 处理客户端消息
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
       child.stdin.write(JSON.stringify(msg) + '\n')
@@ -133,11 +307,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
       logger.error(`SSE error (session ${sessionId}):`, err)
       delete sessions[sessionId]
     }
-
-    req.on('close', () => {
-      logger.info(`Client disconnected (session ${sessionId})`)
-      delete sessions[sessionId]
-    })
   })
 
   // @ts-ignore
@@ -166,33 +335,5 @@ export async function stdioToSse(args: StdioToSseArgs) {
     logger.info(`Listening on port ${port}`)
     logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
     logger.info(`POST messages: http://localhost:${port}${messagePath}`)
-  })
-
-  let buffer = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8')
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    lines.forEach((line) => {
-      if (!line.trim()) return
-      try {
-        const jsonMsg = JSON.parse(line)
-        logger.info('Child → SSE:', jsonMsg)
-        for (const [sid, session] of Object.entries(sessions)) {
-          try {
-            session.transport.send(jsonMsg)
-          } catch (err) {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          }
-        }
-      } catch {
-        logger.error(`Child non-JSON: ${line}`)
-      }
-    })
-  })
-
-  child.stderr.on('data', (chunk: Buffer) => {
-    logger.error(`Child stderr: ${chunk.toString('utf8')}`)
   })
 }

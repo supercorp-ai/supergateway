@@ -3,14 +3,12 @@ import bodyParser from 'body-parser'
 import cors from 'cors'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { parseHeaders } from '../lib/parseHeaders.js'
-import { Session } from 'inspector/promises'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -235,7 +233,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     }
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
-    const server = new McpServer(
+    const server = new Server(
       { name: 'supergateway', version: getVersion() },
       { capabilities: {} },
     )
@@ -300,7 +298,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
     sseTransport.onclose = () => {
       logger.info(`SSE connection closed (session ${sessionId})`)
-      delete sessions[sessionId]
+      if (sessionId && sessions[sessionId]) {
+        delete sessions[sessionId]
+      }
     }
 
     sseTransport.onerror = (err) => {

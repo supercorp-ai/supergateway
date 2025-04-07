@@ -114,9 +114,13 @@ class ChildProcessPool {
   private createChild(): ChildProcessWithoutNullStreams {
     const child = spawn(this.stdioCmd, { shell: true })
 
-    // 添加stdin错误监听
     child.stdin.on('error', (err) => {
       this.logger.error(`Child stdin error: ${err.message}`)
+    })
+
+    child.stderr.on('data', (data: Buffer) => {
+      const errorOutput = data.toString('utf8').trim()
+      this.logger.error(`Child stderr error: ${errorOutput}`)
     })
 
     child.on('exit', (code, signal) => {
@@ -259,7 +263,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)
-          logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
+          logger.info(`Child → SSE (session ${sessionId}) [JSON]:`, {
+            parsed: jsonMsg,
+            raw: line,
+          })
           sseTransport.send(jsonMsg)
         } catch (err) {
           logger.error(`Child non-JSON: ${line}`, err)

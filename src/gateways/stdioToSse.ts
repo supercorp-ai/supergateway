@@ -114,6 +114,11 @@ class ChildProcessPool {
   private createChild(): ChildProcessWithoutNullStreams {
     const child = spawn(this.stdioCmd, { shell: true })
 
+    // 添加stdin错误监听
+    child.stdin.on('error', (err) => {
+      this.logger.error(`Child stdin error: ${err.message}`)
+    })
+
     child.on('exit', (code, signal) => {
       this.activeProcesses.delete(child)
       this.idleProcesses = this.idleProcesses.filter((p) => p !== child)
@@ -283,8 +288,16 @@ export async function stdioToSse(args: StdioToSseArgs) {
       child.stdout.off('data', onStdoutData)
       child.off('exit', onExit)
 
-      // 重置子进程状态
-      child.stdin.write(JSON.stringify({ method: 'reset' }) + '\n')
+      // 安全写入reset命令, 重置子进程状态
+      if (child.exitCode === null && !child.killed) {
+        child.stdin.write(JSON.stringify({ method: 'reset' }) + '\n', (err) => {
+          if (err) {
+            logger.error(`Reset command write error: ${err.message}`)
+          }
+        })
+      } else {
+        logger.info('Child process already exited, skipping reset')
+      }
 
       // 释放回进程池
       pool.release(child)

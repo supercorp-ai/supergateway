@@ -57,6 +57,8 @@ npx -y supergateway \
     --header "X-My-Header: another-value"
 ```
 
+_Note: If you're using this with Cursor or Claude Desktop, be aware that passing headers with spaces (e.g., Authorization: Bearer ...) may not work as expected due to a bug in their handling of escaped strings. As a temporary workaround, try using headers without spaces like "Authorization:token" or consult their support for updates._
+
 ## stdio → WS
 
 Expose an MCP stdio server as a WebSocket server:

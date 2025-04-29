@@ -1,5 +1,5 @@
 import express from 'express'
-import cors from 'cors'
+import cors, { type CorsOptions } from 'cors'
 import { createServer } from 'http'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -8,23 +8,26 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
+import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
   port: number
   messagePath: string
   logger: Logger
-  enableCors: boolean
+  corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
-  const { stdioCmd, port, messagePath, logger, healthEndpoints, enableCors } =
+  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
     args
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - messagePath: ${messagePath}`)
-  logger.info(`  - CORS enabled: ${enableCors}`)
+  logger.info(
+    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
+  )
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
@@ -89,8 +92,8 @@ export async function stdioToWs(args: StdioToWsArgs) {
 
     const app = express()
 
-    if (enableCors) {
-      app.use(cors())
+    if (corsOrigin) {
+      app.use(cors({ origin: corsOrigin }))
     }
 
     for (const ep of healthEndpoints) {

@@ -22,6 +22,8 @@ import { Logger } from './types.js'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
 import { stdioToWs } from './gateways/stdioToWs.js'
+import { headers } from './lib/headers.js'
+import { corsOrigin } from './lib/corsOrigin.js'
 
 const log = (...args: any[]) => console.log('[supergateway]', ...args)
 const logStderr = (...args: any[]) => console.error('[supergateway]', ...args)
@@ -99,9 +101,9 @@ async function main() {
       description: 'Logging level',
     })
     .option('cors', {
-      type: 'boolean',
-      default: false,
-      description: 'Enable CORS',
+      type: 'array',
+      description:
+        'Enable CORS. Use --cors with no values to allow all origins, or supply one or more allowed origins (e.g. --cors "http://example.com" or --cors "/example\\.com$/" for regex matching).',
     })
     .option('healthEndpoint', {
       type: 'array',
@@ -113,7 +115,12 @@ async function main() {
       type: 'array',
       default: [],
       description:
-        'Headers to be added to the request headers, e.g. --header "Authorization: Bearer <token>"',
+        'Headers to be added to the request headers, e.g. --header "x-user-id: 123"',
+    })
+    .option('oauth2Bearer', {
+      type: 'string',
+      description:
+        'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
     })
     .help()
     .parseSync()
@@ -150,9 +157,12 @@ async function main() {
           ssePath: argv.ssePath,
           messagePath: argv.messagePath,
           logger,
-          enableCors: argv.cors,
+          corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
-          cliHeaders: argv.header as string[],
+          headers: headers({
+            argv,
+            logger,
+          }),
         })
       } else if (argv.outputTransport === 'ws') {
         await stdioToWs({
@@ -160,7 +170,7 @@ async function main() {
           port: argv.port,
           messagePath: argv.messagePath,
           logger,
-          enableCors: argv.cors,
+          corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
         })
       } else {
@@ -172,7 +182,10 @@ async function main() {
         await sseToStdio({
           sseUrl: argv.sse!,
           logger,
-          headers: argv.header as string[],
+          headers: headers({
+            argv,
+            logger,
+          }),
         })
       } else {
         logStderr(`Error: sse→${argv.outputTransport} not supported`)

@@ -2,29 +2,67 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import {
+import type {
   JSONRPCMessage,
   JSONRPCRequest,
+  ClientCapabilities,
+  Implementation,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
-import { parseHeaders } from '../lib/parseHeaders.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
-  headers?: string[]
+  headers: Record<string, string>
+}
+
+let sseClient: Client | undefined
+
+const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
+  const clientInfo = message.params?.clientInfo as Implementation | undefined
+  const clientCapabilities = message.params?.capabilities as
+    | ClientCapabilities
+    | undefined
+
+  return new Client(
+    {
+      name: clientInfo?.name ?? 'supergateway',
+      version: clientInfo?.version ?? getVersion(),
+    },
+    {
+      capabilities: clientCapabilities ?? {},
+    },
+  )
+}
+
+const newFallbackSseClient = async ({
+  sseTransport,
+}: {
+  sseTransport: SSEClientTransport
+}) => {
+  const fallbackSseClient = new Client(
+    {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+    {
+      capabilities: {},
+    },
+  )
+
+  await fallbackSseClient.connect(sseTransport)
+  return fallbackSseClient
 }
 
 export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger, headers: cliHeaders = [] } = args
-  const headers = parseHeaders(cliHeaders, logger)
+  const { sseUrl, logger, headers } = args
 
   logger.info(`  - sse: ${sseUrl}`)
   logger.info(
-    `  - Headers: ${cliHeaders.length ? JSON.stringify(cliHeaders) : '(none)'}`,
+    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
   )
   logger.info('Connecting to SSE...')
 
@@ -42,29 +80,25 @@ export async function sseToStdio(args: SseToStdioArgs) {
     },
   })
 
-  const sseClient = new Client(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-
   sseTransport.onerror = (err) => {
     logger.error('SSE error:', err)
   }
+
   sseTransport.onclose = () => {
     logger.error('SSE connection closed')
     process.exit(1)
   }
 
-  await sseClient.connect(sseTransport)
-  logger.info('SSE connected')
-
   const stdioServer = new Server(
-    sseClient.getServerVersion() ?? {
+    {
       name: 'supergateway',
       version: getVersion(),
     },
-    { capabilities: sseClient.getServerCapabilities() },
+    {
+      capabilities: {},
+    },
   )
+
   const stdioTransport = new StdioServerTransport()
   await stdioServer.connect(stdioTransport)
 
@@ -80,8 +114,32 @@ export async function sseToStdio(args: SseToStdioArgs) {
       logger.info('Stdio → SSE:', message)
       const req = message as JSONRPCRequest
       let result
+
       try {
-        result = await sseClient.request(req, z.any())
+        if (!sseClient) {
+          if (message.method === 'initialize') {
+            sseClient = newInitializeSseClient({
+              message,
+            })
+
+            const originalRequest = sseClient.request
+
+            sseClient.request = async function (...args) {
+              result = await originalRequest.apply(this, args)
+              return result
+            }
+
+            await sseClient.connect(sseTransport)
+            sseClient.request = originalRequest
+          } else {
+            logger.info('SSE client not initialized, creating fallback client')
+            sseClient = await newFallbackSseClient({ sseTransport })
+          }
+
+          logger.info('SSE connected')
+        } else {
+          result = await sseClient.request(req, z.any())
+        }
       } catch (err) {
         logger.error('Request error:', err)
         const errorCode =

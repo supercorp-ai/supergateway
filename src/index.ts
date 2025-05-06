@@ -117,6 +117,12 @@ async function main() {
       description:
         'Headers to be added to the request headers, e.g. --header "x-user-id: 123"',
     })
+    .option('headersPassthrough', {
+      type: 'array',
+      default: [],
+      description:
+        'List of request headers to pass through to the child process environment, e.g. --headersPassthrough Authorization: Bearer some-access-token',
+    })
     .option('oauth2Bearer', {
       type: 'string',
       description:
@@ -143,7 +149,7 @@ async function main() {
 
   logger.info('Starting...')
   logger.info(
-    'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai',
+    'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai - changed by Tibor Bossanyi aitrainerlab.com',
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
@@ -163,6 +169,7 @@ async function main() {
             argv,
             logger,
           }),
+          headersPassthrough: argv.headersPassthrough as string[],
         })
       } else if (argv.outputTransport === 'ws') {
         await stdioToWs({

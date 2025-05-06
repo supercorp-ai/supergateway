@@ -9,6 +9,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { RequestHandler } from 'express'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -20,6 +21,7 @@ export interface StdioToSseArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  headersPassthrough: string[]
 }
 
 const setResponseHeaders = ({
@@ -44,6 +46,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     corsOrigin,
     healthEndpoints,
     headers,
+    headersPassthrough,
   } = args
 
   logger.info(
@@ -66,20 +69,13 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   onSignals({ logger })
 
-  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
-  child.on('exit', (code, signal) => {
-    logger.error(`Child exited: code=${code}, signal=${signal}`)
-    process.exit(code ?? 1)
-  })
-
-  const server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-
   const sessions: Record<
     string,
-    { transport: SSEServerTransport; response: express.Response }
+    {
+      transport: SSEServerTransport
+      response: express.Response
+      child: ChildProcessWithoutNullStreams
+    }
   > = {}
 
   const app = express()
@@ -111,48 +107,92 @@ export async function stdioToSse(args: StdioToSseArgs) {
       headers,
     })
 
+    // Capture headers and build child environment
+    const passthroughEnv: Record<string, string> = {}
+    for (const headerName of headersPassthrough) {
+      const headerValue = req.header(headerName)
+      if (headerValue != null) {
+        const envKey =
+          'HEADER_' + headerName.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+        passthroughEnv[envKey] = headerValue
+      }
+    }
+    const childEnv = { ...process.env, ...passthroughEnv }
+
+    // Spawn child process for this session
+    const child = spawn(stdioCmd, { shell: true, env: childEnv })
+
+    // Create a dedicated MCP server for this session
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     await server.connect(sseTransport)
 
-    const sessionId = sseTransport.sessionId
-    if (sessionId) {
-      sessions[sessionId] = { transport: sseTransport, response: res }
-    }
+    const sessionId = sseTransport.sessionId as string
+    sessions[sessionId] = { transport: sseTransport, response: res, child }
 
+    // Handle child exit
+    child.on('exit', (code, signal) => {
+      logger.error(
+        `Child exited (session ${sessionId}): code=${code}, signal=${signal}`,
+      )
+      delete sessions[sessionId]
+    })
+
+    // Forward SSE → child stdin
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
-
     sseTransport.onclose = () => {
       logger.info(`SSE connection closed (session ${sessionId})`)
+      child.kill()
       delete sessions[sessionId]
     }
-
     sseTransport.onerror = (err) => {
       logger.error(`SSE error (session ${sessionId}):`, err)
+      child.kill()
       delete sessions[sessionId]
     }
-
     req.on('close', () => {
       logger.info(`Client disconnected (session ${sessionId})`)
+      child.kill()
       delete sessions[sessionId]
+    })
+
+    // Forward child stdout → SSE
+    let buffer = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info(
+            `Child → SSE (session ${sessionId}): ${JSON.stringify(jsonMsg)}`,
+          )
+          sseTransport.send(jsonMsg)
+        } catch {
+          logger.error(`Child non-JSON: ${line}`)
+        }
+      }
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      logger.error(`Child stderr: ${chunk.toString('utf8')}`)
     })
   })
 
-  // @ts-ignore
-  app.post(messagePath, async (req, res) => {
+  // Handle POST messages per session
+  app.post(messagePath, (async (req, res, next) => {
     const sessionId = req.query.sessionId as string
-
-    setResponseHeaders({
-      res,
-      headers,
-    })
-
+    setResponseHeaders({ res, headers })
     if (!sessionId) {
       return res.status(400).send('Missing sessionId parameter')
     }
-
     const session = sessions[sessionId]
     if (session?.transport?.handlePostMessage) {
       logger.info(`POST to SSE transport (session ${sessionId})`)
@@ -160,39 +200,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
     } else {
       res.status(503).send(`No active SSE connection for session ${sessionId}`)
     }
-  })
+  }) as RequestHandler)
 
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
     logger.info(`POST messages: http://localhost:${port}${messagePath}`)
-  })
-
-  let buffer = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8')
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    lines.forEach((line) => {
-      if (!line.trim()) return
-      try {
-        const jsonMsg = JSON.parse(line)
-        logger.info('Child → SSE:', jsonMsg)
-        for (const [sid, session] of Object.entries(sessions)) {
-          try {
-            session.transport.send(jsonMsg)
-          } catch (err) {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          }
-        }
-      } catch {
-        logger.error(`Child non-JSON: ${line}`)
-      }
-    })
-  })
-
-  child.stderr.on('data', (chunk: Buffer) => {
-    logger.error(`Child stderr: ${chunk.toString('utf8')}`)
   })
 }

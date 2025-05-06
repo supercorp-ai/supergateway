@@ -1,15 +1,16 @@
+[![Forked from supercorp-ai/supergateway](https://img.shields.io/badge/fork-supergateway-blue)](https://github.com/supercorp-ai/supergateway)
 ![Supergateway: Run stdio MCP servers over SSE and WS](https://raw.githubusercontent.com/supercorp-ai/supergateway/main/supergateway.png)
 
 **Supergateway** runs **MCP stdio-based servers** over **SSE (Server-Sent Events)** or **WebSockets (WS)** with one command. This is useful for remote access, debugging, or connecting to clients when your MCP server only supports stdio.
 
-Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterface](https://superinterface.ai), and [Supercorp](https://supercorp.ai).
+Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterface](https://superinterface.ai), and [AI-Trainer](https://aitrainerlab.com).
 
 ## Installation & Usage
 
 Run Supergateway via `npx`:
 
 ```bash
-npx -y supergateway --stdio "uvx mcp-server-git"
+npx -y supergateway --stdio "uvx mcp-server-git" --headersPassthrough Authorization of an MCP Server automatically
 ```
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
@@ -20,6 +21,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE or SSE→stdio mode; can be used multiple times)
+- **`--headersPassthrough <headerName> [headerName...]`**: Pass through one or more incoming HTTP request headers into each child process's environment as `HEADER_<UPPER_SNAKE>` variables (e.g. `--headersPassthrough Authorization `).
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel info | none`**: Controls logging level (default: `info`). Use `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
@@ -98,7 +100,7 @@ npx -y supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-fil
 ngrok http 8000
 ```
 
-ngrok provides a public URL for remote access. 
+ngrok provides a public URL for remote access.
 
 MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
 
@@ -115,7 +117,7 @@ docker run -it --rm -p 8000:8000 supercorp/supergateway \
     --port 8000
 ```
 
-Docker pulls the image automatically. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
+Docker pulls the image automatically. The MCP server runs in the container's root directory (`/`). You can mount host directories if needed.
 
 ### Building the Image Yourself
 
@@ -131,7 +133,7 @@ docker run -it --rm -p 8000:8000 supergateway \
 
 ## Using with Claude Desktop (SSE → stdio mode)
 
-Claude Desktop can use Supergateway’s SSE→stdio mode.
+Claude Desktop can use Supergateway's SSE→stdio mode.
 
 ### NPX-based MCP Server Example
 

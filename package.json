@@ -1,10 +1,11 @@
 {
-  "name": "supergateway",
-  "version": "2.7.0",
+  "name": "@bossanyit/supergateway",
+  "version": "2.7.0-fork.0",
   "description": "Run MCP stdio servers over SSE or visa versa",
+  "author": "Tibor Bossanyi <support@aitrainerlab.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/supercorp-ai/supergateway.git"
+    "url": "git+https://github.com/bossanyit/supergateway.git"
   },
   "keywords": [
     "mcp",

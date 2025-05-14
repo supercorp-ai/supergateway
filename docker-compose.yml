@@ -1,0 +1,28 @@
+version: '3.8' # Or a newer compatible version
+
+services:
+  supergateway:
+    image: supergateway
+    build:
+      dockerfile: ./Dockerfile.deno
+    ports:
+      - "8800:8000" # Maps port 8000 on the host to port 8000 in the container
+    stdin_open: true  # Equivalent to the -i flag in `docker run` (keeps STDIN open)
+    tty: true         # Equivalent to the -t flag in `docker run` (allocates a pseudo-TTY)
+    # The --rm flag in `docker run` causes the container to be automatically
+    # removed when it exits. In Docker Compose, containers are typically removed
+    # when you run `docker-compose down`.
+    # If you want a one-off run similar to `docker run --rm`, you can use
+    # `docker-compose run --rm supergateway`. For a service that's part of `docker-compose up`,
+    # the lifecycle is managed by `up` and `down`.
+
+    # The command and its arguments passed to the image's entrypoint:
+#    command:
+#      - "--stdio"
+#      - "npx -y deno run -q -A jsr:@omedia/mcp-server-drupal --drupal-url=https://www.drupal11.site"
+    # Note on DRUPAL_AUTH_TOKEN:
+    # to the --stdio option of the supercorp/supergateway application.
+    # If DRUPAL_AUTH_TOKEN was intended to be an environment variable for the container itself,
+    # it would typically be set using the -e flag in `docker run` and the `environment` key here:
+#    environment:
+#      - DRUPAL_AUTH_TOKEN=CHANGE_ME

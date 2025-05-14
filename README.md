@@ -129,6 +129,18 @@ docker run -it --rm -p 8000:8000 supergateway \
     --port 8000
 ```
 
+### Building the Image Yourself with deno support
+
+Use provided Dockerfile:
+
+```bash
+docker build -f Dockerfile.deno -t supergateway .
+
+docker compose up
+# or as service 
+# docker compose up -d
+```
+
 ## Using with Claude Desktop (SSE → stdio mode)
 
 Claude Desktop can use Supergateway’s SSE→stdio mode.

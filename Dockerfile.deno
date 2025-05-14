@@ -1,0 +1,13 @@
+FROM node:20
+
+RUN npm install -g npm@11.3.0
+RUN npm install -g deno
+# RUN curl -fsSL https://deno.land/install.sh | sh
+
+RUN npm install -g supergateway
+
+EXPOSE 8000
+
+ENTRYPOINT ["supergateway"]
+
+CMD ["--help"]

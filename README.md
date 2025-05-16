@@ -14,12 +14,13 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
+- **`--streamableHTTP "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHTTP→stdio mode)
 - **`--outputTransport stdio | sse | ws`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse`)
 - **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE or WS clients (stdio→SSE mode; optional)
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
-- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE or SSE→stdio mode; can be used multiple times)
+- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or StreamableHTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel info | none`**: Controls logging level (default: `info`). Use `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
@@ -54,6 +55,23 @@ You can also pass headers when sending requests. This is useful for authenticati
 ```bash
 npx -y supergateway \
     --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app" \
+    --oauth2Bearer "some-access-token" \
+    --header "X-My-Header: another-header-value"
+```
+
+## StreamableHTTP → stdio
+
+Connect to a remote Streamable HTTP server and expose locally via stdio:
+
+```bash
+npx -y supergateway --streamableHTTP "https://mcp-server.example.com/mcp"
+```
+
+This mode is useful for connecting to MCP servers that use the newer Streamable HTTP transport protocol. Like SSE mode, you can also pass headers for authentication:
+
+```bash
+npx -y supergateway \
+    --streamableHTTP "https://mcp-server.example.com/mcp" \
     --oauth2Bearer "some-access-token" \
     --header "X-My-Header: another-header-value"
 ```
@@ -98,7 +116,7 @@ npx -y supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-fil
 ngrok http 8000
 ```
 
-ngrok provides a public URL for remote access. 
+ngrok provides a public URL for remote access.
 
 MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
 

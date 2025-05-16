@@ -68,7 +68,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   onSignals({ logger })
 
   const preFork = parseInt(process.env.MCP_STDIO_PROCESS_PRE_FORK || '1', 10)
-  const maxConcurrency = parseInt(process.env.MCP_STDIO_PROCESS_MAX || '10', 10)
+  const maxConcurrency = parseInt(process.env.MCP_STDIO_PROCESS_MAX || '20', 10)
   const pool = new StdioChildProcessPool(
     stdioCmd,
     maxConcurrency,

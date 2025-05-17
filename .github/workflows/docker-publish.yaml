@@ -65,6 +65,8 @@ jobs:
 
       - name: Build & push (Bake)
         uses: docker/bake-action@v6
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
         with:
           source: .
           files: |

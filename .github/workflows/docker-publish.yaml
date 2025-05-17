@@ -1,4 +1,4 @@
-name: Push Docker image
+name: Publish Docker images
 
 on:
   push:
@@ -26,20 +26,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            ${{ env.GHCR_REGISTRY }}/supergateway
-            ${{ env.DOCKERHUB_REGISTRY }}/supergateway
-          tags: |
-            type=schedule
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-            type=sha
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
@@ -60,14 +46,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v3
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - id: Docker meta
+        uses: docker/metadata-action@v5
         with:
-          context: "."
-          file: "./Dockerfile"
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          images: |
+            ${{ env.GHCR_REGISTRY }}/supergateway
+            ${{ env.DOCKERHUB_REGISTRY }}/supergateway
+          labels: |
+            org.opencontainers.image.title=Supergateway
+            org.opencontainers.image.version=${{ steps.ver.outputs.VERSION }}
+            org.opencontainers.image.source=${{ github.repository }}
+
+      - name: Build & push (Bake)
+        uses: docker/bake-action@v4
+        with:
+          files: docker-bake.hcl
+          push:  true
+          set: |
+            *.args.VERSION=${{ steps.ver.outputs.VERSION }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to:   type=gha,mode=max

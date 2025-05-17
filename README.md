@@ -121,31 +121,29 @@ Docker pulls the image automatically. The MCP server runs in the container’s r
 
 Pull any of these pre-built Supergateway images for various dependencies you might need.
 
-- **uvx**  
-  Supergateway + uv/uvx, so you can call `uvx` directly:  
+- **uvx**
+  Supergateway + uv/uvx, so you can call `uvx` directly:
+
   ```bash
   docker run -it --rm -p 8000:8000 supercorp/supergateway:uvx \
-    --stdio "uvx mcp-server-git"
+    --stdio "uvx mcp-server-fetch"
   ```
 
-- **deno**  
-  Supergateway + Deno, ready to run Deno-based MCP servers:  
+- **deno**
+  Supergateway + Deno, ready to run Deno-based MCP servers:
   ```bash
   docker run -it --rm -p 8000:8000 supercorp/supergateway:deno \
     --stdio "deno run -A jsr:@omedia/mcp-server-drupal --drupal-url https://your-drupal-server.com"
   ```
-
 
 ### Building the Image Yourself
 
 Use provided Dockerfile:
 
 ```bash
-docker build -t supergateway .
+docker build -f docker/base.Dockerfile -t supergateway .
 
-docker run -it --rm -p 8000:8000 supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
-    --port 8000
+docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
 ```
 
 ## Using with Claude Desktop (SSE → stdio mode)

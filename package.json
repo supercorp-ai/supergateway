@@ -19,7 +19,7 @@
     "supergateway": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",

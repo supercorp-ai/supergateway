@@ -70,7 +70,7 @@ async function main() {
       description: '(stdio→SSE, stdio→WS) Path for messages',
     })
     .option('logLevel', {
-      choices: ['info', 'none'] as const,
+      choices: ['debug', 'info', 'none'] as const,
       default: 'info',
       description: 'Logging level',
     })

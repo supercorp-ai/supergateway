@@ -248,7 +248,7 @@ Issues and PRs welcome. Please open one if you encounter problems or have featur
 
 Supergateway is tested with Node Test Runner.
 
-To run tests locally, Node version 20+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
+To run tests locally, Node version 24+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
 
 Run tests with:
 

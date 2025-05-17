@@ -25,6 +25,7 @@ target "uvx" {
   inherits   = ["common"]
   depends_on  = ["base"]
   dockerfile = "docker/uvx.Dockerfile"
+  contexts = { base = "target:base" }
   tags = [
     "supercorp/supergateway:uvx",
     "supercorp/supergateway:${VERSION}-uvx"
@@ -35,6 +36,7 @@ target "deno" {
   inherits   = ["common"]
   depends_on  = ["base"]
   dockerfile = "docker/deno.Dockerfile"
+  contexts = { base = "target:base" }
   tags = [
     "supercorp/supergateway:deno",
     "supercorp/supergateway:${VERSION}-deno"

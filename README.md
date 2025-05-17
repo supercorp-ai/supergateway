@@ -117,6 +117,25 @@ docker run -it --rm -p 8000:8000 supercorp/supergateway \
 
 Docker pulls the image automatically. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
 
+#### Images with dependencies
+
+Pull any of these pre-built Supergateway images for various dependencies you might need.
+
+- **uvx**  
+  Supergateway + uv/uvx, so you can call `uvx` directly:  
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:uvx \
+    --stdio "uvx mcp-server-git"
+  ```
+
+- **deno**  
+  Supergateway + Deno, ready to run Deno-based MCP servers:  
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:deno \
+    --stdio "deno run -A jsr:@omedia/mcp-server-drupal --drupal-url https://your-drupal-server.com"
+  ```
+
+
 ### Building the Image Yourself
 
 Use provided Dockerfile:

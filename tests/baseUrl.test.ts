@@ -1,29 +1,68 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { stdioToSse } from '../src/gateways/stdioToSse.js'
+import { getLogger } from '../src/lib/getLogger.js'
 
-test('logs the first endpoint SSE', { timeout: 10_000 }, async (t) => {
-  console.log({
-    t,
-    mock: t.mock,
-    mod: t.mock.module,
+const startGateway = async ({
+  baseUrl,
+  ssePath,
+  messagePath,
+}: {
+  baseUrl: string
+  ssePath: string
+  messagePath: string
+}) => {
+  const logger = getLogger({
+    logLevel: 'none',
+    outputTransport: 'stdio',
   })
 
-  // @ts-ignore
-  const endpointSpy = t.mock.fn<[MessageEvent], void>()
+  await stdioToSse({
+    stdioCmd: 'npx -y @modelcontextprotocol/server-memory',
+    port: 8000,
+    baseUrl,
+    ssePath,
+    messagePath,
+    logger,
+    corsOrigin: false,
+    healthEndpoints: [],
+    headers: {},
+  })
 
-  const { EventSource: RealES } = await import('eventsource')
+  return async () => {
+    process.kill(process.pid, 'SIGINT')
+  }
+}
 
-  class TappableES extends RealES {
+test('baseUrl should be passed correctly in endpoint event', async (t) => {
+  // 0.0.0.0 is just simplest to test on all machines
+  // also tested with ngrok just to make sure
+  const baseUrl = 'http://0.0.0.0:8000'
+  const ssePath = '/sse'
+  const messagePath = '/message'
+
+  const teardown = await startGateway({
+    baseUrl,
+    ssePath,
+    messagePath,
+  })
+
+  t.after(() => teardown())
+
+  const endpointSpy = t.mock.fn()
+
+  const { EventSource } = await import('eventsource')
+
+  class EventSourceSpy extends EventSource {
     constructor(url: string | URL, init?: EventSourceInit) {
       super(url as any, init)
-      // @ts-ignore
       this.addEventListener('endpoint', endpointSpy)
     }
   }
 
   t.mock.module('eventsource', {
-    defaultExport: TappableES,
-    namedExports: { EventSource: TappableES },
+    defaultExport: EventSourceSpy,
+    namedExports: { EventSource: EventSourceSpy },
   })
 
   const [{ Client }, { SSEClientTransport }] = await Promise.all([
@@ -31,14 +70,10 @@ test('logs the first endpoint SSE', { timeout: 10_000 }, async (t) => {
     import('@modelcontextprotocol/sdk/client/sse.js'),
   ])
 
-  const transport = new SSEClientTransport(
-    new URL('/sse', 'https://b8ad-212-231-122-245.ngrok-free.app'),
-  )
+  const transport = new SSEClientTransport(new URL(ssePath, baseUrl))
   const client = new Client({ name: 'endpoint-tester', version: '0.0.0' })
 
   await client.connect(transport)
-  // give the server a tick
-  await new Promise((r) => setTimeout(r, 50))
   await client.close()
 
   assert.strictEqual(
@@ -47,13 +82,10 @@ test('logs the first endpoint SSE', { timeout: 10_000 }, async (t) => {
     'endpoint event should fire exactly once',
   )
 
-  const data = (endpointSpy.mock.calls[0].arguments[0] as MessageEvent).data
+  const data = endpointSpy.mock.calls[0].arguments[0].data
 
-  console.log({ data })
-
-  assert.match(
-    data,
-    /^\/|https?:\/\//,
-    'endpoint data must be a relative path or absolute URL',
+  assert.ok(
+    data.startsWith(`${baseUrl}${messagePath}`),
+    `expected endpoint URL to start with ${baseUrl}${messagePath}, got ${data}`,
   )
 })

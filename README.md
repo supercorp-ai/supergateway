@@ -250,6 +250,20 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@NicoBonaminio](https://github.com/NicoBonaminio)
+- [@sibbl](https://github.com/sibbl)
+- [@podarok](https://github.com/podarok)
+- [@jmn8718](https://github.com/jmn8718)
+- [@TraceIvan](https://github.com/TraceIvan)
+- [@zhoufei0622](https://github.com/zhoufei0622)
+- [@ezyang](https://github.com/ezyang)
+- [@aleksadvaisly](https://github.com/aleksadvaisly)
+- [@wuzhuoquan](https://github.com/wuzhuoquan)
+- [@mantrakp04](https://github.com/mantrakp04)
+- [@mheubi](https://github.com/mheubi)
+- [@mjmendo](https://github.com/mjmendo)
+- [@CyanMystery](https://github.com/CyanMystery)
+- [@earonesty](https://github.com/earonesty)
 - [@StefanBurscher](https://github.com/StefanBurscher)
 - [@tarasyarema](https://github.com/tarasyarema)
 - [@pcnfernando](https://github.com/pcnfernando)

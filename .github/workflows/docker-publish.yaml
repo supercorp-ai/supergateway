@@ -71,6 +71,8 @@ jobs:
           push: true
           set: |
             *.args.VERSION=${{ steps.ver.outputs.VERSION }}
-            *.labels=${{ steps.docker_meta.outputs.labels }}
+            include=${{ steps.docker_meta.outputs.bake-file-tags }}
+            include=${{ steps.docker_meta.outputs.bake-file-labels }}
+            include=${{ steps.docker_meta.outputs.bake-file-annotations }}
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max

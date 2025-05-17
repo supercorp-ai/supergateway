@@ -50,7 +50,8 @@ jobs:
         id: ver
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-      - id: Docker meta
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: |

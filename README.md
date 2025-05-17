@@ -98,7 +98,7 @@ npx -y supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-fil
 ngrok http 8000
 ```
 
-ngrok provides a public URL for remote access. 
+ngrok provides a public URL for remote access.
 
 MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
 
@@ -243,6 +243,18 @@ Supergateway emphasizes modularity:
 ## Contributing
 
 Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions.
+
+## Tests
+
+Supergateway is tested with Node Test Runner.
+
+To run tests locally, Node version 20+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
+
+Run tests with:
+
+```bash
+npm test
+```
 
 ## License
 

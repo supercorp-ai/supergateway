@@ -19,7 +19,7 @@ const startGateway = async ({
 
   await stdioToSse({
     stdioCmd: 'npx -y @modelcontextprotocol/server-memory',
-    port: 8000,
+    port: 11000,
     baseUrl,
     ssePath,
     messagePath,
@@ -37,7 +37,7 @@ const startGateway = async ({
 test('baseUrl should be passed correctly in endpoint event', async (t) => {
   // 0.0.0.0 is just simplest to test on all machines
   // also tested with ngrok just to make sure
-  const baseUrl = 'http://0.0.0.0:8000'
+  const baseUrl = 'http://0.0.0.0:11000'
   const ssePath = '/sse'
   const messagePath = '/message'
 

@@ -1,6 +1,6 @@
 {
   "name": "supergateway",
-  "version": "2.7.0",
+  "version": "2.8.3",
   "description": "Run MCP stdio servers over SSE or visa versa",
   "repository": {
     "type": "git",
@@ -19,10 +19,11 @@
     "supergateway": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
+    "test": "node --experimental-loader ts-node/esm --experimental-test-module-mocks --test 'tests/**/*.test.ts'",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -34,22 +35,22 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "uuid": "^11.1.0",
-    "ws": "^8.18.1",
+    "ws": "^8.18.2",
     "yargs": "^17.7.2",
-    "zod": "^3.24.2"
+    "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.1",
-    "@types/node": "^22.14.1",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.18",
     "@types/ws": "^8.18.1",
     "@types/yargs": "^17.0.33",
     "husky": "^9.1.7",
-    "lint-staged": "^15.5.1",
+    "lint-staged": "^16.0.0",
     "prettier": "^3.5.3",
     "ts-node": "^10.9.2",
-    "tsx": "^4.19.3",
+    "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   }
 }

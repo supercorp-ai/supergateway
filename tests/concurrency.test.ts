@@ -9,7 +9,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 
 const BASE_URL = 'http://localhost:11001'
 const SSE_PATH = '/sse'
-const CONCURRENCY = 2
+const CONCURRENCY = 400
 
 function makeLimiter(maxConcurrency: number) {
   let active = 0
@@ -41,7 +41,7 @@ test.before(async () => {
     baseUrl: BASE_URL,
     ssePath: SSE_PATH,
     messagePath: '/message',
-    logger: getLogger({ logLevel: 'debug', outputTransport: 'stdio' }),
+    logger: getLogger({ logLevel: 'info', outputTransport: 'stdio' }),
     corsOrigin: false,
     healthEndpoints: [],
     headers: {},
@@ -49,11 +49,13 @@ test.before(async () => {
 })
 
 test.after(async () => {
-  await new Promise<void>((res) => setTimeout(res, 3000))
+  await new Promise<void>((res) => setTimeout(res, 30000))
   process.kill(process.pid, 'SIGINT')
 })
 
 test('concurrent listTools → callTool', async () => {
+  const succeededInstances: { id: number; text: string }[] = []
+
   const runClient = async (id: number) => {
     const headers = {
       Authorization: 'Bearer YOUR_API_KEY',
@@ -97,6 +99,10 @@ test('concurrent listTools → callTool', async () => {
 
     await client.close()
     console.log(`Instance ${id} timings:`, timing)
+    succeededInstances.push({
+      id,
+      text,
+    })
   }
 
   await Promise.all(
@@ -104,4 +110,12 @@ test('concurrent listTools → callTool', async () => {
       limit(() => runClient(i + 1)),
     ),
   )
+
+  assert.strictEqual(
+    succeededInstances.length,
+    CONCURRENCY,
+    'All instances should succeed',
+  )
+
+  console.log({ succeededInstances })
 })

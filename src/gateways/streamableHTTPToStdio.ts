@@ -8,6 +8,7 @@ import type {
   ClientCapabilities,
   Implementation,
 } from '@modelcontextprotocol/sdk/types.js'
+import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
@@ -121,8 +122,23 @@ export async function streamableHTTPToStdio(args: StreamableHTTPToStdioArgs) {
 
             const originalRequest = mcpClient.request
 
-            mcpClient.request = async function (...args) {
-              result = await originalRequest.apply(this, args)
+            mcpClient.request = async function (
+              possibleInitRequestMessage,
+              ...restArgs
+            ) {
+              if (
+                InitializeRequestSchema.safeParse(possibleInitRequestMessage)
+                  .success &&
+                message.params?.protocolVersion
+              ) {
+                // respect the protocol version from the stdio client's init request
+                possibleInitRequestMessage.params!.protocolVersion =
+                  message.params.protocolVersion
+              }
+              result = await originalRequest.apply(this, [
+                possibleInitRequestMessage,
+                ...restArgs,
+              ])
               return result
             }
 

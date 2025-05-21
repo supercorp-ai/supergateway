@@ -194,7 +194,7 @@ async function main() {
           }),
         })
       } else {
-        logStderr(`Error: streamableHTTP→${argv.outputTransport} not supported`)
+        logger.error(`Error: streamableHTTP→${argv.outputTransport} not supported`)
         process.exit(1)
       }
     } else {

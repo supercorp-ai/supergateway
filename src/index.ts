@@ -21,39 +21,13 @@
 
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
-import { Logger } from './types.js'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
 import { stdioToWs } from './gateways/stdioToWs.js'
 import { streamableHTTPToStdio } from './gateways/streamableHTTPToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
-
-const log = (...args: any[]) => console.log('[supergateway]', ...args)
-const logStderr = (...args: any[]) => console.error('[supergateway]', ...args)
-
-const noneLogger: Logger = {
-  info: () => {},
-  error: () => {},
-}
-
-const getLogger = ({
-  logLevel,
-  outputTransport,
-}: {
-  logLevel: string
-  outputTransport: string
-}): Logger => {
-  if (logLevel === 'none') {
-    return noneLogger
-  }
-
-  if (outputTransport === 'stdio') {
-    return { info: logStderr, error: logStderr }
-  }
-
-  return { info: log, error: logStderr }
-}
+import { getLogger } from './lib/getLogger.js'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
@@ -105,7 +79,7 @@ async function main() {
       description: '(stdio→SSE, stdio→WS) Path for messages',
     })
     .option('logLevel', {
-      choices: ['info', 'none'] as const,
+      choices: ['debug', 'info', 'none'] as const,
       default: 'info',
       description: 'Logging level',
     })
@@ -141,23 +115,23 @@ async function main() {
   const activeCount = [hasStdio, hasSse, hasStreamableHTTP].filter(
     Boolean,
   ).length
-
-  if (activeCount === 0) {
-    logStderr(
-      'Error: You must specify one of --stdio, --sse, or --streamableHTTP',
-    )
-    process.exit(1)
-  } else if (activeCount > 1) {
-    logStderr(
-      'Error: Specify only one of --stdio, --sse, or --streamableHTTP, not multiple',
-    )
-    process.exit(1)
-  }
-
+  
   const logger = getLogger({
     logLevel: argv.logLevel,
     outputTransport: argv.outputTransport as string,
   })
+  
+  if (activeCount === 0) {
+    logger.error(
+      'Error: You must specify one of --stdio, --sse, or --streamableHTTP',
+    )
+    process.exit(1)
+  } else if (activeCount > 1) {
+    logger.error(
+      'Error: Specify only one of --stdio, --sse, or --streamableHTTP, not multiple',
+    )
+    process.exit(1)
+  }
 
   logger.info('Starting...')
   logger.info(
@@ -192,7 +166,7 @@ async function main() {
           healthEndpoints: argv.healthEndpoint as string[],
         })
       } else {
-        logStderr(`Error: stdio→${argv.outputTransport} not supported`)
+        logger.error(`Error: stdio→${argv.outputTransport} not supported`)
         process.exit(1)
       }
     } else if (hasSse) {
@@ -206,7 +180,7 @@ async function main() {
           }),
         })
       } else {
-        logStderr(`Error: sse→${argv.outputTransport} not supported`)
+        logger.error(`Error: sse→${argv.outputTransport} not supported`)
         process.exit(1)
       }
     } else if (hasStreamableHTTP) {
@@ -224,11 +198,11 @@ async function main() {
         process.exit(1)
       }
     } else {
-      logStderr('Error: Invalid input transport')
+      logger.error('Error: Invalid input transport')
       process.exit(1)
     }
   } catch (err) {
-    logStderr('Fatal error:', err)
+    logger.error('Fatal error:', err)
     process.exit(1)
   }
 }

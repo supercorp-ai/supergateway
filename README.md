@@ -22,7 +22,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or StreamableHTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
-- **`--logLevel info | none`**: Controls logging level (default: `info`). Use `none` to suppress all logs.
+- **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
 
@@ -135,16 +135,33 @@ docker run -it --rm -p 8000:8000 supercorp/supergateway \
 
 Docker pulls the image automatically. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
 
+#### Images with dependencies
+
+Pull any of these pre-built Supergateway images for various dependencies you might need.
+
+- **uvx**
+  Supergateway + uv/uvx, so you can call `uvx` directly:
+
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:uvx \
+    --stdio "uvx mcp-server-fetch"
+  ```
+
+- **deno**
+  Supergateway + Deno, ready to run Deno-based MCP servers:
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:deno \
+    --stdio "deno run -A jsr:@omedia/mcp-server-drupal --drupal-url https://your-drupal-server.com"
+  ```
+
 ### Building the Image Yourself
 
 Use provided Dockerfile:
 
 ```bash
-docker build -t supergateway .
+docker build -f docker/base.Dockerfile -t supergateway .
 
-docker run -it --rm -p 8000:8000 supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
-    --port 8000
+docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
 ```
 
 ## Using with Claude Desktop (SSE → stdio mode)
@@ -251,6 +268,20 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@NicoBonaminio](https://github.com/NicoBonaminio)
+- [@sibbl](https://github.com/sibbl)
+- [@podarok](https://github.com/podarok)
+- [@jmn8718](https://github.com/jmn8718)
+- [@TraceIvan](https://github.com/TraceIvan)
+- [@zhoufei0622](https://github.com/zhoufei0622)
+- [@ezyang](https://github.com/ezyang)
+- [@aleksadvaisly](https://github.com/aleksadvaisly)
+- [@wuzhuoquan](https://github.com/wuzhuoquan)
+- [@mantrakp04](https://github.com/mantrakp04)
+- [@mheubi](https://github.com/mheubi)
+- [@mjmendo](https://github.com/mjmendo)
+- [@CyanMystery](https://github.com/CyanMystery)
+- [@earonesty](https://github.com/earonesty)
 - [@StefanBurscher](https://github.com/StefanBurscher)
 - [@tarasyarema](https://github.com/tarasyarema)
 - [@pcnfernando](https://github.com/pcnfernando)
@@ -261,6 +292,18 @@ Supergateway emphasizes modularity:
 ## Contributing
 
 Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions.
+
+## Tests
+
+Supergateway is tested with Node Test Runner.
+
+To run tests locally, Node version 24+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
+
+Run tests with:
+
+```bash
+npm test
+```
 
 ## License
 

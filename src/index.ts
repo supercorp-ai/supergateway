@@ -14,6 +14,9 @@
  *
  *   # stdio→WS
  *   npx -y supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem /" --outputTransport ws
+ *
+ *   # StreamableHTTP→stdio
+ *   npx -y supergateway --streamableHTTP "https://mcp-server.example.com/mcp"
  */
 
 import yargs from 'yargs'
@@ -21,6 +24,7 @@ import { hideBin } from 'yargs/helpers'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
 import { stdioToWs } from './gateways/stdioToWs.js'
+import { streamableHTTPToStdio } from './gateways/streamableHTTPToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
@@ -35,6 +39,10 @@ async function main() {
       type: 'string',
       description: 'SSE URL to connect to',
     })
+    .option('streamableHTTP', {
+      type: 'string',
+      description: 'Streamable HTTP URL to connect to',
+    })
     .option('outputTransport', {
       type: 'string',
       choices: ['stdio', 'sse', 'ws'],
@@ -43,11 +51,12 @@ async function main() {
 
         if (args.includes('--stdio')) return 'sse'
         if (args.includes('--sse')) return 'stdio'
+        if (args.includes('--streamableHTTP')) return 'stdio'
 
         return undefined
       },
       description:
-        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse.',
+        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse or --streamableHTTP.',
     })
     .option('port', {
       type: 'number',
@@ -101,17 +110,26 @@ async function main() {
 
   const hasStdio = Boolean(argv.stdio)
   const hasSse = Boolean(argv.sse)
+  const hasStreamableHTTP = Boolean(argv.streamableHTTP)
 
+  const activeCount = [hasStdio, hasSse, hasStreamableHTTP].filter(
+    Boolean,
+  ).length
+  
   const logger = getLogger({
     logLevel: argv.logLevel,
     outputTransport: argv.outputTransport as string,
   })
-
-  if (hasStdio && hasSse) {
-    logger.error('Error: Specify only one of --stdio or --sse, not all')
+  
+  if (activeCount === 0) {
+    logger.error(
+      'Error: You must specify one of --stdio, --sse, or --streamableHTTP',
+    )
     process.exit(1)
-  } else if (!hasStdio && !hasSse) {
-    logger.error('Error: You must specify one of --stdio or --sse')
+  } else if (activeCount > 1) {
+    logger.error(
+      'Error: Specify only one of --stdio, --sse, or --streamableHTTP, not multiple',
+    )
     process.exit(1)
   }
 
@@ -163,6 +181,20 @@ async function main() {
         })
       } else {
         logger.error(`Error: sse→${argv.outputTransport} not supported`)
+        process.exit(1)
+      }
+    } else if (hasStreamableHTTP) {
+      if (argv.outputTransport === 'stdio') {
+        await streamableHTTPToStdio({
+          streamableHTTPUrl: argv.streamableHTTP!,
+          logger,
+          headers: headers({
+            argv,
+            logger,
+          }),
+        })
+      } else {
+        logger.error(`Error: streamableHTTP→${argv.outputTransport} not supported`)
         process.exit(1)
       }
     } else {

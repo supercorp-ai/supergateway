@@ -3,52 +3,32 @@ import assert from 'node:assert/strict'
 import { stdioToSse } from '../src/gateways/stdioToSse.js'
 import { getLogger } from '../src/lib/getLogger.js'
 
-const startGateway = async ({
-  baseUrl,
-  ssePath,
-  messagePath,
-}: {
-  baseUrl: string
-  ssePath: string
-  messagePath: string
-}) => {
-  const logger = getLogger({
-    logLevel: 'none',
-    outputTransport: 'stdio',
-  })
+// 0.0.0.0 is just simplest to test on all machines
+// also tested with ngrok just to make sure
+const baseUrl = 'http://0.0.0.0:11000'
+const ssePath = '/sse'
+const messagePath = '/message'
 
+test.before(async () => {
   await stdioToSse({
     stdioCmd: 'npx -y @modelcontextprotocol/server-memory',
     port: 11000,
     baseUrl,
     ssePath,
     messagePath,
-    logger,
+    logger: getLogger({ logLevel: 'none', outputTransport: 'stdio' }),
     corsOrigin: false,
     healthEndpoints: [],
     headers: {},
   })
+})
 
-  return async () => {
-    process.kill(process.pid, 'SIGINT')
-  }
-}
+test.after(async () => {
+  await new Promise<void>((res) => setTimeout(res, 5000))
+  process.kill(process.pid, 'SIGINT')
+})
 
 test('baseUrl should be passed correctly in endpoint event', async (t) => {
-  // 0.0.0.0 is just simplest to test on all machines
-  // also tested with ngrok just to make sure
-  const baseUrl = 'http://0.0.0.0:11000'
-  const ssePath = '/sse'
-  const messagePath = '/message'
-
-  const teardown = await startGateway({
-    baseUrl,
-    ssePath,
-    messagePath,
-  })
-
-  t.after(() => teardown())
-
   const endpointSpy = t.mock.fn()
 
   const { EventSource } = await import('eventsource')

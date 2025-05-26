@@ -25,6 +25,7 @@ import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
 import { stdioToStatelessStreamableHTTP } from './gateways/stdioToStatelessStreamableHTTP.js'
+import { stdioToStatefulStreamableHTTP } from './gateways/stdioToStatefulStreamableHTTP.js'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
@@ -162,8 +163,21 @@ async function main() {
       } else if (argv.outputTransport === 'streamableHTTP') {
         const stateful = argv.stateful
         if (stateful) {
-          throw new Error('Stateful StreamableHTTP is not supported')
+          logger.info('Running stateful server')
+          await stdioToStatefulStreamableHTTP({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHTTPPath: argv.streamableHTTPPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+          })
         } else {
+          logger.info('Running stateless server')
           await stdioToStatelessStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,

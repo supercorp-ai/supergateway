@@ -8,6 +8,8 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { randomUUID } from 'node:crypto'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 
 export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
@@ -30,7 +32,7 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
-export async function stdioToStatelessStreamableHTTP(
+export async function stdioToStatefulStreamableHTTP(
   args: StdioToStreamableHTTPArgs,
 ) {
   const {
@@ -63,7 +65,12 @@ export async function stdioToStatelessStreamableHTTP(
   app.use(express.json())
 
   if (corsOrigin) {
-    app.use(cors({ origin: corsOrigin }))
+    app.use(
+      cors({
+        origin: corsOrigin,
+        exposedHeaders: ['Mcp-Session-Id'],
+      }),
+    )
   }
 
   for (const ep of healthEndpoints) {
@@ -76,20 +83,33 @@ export async function stdioToStatelessStreamableHTTP(
     })
   }
 
-  app.post(streamableHTTPPath, async (req, res) => {
-    // In stateless mode, create a new instance of transport and server for each request
-    // to ensure complete isolation. A single instance would cause request ID collisions
-    // when multiple clients connect concurrently.
+  // Map to store transports by session ID
+  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
-    try {
+  // Handle POST requests for client-to-server communication
+  app.post(streamableHTTPPath, async (req, res) => {
+    // Check for existing session ID
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    let transport: StreamableHTTPServerTransport
+
+    if (sessionId && transports[sessionId]) {
+      // Reuse existing transport
+      transport = transports[sessionId]
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      // New initialization request
+
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
         { capabilities: {} },
       )
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      })
 
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sessionId) => {
+          // Store the transport by session ID
+          transports[sessionId] = transport
+        },
+      })
       await server.connect(transport)
       const child = spawn(stdioCmd, { shell: true })
       child.on('exit', (code, signal) => {
@@ -128,58 +148,57 @@ export async function stdioToStatelessStreamableHTTP(
       }
 
       transport.onclose = () => {
-        logger.info('StreamableHTTP connection closed')
+        logger.info(`StreamableHTTP connection closed (session ${sessionId})`)
+        if (transport.sessionId) {
+          delete transports[transport.sessionId]
+        }
         child.kill()
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHTTP error:`, err)
+        logger.error(`StreamableHTTP error (session ${sessionId}):`, err)
+        if (transport.sessionId) {
+          delete transports[transport.sessionId]
+        }
         child.kill()
       }
-
-      await transport.handleRequest(req, res, req.body)
-    } catch (error) {
-      logger.error('Error handling MCP request:', error)
-      if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32603,
-            message: 'Internal server error',
-          },
-          id: null,
-        })
-      }
+    } else {
+      // Invalid request
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: No valid session ID provided',
+        },
+        id: null,
+      })
+      return
     }
+
+    // Handle the request
+    await transport.handleRequest(req, res, req.body)
   })
 
-  app.get(streamableHTTPPath, async (req, res) => {
-    logger.info('Received GET MCP request')
-    res.writeHead(405).end(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Method not allowed.',
-        },
-        id: null,
-      }),
-    )
-  })
+  // Reusable handler for GET and DELETE requests
+  const handleSessionRequest = async (
+    req: express.Request,
+    res: express.Response,
+  ) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send('Invalid or missing session ID')
+      return
+    }
 
-  app.delete(streamableHTTPPath, async (req, res) => {
-    logger.info('Received DELETE MCP request')
-    res.writeHead(405).end(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Method not allowed.',
-        },
-        id: null,
-      }),
-    )
-  })
+    const transport = transports[sessionId]
+    await transport.handleRequest(req, res)
+  }
+
+  // Handle GET requests for server-to-client notifications via SSE
+  app.get(streamableHTTPPath, handleSessionRequest)
+
+  // Handle DELETE requests for session termination
+  app.delete(streamableHTTPPath, handleSessionRequest)
 
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)

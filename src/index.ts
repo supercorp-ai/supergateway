@@ -109,6 +109,11 @@ async function main() {
       description:
         'Whether the server is stateful. Only supported for stdio→StreamableHTTP.',
     })
+    .option('sessionTimeout', {
+      type: 'number',
+      description:
+        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHTTP. If not set, the session will only be deleted when client transport explicitly terminates the session.',
+    })
     .help()
     .parseSync()
 
@@ -164,6 +169,21 @@ async function main() {
         const stateful = argv.stateful
         if (stateful) {
           logger.info('Running stateful server')
+
+          let sessionTimeout: null | number
+          if (typeof argv.sessionTimeout === 'number') {
+            if (argv.sessionTimeout <= 0) {
+              logger.error(
+                `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
+              )
+              process.exit(1)
+            }
+
+            sessionTimeout = argv.sessionTimeout
+          } else {
+            sessionTimeout = null
+          }
+
           await stdioToStatefulStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,
@@ -175,9 +195,11 @@ async function main() {
               argv,
               logger,
             }),
+            sessionTimeout,
           })
         } else {
           logger.info('Running stateless server')
+
           await stdioToStatelessStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,

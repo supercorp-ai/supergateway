@@ -10,6 +10,7 @@ import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 
 export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
@@ -91,33 +92,21 @@ export async function stdioToStatefulStreamableHTTP(
   // Map to store transports by session ID
   const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
-  // Map to store timeout handles for each session
-  const sessionTimeouts: { [sessionId: string]: NodeJS.Timeout } = {}
-
-  const clearSessionTimeout = (sessionId: string, reason: string) => {
-    logger.info(
-      `Clearing timeout for session ${sessionId}, caused by ${reason}`,
-    )
-    if (sessionTimeouts[sessionId]) {
-      clearTimeout(sessionTimeouts[sessionId])
-      delete sessionTimeouts[sessionId]
-    }
-  }
-
-  const setSessionTimeout = (sessionId: string) => {
-    if (!sessionTimeout) return
-
-    clearSessionTimeout(sessionId, 'resetting timeout') // Clear any existing timeout
-
-    sessionTimeouts[sessionId] = setTimeout(() => {
-      logger.info(`Session ${sessionId} timed out, cleaning up`)
-      const transport = transports[sessionId]
-      if (transport) {
-        transport.close()
-      }
-      delete sessionTimeouts[sessionId]
-    }, sessionTimeout)
-  }
+  // Session access counter for timeout management
+  const sessionCounter = sessionTimeout
+    ? new SessionAccessCounter(
+        sessionTimeout,
+        (sessionId: string) => {
+          logger.info(`Session ${sessionId} timed out, cleaning up`)
+          const transport = transports[sessionId]
+          if (transport) {
+            transport.close()
+          }
+          delete transports[sessionId]
+        },
+        logger,
+      )
+    : null
 
   // Handle POST requests for client-to-server communication
   app.post(streamableHTTPPath, async (req, res) => {
@@ -128,11 +117,8 @@ export async function stdioToStatefulStreamableHTTP(
     if (sessionId && transports[sessionId]) {
       // Reuse existing transport
       transport = transports[sessionId]
-      // Clear any existing timeout since session is active
-      clearSessionTimeout(
-        sessionId,
-        'receiving new request for existing session',
-      )
+      // Increment session access count
+      sessionCounter?.inc(sessionId, 'POST request for existing session')
     } else if (!sessionId && isInitializeRequest(req.body)) {
       // New initialization request
 
@@ -146,6 +132,8 @@ export async function stdioToStatefulStreamableHTTP(
         onsessioninitialized: (sessionId) => {
           // Store the transport by session ID
           transports[sessionId] = transport
+          // Initialize session access count
+          sessionCounter?.inc(sessionId, 'session initialization')
         },
       })
       await server.connect(transport)
@@ -188,7 +176,11 @@ export async function stdioToStatefulStreamableHTTP(
       transport.onclose = () => {
         logger.info(`StreamableHTTP connection closed (session ${sessionId})`)
         if (transport.sessionId) {
-          clearSessionTimeout(transport.sessionId, 'transport being closed')
+          sessionCounter?.clear(
+            transport.sessionId,
+            false,
+            'transport being closed',
+          )
           delete transports[transport.sessionId]
         }
         child.kill()
@@ -197,7 +189,11 @@ export async function stdioToStatefulStreamableHTTP(
       transport.onerror = (err) => {
         logger.error(`StreamableHTTP error (session ${sessionId}):`, err)
         if (transport.sessionId) {
-          clearSessionTimeout(transport.sessionId, 'transport emitting error')
+          sessionCounter?.clear(
+            transport.sessionId,
+            false,
+            'transport emitting error',
+          )
           delete transports[transport.sessionId]
         }
         child.kill()
@@ -215,19 +211,18 @@ export async function stdioToStatefulStreamableHTTP(
       return
     }
 
-    // Set timeout when response ends
-    res.on('finish', () => {
-      logger.info('Response finished', transport.sessionId)
-      if (transport.sessionId) {
-        setSessionTimeout(transport.sessionId)
+    // Decrement session access count when response ends
+    let responseEnded = false
+    const handleResponseEnd = (event: string) => {
+      if (!responseEnded && transport.sessionId) {
+        responseEnded = true
+        logger.info(`Response ${event}`, transport.sessionId)
+        sessionCounter?.dec(transport.sessionId, `POST response ${event}`)
       }
-    })
-    res.on('close', () => {
-      logger.info('Response closed', transport.sessionId)
-      if (transport.sessionId) {
-        setSessionTimeout(transport.sessionId)
-      }
-    })
+    }
+
+    res.on('finish', () => handleResponseEnd('finished'))
+    res.on('close', () => handleResponseEnd('closed'))
 
     // Handle the request
     await transport.handleRequest(req, res, req.body)
@@ -244,18 +239,21 @@ export async function stdioToStatefulStreamableHTTP(
       return
     }
 
-    // Clear any existing timeout since session is active
-    clearSessionTimeout(sessionId, 'receiving new request for existing session')
+    // Increment session access count
+    sessionCounter?.inc(sessionId, `${req.method} request for existing session`)
 
-    // Set timeout when response ends
-    res.on('finish', () => {
-      logger.info('Response finished', transport.sessionId)
-      setSessionTimeout(sessionId)
-    })
-    res.on('close', () => {
-      logger.info('Response closed', transport.sessionId)
-      setSessionTimeout(sessionId)
-    })
+    // Decrement session access count when response ends
+    let responseEnded = false
+    const handleResponseEnd = (event: string) => {
+      if (!responseEnded) {
+        responseEnded = true
+        logger.info(`Response ${event}`, sessionId)
+        sessionCounter?.dec(sessionId, `${req.method} response ${event}`)
+      }
+    }
+
+    res.on('finish', () => handleResponseEnd('finished'))
+    res.on('close', () => handleResponseEnd('closed'))
 
     const transport = transports[sessionId]
     await transport.handleRequest(req, res)

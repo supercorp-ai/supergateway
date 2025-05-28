@@ -44,13 +44,13 @@ test('streamableHttpToStdio listTools and callTool', async () => {
     '--input-type=module',
     '-e',
     `
-      import { streamableHTTPToStdio as g } from
-        '${pathToFileURL(path.resolve('src/gateways/streamableHTTPToStdio.ts'))}';
+      import { streamableHttpToStdio as g } from
+        '${pathToFileURL(path.resolve('src/gateways/streamableHttpToStdio.ts'))}';
       import { getLogger } from
         '${pathToFileURL(path.resolve('src/lib/getLogger.ts'))}';
 
       await g({
-        streamableHTTPUrl: '${MCP_URL}',
+        streamableHttpUrl: '${MCP_URL}',
         logger: getLogger({ logLevel: 'info', outputTransport: 'stdio' }),
         headers: {},
       });

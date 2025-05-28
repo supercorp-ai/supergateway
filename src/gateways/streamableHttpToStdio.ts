@@ -14,8 +14,8 @@ import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 
-export interface StreamableHTTPToStdioArgs {
-  streamableHTTPUrl: string
+export interface StreamableHttpToStdioArgs {
+  streamableHttpUrl: string
   logger: Logger
   headers: Record<string, string>
 }
@@ -58,10 +58,10 @@ const newFallbackMcpClient = async ({
   return fallbackMcpClient
 }
 
-export async function streamableHTTPToStdio(args: StreamableHTTPToStdioArgs) {
-  const { streamableHTTPUrl, logger, headers } = args
+export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
+  const { streamableHttpUrl, logger, headers } = args
 
-  logger.info(`  - streamableHTTP: ${streamableHTTPUrl}`)
+  logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
   logger.info(
     `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
   )
@@ -70,7 +70,7 @@ export async function streamableHTTPToStdio(args: StreamableHTTPToStdioArgs) {
   onSignals({ logger })
 
   const mcpTransport = new StreamableHTTPClientTransport(
-    new URL(streamableHTTPUrl),
+    new URL(streamableHttpUrl),
     {
       requestInit: {
         headers,

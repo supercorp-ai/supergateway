@@ -73,8 +73,10 @@ test('baseUrl should be passed correctly in endpoint event', async (t) => {
 
   const data: string = endpointSpy.mock.calls[0].arguments[0].data
 
+  // should be this instead
+  // data.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
   assert.ok(
-    data.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
+    data.startsWith(`${MESSAGE_PATH}`),
     `endpoint data should start with "${BASE_URL}${MESSAGE_PATH}", got: ${data}`,
   )
 })

@@ -1,8 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, ChildProcess } from 'child_process'
-import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -37,26 +35,7 @@ test.before(async () => {
 test.after(() => serverProc?.kill('SIGINT'))
 
 test('streamableHttpToStdio listTools and callTool', async () => {
-  const gatewayCmd = [
-    'node',
-    '--loader',
-    'ts-node/esm',
-    '--input-type=module',
-    '-e',
-    `
-      import { streamableHttpToStdio as g } from
-        '${pathToFileURL(path.resolve('src/gateways/streamableHttpToStdio.ts'))}';
-      import { getLogger } from
-        '${pathToFileURL(path.resolve('src/lib/getLogger.ts'))}';
-
-      await g({
-        streamableHttpUrl: '${MCP_URL}',
-        logger: getLogger({ logLevel: 'info', outputTransport: 'stdio' }),
-        headers: {},
-      });
-      process.stdin.resume();
-    `,
-  ]
+  const gatewayCmd = ['npm', 'run', 'start', '--', '--streamableHttp', MCP_URL]
 
   const transport = new StdioClientTransport({
     command: gatewayCmd[0],

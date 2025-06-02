@@ -5,7 +5,7 @@ import { spawn, ChildProcess } from 'child_process'
 import { Client } from 'prev-modelcontextprotocol-sdk/client/index.js'
 import { StdioClientTransport } from 'prev-modelcontextprotocol-sdk/client/stdio.js'
 
-const MCP_PORT = 11002
+const MCP_PORT = 11003
 const MCP_URL = `http://localhost:${MCP_PORT}/sse`
 
 let serverProc: ChildProcess | undefined

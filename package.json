@@ -1,6 +1,6 @@
 {
   "name": "supergateway",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
+    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.18",

@@ -8,7 +8,6 @@ import type {
   ClientCapabilities,
   Implementation,
 } from '@modelcontextprotocol/sdk/types.js'
-import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
@@ -125,23 +124,22 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
             const originalRequest = sseClient.request
 
-            sseClient.request = async function (
-              possibleInitRequestMessage,
-              ...restArgs
-            ) {
+            sseClient.request = async function (requestMessage, ...restArgs) {
+              // pass protocol version from original client
               if (
-                InitializeRequestSchema.safeParse(possibleInitRequestMessage)
-                  .success &&
-                message.params?.protocolVersion
+                requestMessage.method === 'initialize' &&
+                message.params?.protocolVersion &&
+                requestMessage.params?.protocolVersion
               ) {
-                // respect the protocol version from the stdio client's init request
-                possibleInitRequestMessage.params!.protocolVersion =
+                requestMessage.params.protocolVersion =
                   message.params.protocolVersion
               }
+
               result = await originalRequest.apply(this, [
-                possibleInitRequestMessage,
+                requestMessage,
                 ...restArgs,
               ])
+
               return result
             }
 

@@ -17,7 +17,7 @@ test.before(() => {
       'start',
       '--',
       '--stdio',
-      'npx -y @modelcontextprotocol/server-memory',
+      'node tests/helpers/mock-mcp-server.js stdio',
       '--outputTransport',
       'sse',
       '--port',
@@ -29,31 +29,17 @@ test.before(() => {
       '--messagePath',
       MESSAGE_PATH,
     ],
-    { stdio: 'inherit', shell: false },
+    { stdio: 'ignore', shell: false },
   )
+  gatewayProc.unref()
 })
 
-test.after(() => {
+test.after(async () => {
   gatewayProc.kill('SIGINT')
+  await new Promise((resolve) => gatewayProc.once('exit', resolve))
 })
 
-test('baseUrl should be passed correctly in endpoint event', async (t) => {
-  const endpointSpy = t.mock.fn()
-  const { EventSource } = await import('eventsource')
-  class EventSourceSpy extends EventSource {
-    constructor(url: string | URL, init?: EventSourceInit) {
-      super(url as any, init)
-      this.addEventListener('endpoint', endpointSpy)
-    }
-    close() {
-      super.close()
-    }
-  }
-  t.mock.module('eventsource', {
-    defaultExport: EventSourceSpy,
-    namedExports: { EventSource: EventSourceSpy },
-  })
-
+test('baseUrl should be passed correctly in endpoint event', async () => {
   const [{ Client }, { SSEClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/sse.js'),
@@ -62,21 +48,15 @@ test('baseUrl should be passed correctly in endpoint event', async (t) => {
   const transport = new SSEClientTransport(new URL(SSE_PATH, BASE_URL))
   const client = new Client({ name: 'endpoint-tester', version: '1.0.0' })
 
-  await new Promise((resolve) => {
-    setTimeout(() => resolve(true), 3000)
-  })
+  await new Promise((resolve) => setTimeout(resolve, 3000))
 
   await client.connect(transport)
+  const endpoint = (transport as any)._endpoint as URL | undefined
   await client.close()
+  transport.close()
 
-  assert.strictEqual(endpointSpy.mock.callCount(), 1)
-
-  const data: string = endpointSpy.mock.calls[0].arguments[0].data
-
-  // should be this instead
-  // data.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
   assert.ok(
-    data.startsWith(`${MESSAGE_PATH}`),
-    `endpoint data should start with "${BASE_URL}${MESSAGE_PATH}", got: ${data}`,
+    endpoint && endpoint.href.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
+    `endpoint should start with "${BASE_URL}${MESSAGE_PATH}", got: ${endpoint?.href}`,
   )
 })

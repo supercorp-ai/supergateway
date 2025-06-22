@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import { StreamableHTTPServerTransport as StreamableHttpServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 
 const mode = process.argv[2]
@@ -58,7 +58,7 @@ if (mode === 'stdio') {
 
     if (!transport) {
       if (req.method === 'POST' && req.body?.method === 'initialize') {
-        transport = new StreamableHttpServerTransport({
+        transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
             transports[sid] = transport

@@ -2,7 +2,7 @@ import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StreamableHTTPServerTransport as StreamableHttpServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -86,7 +86,7 @@ export async function stdioToStatelessStreamableHttp(
         { name: 'supergateway', version: getVersion() },
         { capabilities: {} },
       )
-      const transport = new StreamableHttpServerTransport({
+      const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       })
 

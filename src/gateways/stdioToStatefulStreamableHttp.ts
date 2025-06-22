@@ -2,7 +2,7 @@ import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StreamableHTTPServerTransport as StreamableHttpServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -90,7 +90,7 @@ export async function stdioToStatefulStreamableHttp(
   }
 
   // Map to store transports by session ID
-  const transports: { [sessionId: string]: StreamableHttpServerTransport } = {}
+  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -112,7 +112,7 @@ export async function stdioToStatefulStreamableHttp(
   app.post(streamableHttpPath, async (req, res) => {
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
-    let transport: StreamableHttpServerTransport
+    let transport: StreamableHTTPServerTransport
 
     if (sessionId && transports[sessionId]) {
       // Reuse existing transport
@@ -127,7 +127,7 @@ export async function stdioToStatefulStreamableHttp(
         { capabilities: {} },
       )
 
-      transport = new StreamableHttpServerTransport({
+      transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           // Store the transport by session ID

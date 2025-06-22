@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport as StreamableHttpClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type {
@@ -42,7 +42,7 @@ const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
 const newFallbackMcpClient = async ({
   mcpTransport,
 }: {
-  mcpTransport: StreamableHttpClientTransport
+  mcpTransport: StreamableHTTPClientTransport
 }) => {
   const fallbackMcpClient = new Client(
     {
@@ -69,7 +69,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
   onSignals({ logger })
 
-  const mcpTransport = new StreamableHttpClientTransport(
+  const mcpTransport = new StreamableHTTPClientTransport(
     new URL(streamableHttpUrl),
     {
       requestInit: {

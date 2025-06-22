@@ -2,14 +2,16 @@ import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {
+  StreamableHTTPServerTransport as StreamableHttpServerTransport,
+} from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 
-export interface StdioToStreamableHTTPArgs {
+export interface StdioToStreamableHttpArgs {
   stdioCmd: string
   port: number
   streamableHttpPath: string
@@ -30,8 +32,8 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
-export async function stdioToStatelessStreamableHTTP(
-  args: StdioToStreamableHTTPArgs,
+export async function stdioToStatelessStreamableHttp(
+  args: StdioToStreamableHttpArgs,
 ) {
   const {
     stdioCmd,
@@ -86,7 +88,7 @@ export async function stdioToStatelessStreamableHTTP(
         { name: 'supergateway', version: getVersion() },
         { capabilities: {} },
       )
-      const transport = new StreamableHTTPServerTransport({
+      const transport = new StreamableHttpServerTransport({
         sessionIdGenerator: undefined,
       })
 
@@ -106,11 +108,11 @@ export async function stdioToStatelessStreamableHTTP(
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHTTP:', line)
+            logger.info('Child → StreamableHttp:', line)
             try {
               transport.send(jsonMsg)
             } catch (e) {
-              logger.error(`Failed to send to StreamableHTTP`, e)
+              logger.error(`Failed to send to StreamableHttp`, e)
             }
           } catch {
             logger.error(`Child non-JSON: ${line}`)
@@ -123,17 +125,17 @@ export async function stdioToStatelessStreamableHTTP(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHTTP → Child: ${JSON.stringify(msg)}`)
+        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
       }
 
       transport.onclose = () => {
-        logger.info('StreamableHTTP connection closed')
+        logger.info('StreamableHttp connection closed')
         child.kill()
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHTTP error:`, err)
+        logger.error(`StreamableHttp error:`, err)
         child.kill()
       }
 
@@ -184,7 +186,7 @@ export async function stdioToStatelessStreamableHTTP(
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHTTP endpoint: http://localhost:${port}${streamableHttpPath}`,
+      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
     )
   })
 }

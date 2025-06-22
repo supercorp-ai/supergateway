@@ -14,7 +14,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
-- **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHTTP→stdio mode)
+- **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
 - **`--outputTransport stdio | sse | ws`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse`)
 - **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE or WS clients (stdio→SSE mode; optional)

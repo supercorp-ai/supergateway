@@ -2,7 +2,9 @@ import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {
+  StreamableHTTPServerTransport as StreamableHttpServerTransport,
+} from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -12,7 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 
-export interface StdioToStreamableHTTPArgs {
+export interface StdioToStreamableHttpArgs {
   stdioCmd: string
   port: number
   streamableHttpPath: string
@@ -34,8 +36,8 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
-export async function stdioToStatefulStreamableHTTP(
-  args: StdioToStreamableHTTPArgs,
+export async function stdioToStatefulStreamableHttp(
+  args: StdioToStreamableHttpArgs,
 ) {
   const {
     stdioCmd,
@@ -90,7 +92,7 @@ export async function stdioToStatefulStreamableHTTP(
   }
 
   // Map to store transports by session ID
-  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
+  const transports: { [sessionId: string]: StreamableHttpServerTransport } = {}
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -112,7 +114,7 @@ export async function stdioToStatefulStreamableHTTP(
   app.post(streamableHttpPath, async (req, res) => {
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
-    let transport: StreamableHTTPServerTransport
+    let transport: StreamableHttpServerTransport
 
     if (sessionId && transports[sessionId]) {
       // Reuse existing transport
@@ -127,7 +129,7 @@ export async function stdioToStatefulStreamableHTTP(
         { capabilities: {} },
       )
 
-      transport = new StreamableHTTPServerTransport({
+      transport = new StreamableHttpServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           // Store the transport by session ID
@@ -152,11 +154,11 @@ export async function stdioToStatefulStreamableHTTP(
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHTTP:', line)
+            logger.info('Child → StreamableHttp:', line)
             try {
               transport.send(jsonMsg)
             } catch (e) {
-              logger.error(`Failed to send to StreamableHTTP`, e)
+              logger.error(`Failed to send to StreamableHttp`, e)
             }
           } catch {
             logger.error(`Child non-JSON: ${line}`)
@@ -169,12 +171,12 @@ export async function stdioToStatefulStreamableHTTP(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHTTP → Child: ${JSON.stringify(msg)}`)
+        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
       }
 
       transport.onclose = () => {
-        logger.info(`StreamableHTTP connection closed (session ${sessionId})`)
+        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,
@@ -187,7 +189,7 @@ export async function stdioToStatefulStreamableHTTP(
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHTTP error (session ${sessionId}):`, err)
+        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,
@@ -268,7 +270,7 @@ export async function stdioToStatefulStreamableHTTP(
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHTTP endpoint: http://localhost:${port}${streamableHttpPath}`,
+      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
     )
   })
 }

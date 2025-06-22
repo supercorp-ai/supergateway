@@ -12,7 +12,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
   port: number
-  streamableHTTPPath: string
+  streamableHttpPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
@@ -36,7 +36,7 @@ export async function stdioToStatelessStreamableHTTP(
   const {
     stdioCmd,
     port,
-    streamableHTTPPath,
+    streamableHttpPath,
     logger,
     corsOrigin,
     healthEndpoints,
@@ -48,7 +48,7 @@ export async function stdioToStatelessStreamableHTTP(
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
-  logger.info(`  - streamableHTTPPath: ${streamableHTTPPath}`)
+  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
 
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -76,7 +76,7 @@ export async function stdioToStatelessStreamableHTTP(
     })
   }
 
-  app.post(streamableHTTPPath, async (req, res) => {
+  app.post(streamableHttpPath, async (req, res) => {
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
@@ -153,7 +153,7 @@ export async function stdioToStatelessStreamableHTTP(
     }
   })
 
-  app.get(streamableHTTPPath, async (req, res) => {
+  app.get(streamableHttpPath, async (req, res) => {
     logger.info('Received GET MCP request')
     res.writeHead(405).end(
       JSON.stringify({
@@ -167,7 +167,7 @@ export async function stdioToStatelessStreamableHTTP(
     )
   })
 
-  app.delete(streamableHTTPPath, async (req, res) => {
+  app.delete(streamableHttpPath, async (req, res) => {
     logger.info('Received DELETE MCP request')
     res.writeHead(405).end(
       JSON.stringify({
@@ -184,7 +184,7 @@ export async function stdioToStatelessStreamableHTTP(
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHTTP endpoint: http://localhost:${port}${streamableHTTPPath}`,
+      `StreamableHTTP endpoint: http://localhost:${port}${streamableHttpPath}`,
     )
   })
 }

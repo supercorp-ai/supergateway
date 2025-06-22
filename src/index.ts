@@ -47,7 +47,7 @@ async function main() {
     })
     .option('outputTransport', {
       type: 'string',
-      choices: ['stdio', 'sse', 'ws', 'streamableHTTP'],
+      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
       default: () => {
         const args = hideBin(process.argv)
 
@@ -80,10 +80,10 @@ async function main() {
       default: '/message',
       description: '(stdio→SSE, stdio→WS) Path for messages',
     })
-    .option('streamableHTTPPath', {
+    .option('streamableHttpPath', {
       type: 'string',
       default: '/mcp',
-      description: '(stdio→StreamableHTTP) Path for StreamableHTTP',
+      description: '(stdio→StreamableHttp) Path for StreamableHttp',
     })
     .option('logLevel', {
       choices: ['debug', 'info', 'none'] as const,
@@ -183,7 +183,7 @@ async function main() {
           corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
         })
-      } else if (argv.outputTransport === 'streamableHTTP') {
+      } else if (argv.outputTransport === 'streamableHttp') {
         const stateful = argv.stateful
         if (stateful) {
           logger.info('Running stateful server')
@@ -205,7 +205,7 @@ async function main() {
           await stdioToStatefulStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,
-            streamableHTTPPath: argv.streamableHTTPPath,
+            streamableHttpPath: argv.streamableHttpPath,
             logger,
             corsOrigin: corsOrigin({ argv }),
             healthEndpoints: argv.healthEndpoint as string[],
@@ -221,7 +221,7 @@ async function main() {
           await stdioToStatelessStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,
-            streamableHTTPPath: argv.streamableHTTPPath,
+            streamableHttpPath: argv.streamableHttpPath,
             logger,
             corsOrigin: corsOrigin({ argv }),
             healthEndpoints: argv.healthEndpoint as string[],

@@ -15,7 +15,7 @@ import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
   port: number
-  streamableHTTPPath: string
+  streamableHttpPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
@@ -40,7 +40,7 @@ export async function stdioToStatefulStreamableHTTP(
   const {
     stdioCmd,
     port,
-    streamableHTTPPath,
+    streamableHttpPath,
     logger,
     corsOrigin,
     healthEndpoints,
@@ -53,7 +53,7 @@ export async function stdioToStatefulStreamableHTTP(
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
-  logger.info(`  - streamableHTTPPath: ${streamableHTTPPath}`)
+  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
 
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -109,7 +109,7 @@ export async function stdioToStatefulStreamableHTTP(
     : null
 
   // Handle POST requests for client-to-server communication
-  app.post(streamableHTTPPath, async (req, res) => {
+  app.post(streamableHttpPath, async (req, res) => {
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -260,15 +260,15 @@ export async function stdioToStatefulStreamableHTTP(
   }
 
   // Handle GET requests for server-to-client notifications via SSE
-  app.get(streamableHTTPPath, handleSessionRequest)
+  app.get(streamableHttpPath, handleSessionRequest)
 
   // Handle DELETE requests for session termination
-  app.delete(streamableHTTPPath, handleSessionRequest)
+  app.delete(streamableHttpPath, handleSessionRequest)
 
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHTTP endpoint: http://localhost:${port}${streamableHTTPPath}`,
+      `StreamableHTTP endpoint: http://localhost:${port}${streamableHttpPath}`,
     )
   })
 }

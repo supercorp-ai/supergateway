@@ -300,15 +300,20 @@ Issues and PRs welcome. Please open one if you encounter problems or have featur
 
 ## Tests
 
-Supergateway is tested with Node Test Runner.
+Supergateway is tested with the Node Test Runner.
 
-To run tests locally, Node version 24+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
-
-Run tests with:
+To run the suite locally you need Node **24+**. Using [nvm](https://github.com/nvm-sh/nvm) you can install and activate it with:
 
 ```bash
+nvm install 24
+nvm use 24
+npm install
+npm run build
 npm test
 ```
+
+The `tests/helpers/mock-mcp-server.js` script provides a local MCP server so all
+tests run without network access.
 
 ## License
 

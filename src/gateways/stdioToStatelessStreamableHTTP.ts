@@ -9,10 +9,10 @@ import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 
-export interface StdioToStreamableHttpArgs {
+export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
   port: number
-  streamableHttpPath: string
+  streamableHTTPPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
@@ -30,13 +30,13 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
-export async function stdioToStatelessStreamableHttp(
-  args: StdioToStreamableHttpArgs,
+export async function stdioToStatelessStreamableHTTP(
+  args: StdioToStreamableHTTPArgs,
 ) {
   const {
     stdioCmd,
     port,
-    streamableHttpPath,
+    streamableHTTPPath,
     logger,
     corsOrigin,
     healthEndpoints,
@@ -48,7 +48,7 @@ export async function stdioToStatelessStreamableHttp(
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
-  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
+  logger.info(`  - streamableHTTPPath: ${streamableHTTPPath}`)
 
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -76,7 +76,7 @@ export async function stdioToStatelessStreamableHttp(
     })
   }
 
-  app.post(streamableHttpPath, async (req, res) => {
+  app.post(streamableHTTPPath, async (req, res) => {
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
@@ -106,11 +106,11 @@ export async function stdioToStatelessStreamableHttp(
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
+            logger.info('Child → StreamableHTTP:', line)
             try {
               transport.send(jsonMsg)
             } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
+              logger.error(`Failed to send to StreamableHTTP`, e)
             }
           } catch {
             logger.error(`Child non-JSON: ${line}`)
@@ -123,17 +123,17 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
+        logger.info(`StreamableHTTP → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
       }
 
       transport.onclose = () => {
-        logger.info('StreamableHttp connection closed')
+        logger.info('StreamableHTTP connection closed')
         child.kill()
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHttp error:`, err)
+        logger.error(`StreamableHTTP error:`, err)
         child.kill()
       }
 
@@ -153,7 +153,7 @@ export async function stdioToStatelessStreamableHttp(
     }
   })
 
-  app.get(streamableHttpPath, async (req, res) => {
+  app.get(streamableHTTPPath, async (req, res) => {
     logger.info('Received GET MCP request')
     res.writeHead(405).end(
       JSON.stringify({
@@ -167,7 +167,7 @@ export async function stdioToStatelessStreamableHttp(
     )
   })
 
-  app.delete(streamableHttpPath, async (req, res) => {
+  app.delete(streamableHTTPPath, async (req, res) => {
     logger.info('Received DELETE MCP request')
     res.writeHead(405).end(
       JSON.stringify({
@@ -184,7 +184,7 @@ export async function stdioToStatelessStreamableHttp(
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      `StreamableHTTP endpoint: http://localhost:${port}${streamableHTTPPath}`,
     )
   })
 }

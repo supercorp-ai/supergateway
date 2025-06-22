@@ -12,10 +12,10 @@ import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 
-export interface StdioToStreamableHttpArgs {
+export interface StdioToStreamableHTTPArgs {
   stdioCmd: string
   port: number
-  streamableHttpPath: string
+  streamableHTTPPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
@@ -34,13 +34,13 @@ const setResponseHeaders = ({
     res.setHeader(key, value)
   })
 
-export async function stdioToStatefulStreamableHttp(
-  args: StdioToStreamableHttpArgs,
+export async function stdioToStatefulStreamableHTTP(
+  args: StdioToStreamableHTTPArgs,
 ) {
   const {
     stdioCmd,
     port,
-    streamableHttpPath,
+    streamableHTTPPath,
     logger,
     corsOrigin,
     healthEndpoints,
@@ -53,7 +53,7 @@ export async function stdioToStatefulStreamableHttp(
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
-  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
+  logger.info(`  - streamableHTTPPath: ${streamableHTTPPath}`)
 
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -109,7 +109,7 @@ export async function stdioToStatefulStreamableHttp(
     : null
 
   // Handle POST requests for client-to-server communication
-  app.post(streamableHttpPath, async (req, res) => {
+  app.post(streamableHTTPPath, async (req, res) => {
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -152,11 +152,11 @@ export async function stdioToStatefulStreamableHttp(
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
+            logger.info('Child → StreamableHTTP:', line)
             try {
               transport.send(jsonMsg)
             } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
+              logger.error(`Failed to send to StreamableHTTP`, e)
             }
           } catch {
             logger.error(`Child non-JSON: ${line}`)
@@ -169,12 +169,12 @@ export async function stdioToStatefulStreamableHttp(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
+        logger.info(`StreamableHTTP → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
       }
 
       transport.onclose = () => {
-        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
+        logger.info(`StreamableHTTP connection closed (session ${sessionId})`)
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,
@@ -187,7 +187,7 @@ export async function stdioToStatefulStreamableHttp(
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
+        logger.error(`StreamableHTTP error (session ${sessionId}):`, err)
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,
@@ -260,15 +260,15 @@ export async function stdioToStatefulStreamableHttp(
   }
 
   // Handle GET requests for server-to-client notifications via SSE
-  app.get(streamableHttpPath, handleSessionRequest)
+  app.get(streamableHTTPPath, handleSessionRequest)
 
   // Handle DELETE requests for session termination
-  app.delete(streamableHttpPath, handleSessionRequest)
+  app.delete(streamableHTTPPath, handleSessionRequest)
 
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)
     logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      `StreamableHTTP endpoint: http://localhost:${port}${streamableHTTPPath}`,
     )
   })
 }

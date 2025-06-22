@@ -28,8 +28,8 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
-import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
-import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import { stdioToStatelessStreamableHTTP } from './gateways/stdioToStatelessStreamableHTTP.js'
+import { stdioToStatefulStreamableHTTP } from './gateways/stdioToStatefulStreamableHTTP.js'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
@@ -47,7 +47,7 @@ async function main() {
     })
     .option('outputTransport', {
       type: 'string',
-      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
+      choices: ['stdio', 'sse', 'ws', 'streamableHTTP'],
       default: () => {
         const args = hideBin(process.argv)
 
@@ -80,10 +80,10 @@ async function main() {
       default: '/message',
       description: '(stdio→SSE, stdio→WS) Path for messages',
     })
-    .option('streamableHttpPath', {
+    .option('streamableHTTPPath', {
       type: 'string',
       default: '/mcp',
-      description: '(stdio→StreamableHttp) Path for StreamableHttp',
+      description: '(stdio→StreamableHTTP) Path for StreamableHTTP',
     })
     .option('logLevel', {
       choices: ['debug', 'info', 'none'] as const,
@@ -116,12 +116,12 @@ async function main() {
       type: 'boolean',
       default: false,
       description:
-        'Whether the server is stateful. Only supported for stdio→StreamableHttp.',
+        'Whether the server is stateful. Only supported for stdio→StreamableHTTP.',
     })
     .option('sessionTimeout', {
       type: 'number',
       description:
-        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. If not set, the session will only be deleted when client transport explicitly terminates the session.',
+        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHTTP. If not set, the session will only be deleted when client transport explicitly terminates the session.',
     })
     .help()
     .parseSync()
@@ -183,7 +183,7 @@ async function main() {
           corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
         })
-      } else if (argv.outputTransport === 'streamableHttp') {
+      } else if (argv.outputTransport === 'streamableHTTP') {
         const stateful = argv.stateful
         if (stateful) {
           logger.info('Running stateful server')
@@ -202,10 +202,10 @@ async function main() {
             sessionTimeout = null
           }
 
-          await stdioToStatefulStreamableHttp({
+          await stdioToStatefulStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
+            streamableHTTPPath: argv.streamableHTTPPath,
             logger,
             corsOrigin: corsOrigin({ argv }),
             healthEndpoints: argv.healthEndpoint as string[],
@@ -218,10 +218,10 @@ async function main() {
         } else {
           logger.info('Running stateless server')
 
-          await stdioToStatelessStreamableHttp({
+          await stdioToStatelessStreamableHTTP({
             stdioCmd: argv.stdio!,
             port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
+            streamableHTTPPath: argv.streamableHTTPPath,
             logger,
             corsOrigin: corsOrigin({ argv }),
             healthEndpoints: argv.healthEndpoint as string[],

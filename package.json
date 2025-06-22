@@ -23,7 +23,7 @@
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
-    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
+    "test": "node --experimental-loader ts-node/esm --experimental-test-module-mocks --test 'tests/**/*.test.ts'",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -13,8 +13,13 @@ let serverProc: ChildProcess | undefined
 function spawnMcpServer(): Promise<ChildProcess> {
   return new Promise((res, rej) => {
     const proc = spawn(
-      `PORT=${MCP_PORT} npx -y @modelcontextprotocol/server-everything streamableHttp`,
-      { shell: true, stdio: ['inherit', 'pipe', 'inherit'] },
+      'node',
+      ['tests/helpers/mock-mcp-server.js', 'streamableHttp'],
+      {
+        env: { ...process.env, PORT: String(MCP_PORT) },
+        shell: false,
+        stdio: ['inherit', 'pipe', 'inherit'],
+      },
     )
 
     proc.stdout.setEncoding('utf8')

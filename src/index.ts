@@ -28,6 +28,8 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
+import { stdioToStatelessStreamableHTTP } from './gateways/stdioToStatelessStreamableHTTP.js'
+import { stdioToStatefulStreamableHTTP } from './gateways/stdioToStatefulStreamableHTTP.js'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
@@ -45,7 +47,7 @@ async function main() {
     })
     .option('outputTransport', {
       type: 'string',
-      choices: ['stdio', 'sse', 'ws'],
+      choices: ['stdio', 'sse', 'ws', 'streamableHTTP'],
       default: () => {
         const args = hideBin(process.argv)
 
@@ -78,6 +80,11 @@ async function main() {
       default: '/message',
       description: '(stdio→SSE, stdio→WS) Path for messages',
     })
+    .option('streamableHTTPPath', {
+      type: 'string',
+      default: '/mcp',
+      description: '(stdio→StreamableHTTP) Path for StreamableHTTP',
+    })
     .option('logLevel', {
       choices: ['debug', 'info', 'none'] as const,
       default: 'info',
@@ -104,6 +111,17 @@ async function main() {
       type: 'string',
       description:
         'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
+    })
+    .option('stateful', {
+      type: 'boolean',
+      default: false,
+      description:
+        'Whether the server is stateful. Only supported for stdio→StreamableHTTP.',
+    })
+    .option('sessionTimeout', {
+      type: 'number',
+      description:
+        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHTTP. If not set, the session will only be deleted when client transport explicitly terminates the session.',
     })
     .help()
     .parseSync()
@@ -165,6 +183,54 @@ async function main() {
           corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
         })
+      } else if (argv.outputTransport === 'streamableHTTP') {
+        const stateful = argv.stateful
+        if (stateful) {
+          logger.info('Running stateful server')
+
+          let sessionTimeout: null | number
+          if (typeof argv.sessionTimeout === 'number') {
+            if (argv.sessionTimeout <= 0) {
+              logger.error(
+                `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
+              )
+              process.exit(1)
+            }
+
+            sessionTimeout = argv.sessionTimeout
+          } else {
+            sessionTimeout = null
+          }
+
+          await stdioToStatefulStreamableHTTP({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHTTPPath: argv.streamableHTTPPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+            sessionTimeout,
+          })
+        } else {
+          logger.info('Running stateless server')
+
+          await stdioToStatelessStreamableHTTP({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHTTPPath: argv.streamableHTTPPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+          })
+        }
       } else {
         logger.error(`Error: stdio→${argv.outputTransport} not supported`)
         process.exit(1)

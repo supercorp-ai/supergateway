@@ -1,7 +1,7 @@
 {
   "name": "supergateway",
-  "version": "2.8.3",
-  "description": "Run MCP stdio servers over SSE or visa versa",
+  "version": "3.2.0",
+  "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/supercorp-ai/supergateway.git"
@@ -23,14 +23,14 @@
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
-    "test": "node --experimental-loader ts-node/esm --experimental-test-module-mocks --test 'tests/**/*.test.ts'",
+    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
     "prepare": "husky"
   },
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.9.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
+    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.18",

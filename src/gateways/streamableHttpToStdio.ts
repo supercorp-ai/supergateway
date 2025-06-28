@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type {
@@ -8,20 +8,21 @@ import type {
   ClientCapabilities,
   Implementation,
 } from '@modelcontextprotocol/sdk/types.js'
+import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 
-export interface SseToStdioArgs {
-  sseUrl: string
+export interface StreamableHttpToStdioArgs {
+  streamableHttpUrl: string
   logger: Logger
   headers: Record<string, string>
 }
 
-let sseClient: Client | undefined
+let mcpClient: Client | undefined
 
-const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
+const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
   const clientInfo = message.params?.clientInfo as Implementation | undefined
   const clientCapabilities = message.params?.capabilities as
     | ClientCapabilities
@@ -38,12 +39,12 @@ const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
   )
 }
 
-const newFallbackSseClient = async ({
-  sseTransport,
+const newFallbackMcpClient = async ({
+  mcpTransport,
 }: {
-  sseTransport: SSEClientTransport
+  mcpTransport: StreamableHTTPClientTransport
 }) => {
-  const fallbackSseClient = new Client(
+  const fallbackMcpClient = new Client(
     {
       name: 'supergateway',
       version: getVersion(),
@@ -53,39 +54,36 @@ const newFallbackSseClient = async ({
     },
   )
 
-  await fallbackSseClient.connect(sseTransport)
-  return fallbackSseClient
+  await fallbackMcpClient.connect(mcpTransport)
+  return fallbackMcpClient
 }
 
-export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger, headers } = args
+export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
+  const { streamableHttpUrl, logger, headers } = args
 
-  logger.info(`  - sse: ${sseUrl}`)
+  logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
   logger.info(
     `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
   )
-  logger.info('Connecting to SSE...')
+  logger.info('Connecting to Streamable HTTP...')
 
   onSignals({ logger })
 
-  const sseTransport = new SSEClientTransport(new URL(sseUrl), {
-    eventSourceInit: {
-      fetch: (...props: Parameters<typeof fetch>) => {
-        const [url, init = {}] = props
-        return fetch(url, { ...init, headers: { ...init.headers, ...headers } })
+  const mcpTransport = new StreamableHTTPClientTransport(
+    new URL(streamableHttpUrl),
+    {
+      requestInit: {
+        headers,
       },
     },
-    requestInit: {
-      headers,
-    },
-  })
+  )
 
-  sseTransport.onerror = (err) => {
-    logger.error('SSE error:', err)
+  mcpTransport.onerror = (err) => {
+    logger.error('Streamable HTTP error:', err)
   }
 
-  sseTransport.onclose = () => {
-    logger.error('SSE connection closed')
+  mcpTransport.onclose = () => {
+    logger.error('Streamable HTTP connection closed')
     process.exit(1)
   }
 
@@ -111,48 +109,51 @@ export async function sseToStdio(args: SseToStdioArgs) {
   stdioServer.transport!.onmessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
-      logger.info('Stdio → SSE:', message)
+      logger.info('Stdio → Streamable HTTP:', message)
       const req = message as JSONRPCRequest
       let result
 
       try {
-        if (!sseClient) {
+        if (!mcpClient) {
           if (message.method === 'initialize') {
-            sseClient = newInitializeSseClient({
+            mcpClient = newInitializeMcpClient({
               message,
             })
 
-            const originalRequest = sseClient.request
+            const originalRequest = mcpClient.request
 
-            sseClient.request = async function (requestMessage, ...restArgs) {
-              // pass protocol version from original client
+            mcpClient.request = async function (
+              possibleInitRequestMessage,
+              ...restArgs
+            ) {
               if (
-                requestMessage.method === 'initialize' &&
-                message.params?.protocolVersion &&
-                requestMessage.params?.protocolVersion
+                InitializeRequestSchema.safeParse(possibleInitRequestMessage)
+                  .success &&
+                message.params?.protocolVersion
               ) {
-                requestMessage.params.protocolVersion =
+                // respect the protocol version from the stdio client's init request
+                possibleInitRequestMessage.params!.protocolVersion =
                   message.params.protocolVersion
               }
-
               result = await originalRequest.apply(this, [
-                requestMessage,
+                possibleInitRequestMessage,
                 ...restArgs,
               ])
-
               return result
             }
 
-            await sseClient.connect(sseTransport)
-            sseClient.request = originalRequest
+            await mcpClient.connect(mcpTransport)
+            mcpClient.request = originalRequest
           } else {
-            logger.info('SSE client not initialized, creating fallback client')
-            sseClient = await newFallbackSseClient({ sseTransport })
+            logger.info(
+              'Streamable HTTP client not initialized, creating fallback client',
+            )
+            mcpClient = await newFallbackMcpClient({ mcpTransport })
           }
 
-          logger.info('SSE connected')
+          logger.info('Streamable HTTP connected')
         } else {
-          result = await sseClient.request(req, z.any())
+          result = await mcpClient.request(req, z.any())
         }
       } catch (err) {
         logger.error('Request error:', err)
@@ -186,7 +187,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {
-      logger.info('SSE → Stdio:', message)
+      logger.info('Streamable HTTP → Stdio:', message)
       process.stdout.write(JSON.stringify(message) + '\n')
     }
   }

@@ -123,6 +123,12 @@ async function main() {
       description:
         'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHTTP. If not set, the session will only be deleted when client transport explicitly terminates the session.',
     })
+    .option('protocolVersion', {
+      type: 'string',
+      description:
+        'MCP protocol version to use for auto-initialization. Defaults to "2024-11-05" if not specified.',
+      default: '2024-11-05',
+    })
     .help()
     .parseSync()
 
@@ -229,6 +235,7 @@ async function main() {
               argv,
               logger,
             }),
+            protocolVersion: argv.protocolVersion,
           })
         }
       } else {

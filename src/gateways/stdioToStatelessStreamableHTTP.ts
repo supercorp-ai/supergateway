@@ -20,6 +20,7 @@ export interface StdioToStreamableHTTPArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  protocolVersion: string
 }
 
 const setResponseHeaders = ({
@@ -34,12 +35,15 @@ const setResponseHeaders = ({
   })
 
 // Helper function to create initialize request
-const createInitializeRequest = (id: string | number): JSONRPCMessage => ({
+const createInitializeRequest = (
+  id: string | number,
+  protocolVersion: string,
+): JSONRPCMessage => ({
   jsonrpc: '2.0',
   id,
   method: 'initialize',
   params: {
-    protocolVersion: '2024-11-05',
+    protocolVersion,
     capabilities: {
       roots: {
         listChanged: true,
@@ -70,6 +74,7 @@ export async function stdioToStatelessStreamableHTTP(
     corsOrigin,
     healthEndpoints,
     headers,
+    protocolVersion,
   } = args
 
   logger.info(
@@ -78,6 +83,7 @@ export async function stdioToStatelessStreamableHTTP(
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - streamableHTTPPath: ${streamableHTTPPath}`)
+  logger.info(`  - protocolVersion: ${protocolVersion}`)
 
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -210,7 +216,10 @@ export async function stdioToStatelessStreamableHTTP(
           logger.info(
             'Non-initialize message detected, sending auto-initialize request first',
           )
-          const initRequest = createInitializeRequest(initializeRequestId)
+          const initRequest = createInitializeRequest(
+            initializeRequestId,
+            protocolVersion,
+          )
           logger.info(
             `StreamableHTTP → Child (auto-initialize): ${JSON.stringify(initRequest)}`,
           )

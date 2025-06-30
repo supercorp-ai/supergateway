@@ -2,24 +2,31 @@ import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { Logger } from '../types.js'
 
 export class StdioChildProcessPool {
+  private stdioCmd: string
   private maxConcurrency: number
   private activeProcesses: Set<ChildProcessWithoutNullStreams> = new Set()
   private idleProcesses: ChildProcessWithoutNullStreams[] = []
   private queue: Array<() => void> = []
   private logger: Logger
 
-  constructor(
-    private stdioCmd: string,
-    maxConcurrency: number,
-    logger: Logger,
-    preFork: number = 0,
-  ) {
+  constructor({
+    stdioCmd,
+    minConcurrency,
+    maxConcurrency,
+    logger,
+  }: {
+    stdioCmd: string
+    maxConcurrency: number
+    minConcurrency: number
+    logger: Logger
+  }) {
+    this.stdioCmd = stdioCmd
     this.maxConcurrency = maxConcurrency
     this.logger = logger
-    for (let i = 0; i < Math.min(preFork, maxConcurrency); i++) {
+
+    for (let i = 0; i < Math.min(minConcurrency, maxConcurrency); i++) {
       this.idleProcesses.push(this.createChild())
     }
-    logger.info(`PreForked ${preFork} child processes`)
   }
 
   async acquire(): Promise<ChildProcessWithoutNullStreams> {

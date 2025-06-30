@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * index.ts
  *
@@ -8,6 +9,9 @@
  *   # stdio→SSE
  *   npx -y supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
  *                       --port 8000 --baseUrl http://localhost:8000 --ssePath /sse --messagePath /message
+ *
+ *   # stdio→SSE (Multiple Servers)
+ *   npx -y supergateway --stdio "uvx mcp-server-git" --stdio "uvx mcp-server-docker" --port 8000
  *
  *   # SSE→stdio
  *   npx -y supergateway --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
@@ -34,8 +38,9 @@ import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreama
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .option('stdio', {
-      type: 'string',
-      description: 'Command to run an MCP server over Stdio',
+      type: 'array',
+      description:
+        'Command(s) to run an MCP server over Stdio. Use once for each server.',
     })
     .option('sse', {
       type: 'string',
@@ -138,7 +143,8 @@ async function main() {
     .help()
     .parseSync()
 
-  const hasStdio = Boolean(argv.stdio)
+  const stdioCommands = (argv.stdio || []).map(String)
+  const hasStdio = stdioCommands.length > 0
   const hasSse = Boolean(argv.sse)
   const hasStreamableHttp = Boolean(argv.streamableHttp)
 
@@ -173,7 +179,7 @@ async function main() {
     if (hasStdio) {
       if (argv.outputTransport === 'sse') {
         await stdioToSse({
-          stdioCmd: argv.stdio!,
+          stdioCmds: stdioCommands,
           port: argv.port,
           baseUrl: argv.baseUrl,
           ssePath: argv.ssePath,
@@ -189,8 +195,14 @@ async function main() {
           maxConcurrency: argv.maxConcurrency,
         })
       } else if (argv.outputTransport === 'ws') {
+        if (stdioCommands.length > 1) {
+          logger.error(
+            'Error: Multiple --stdio commands are not supported for the "ws" output transport.',
+          )
+          process.exit(1)
+        }
         await stdioToWs({
-          stdioCmd: argv.stdio!,
+          stdioCmd: stdioCommands[0]!,
           port: argv.port,
           messagePath: argv.messagePath,
           logger,
@@ -198,6 +210,12 @@ async function main() {
           healthEndpoints: argv.healthEndpoint as string[],
         })
       } else if (argv.outputTransport === 'streamableHttp') {
+        if (stdioCommands.length > 1) {
+          logger.error(
+            'Error: Multiple --stdio commands are not supported for the "streamableHttp" output transport.',
+          )
+          process.exit(1)
+        }
         const stateful = argv.stateful
         if (stateful) {
           logger.info('Running stateful server')
@@ -217,7 +235,7 @@ async function main() {
           }
 
           await stdioToStatefulStreamableHttp({
-            stdioCmd: argv.stdio!,
+            stdioCmd: stdioCommands[0]!,
             port: argv.port,
             streamableHttpPath: argv.streamableHttpPath,
             logger,
@@ -233,7 +251,7 @@ async function main() {
           logger.info('Running stateless server')
 
           await stdioToStatelessStreamableHttp({
-            stdioCmd: argv.stdio!,
+            stdioCmd: stdioCommands[0]!,
             port: argv.port,
             streamableHttpPath: argv.streamableHttpPath,
             logger,

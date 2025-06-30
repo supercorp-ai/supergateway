@@ -3,7 +3,10 @@ import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import {
+  JSONRPCMessage,
+  isInitializeRequest,
+} from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
@@ -29,6 +32,32 @@ const setResponseHeaders = ({
   Object.entries(headers).forEach(([key, value]) => {
     res.setHeader(key, value)
   })
+
+// Helper function to create initialize request
+const createInitializeRequest = (id: string | number): JSONRPCMessage => ({
+  jsonrpc: '2.0',
+  id,
+  method: 'initialize',
+  params: {
+    protocolVersion: '2024-11-05',
+    capabilities: {
+      roots: {
+        listChanged: true,
+      },
+      sampling: {},
+    },
+    clientInfo: {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+  },
+})
+
+// Helper function to create initialized notification
+const createInitializedNotification = (): JSONRPCMessage => ({
+  jsonrpc: '2.0',
+  method: 'notifications/initialized',
+})
 
 export async function stdioToStatelessStreamableHTTP(
   args: StdioToStreamableHTTPArgs,
@@ -97,6 +126,12 @@ export async function stdioToStatelessStreamableHTTP(
         transport.close()
       })
 
+      // State tracking for initialization flow
+      let isInitialized = false
+      let initializeRequestId: string | number | null = null // Current initialize request ID
+      let isAutoInitializing = false // Flag to indicate if we're auto-initializing
+      let pendingOriginalMessage: JSONRPCMessage | null = null
+
       let buffer = ''
       child.stdout.on('data', (chunk: Buffer) => {
         buffer += chunk.toString('utf8')
@@ -107,6 +142,46 @@ export async function stdioToStatelessStreamableHTTP(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHTTP:', line)
+
+            // Handle initialize response (both auto and client initiated)
+            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
+              logger.info('Initialize response received')
+              isInitialized = true
+
+              // If this was our auto-initialization, send initialized notification and pending message
+              if (isAutoInitializing) {
+                // Send initialized notification
+                const initializedNotification = createInitializedNotification()
+                logger.info(
+                  `StreamableHTTP → Child (initialized): ${JSON.stringify(initializedNotification)}`,
+                )
+                child.stdin.write(
+                  JSON.stringify(initializedNotification) + '\n',
+                )
+
+                // Now send the original message
+                if (pendingOriginalMessage) {
+                  logger.info(
+                    `StreamableHTTP → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
+                  )
+                  child.stdin.write(
+                    JSON.stringify(pendingOriginalMessage) + '\n',
+                  )
+                  pendingOriginalMessage = null
+                }
+
+                // Reset auto-initialize tracking
+                isAutoInitializing = false
+                initializeRequestId = null
+
+                // Don't forward our auto-initialize response to the client
+                return
+              } else {
+                // Client-initiated initialize response, just reset tracking
+                initializeRequestId = null
+              }
+            }
+
             try {
               transport.send(jsonMsg)
             } catch (e) {
@@ -124,6 +199,35 @@ export async function stdioToStatelessStreamableHTTP(
 
       transport.onmessage = (msg: JSONRPCMessage) => {
         logger.info(`StreamableHTTP → Child: ${JSON.stringify(msg)}`)
+
+        // Check if we need to auto-initialize first
+        if (!isInitialized && !isInitializeRequest(msg)) {
+          // Store the original message and send initialize first
+          pendingOriginalMessage = msg
+          initializeRequestId = `init_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          isAutoInitializing = true
+
+          logger.info(
+            'Non-initialize message detected, sending auto-initialize request first',
+          )
+          const initRequest = createInitializeRequest(initializeRequestId)
+          logger.info(
+            `StreamableHTTP → Child (auto-initialize): ${JSON.stringify(initRequest)}`,
+          )
+          child.stdin.write(JSON.stringify(initRequest) + '\n')
+
+          // Don't send the original message yet - it will be sent after initialization
+          return
+        }
+
+        // Track initialize request ID (both client and auto)
+        if (isInitializeRequest(msg) && 'id' in msg && msg.id !== undefined) {
+          initializeRequestId = msg.id
+          isAutoInitializing = false // This is client-initiated
+          logger.info(`Tracking initialize request ID: ${msg.id}`)
+        }
+
+        // Send all messages to child process normally
         child.stdin.write(JSON.stringify(msg) + '\n')
       }
 

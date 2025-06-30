@@ -123,7 +123,7 @@ async function main() {
       description:
         'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. If not set, the session will only be deleted when client transport explicitly terminates the session.',
     })
-    .option('minConcurrenty', {
+    .option('minConcurrency', {
       type: 'number',
       default: 1,
       description:
@@ -185,7 +185,7 @@ async function main() {
             argv,
             logger,
           }),
-          minConcurrency: argv.minConcurrenty,
+          minConcurrency: argv.minConcurrency,
           maxConcurrency: argv.maxConcurrency,
         })
       } else if (argv.outputTransport === 'ws') {

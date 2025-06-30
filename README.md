@@ -28,6 +28,8 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+- **`--minConcurrency 1`**: Minimum concurrency for stdio server (stdio→SSE; default: `1`).
+- **`--maxConcurrency 10`**: Max concurrency for stdio server (stdio→SSE; default: `1`).
 
 ## stdio → SSE
 

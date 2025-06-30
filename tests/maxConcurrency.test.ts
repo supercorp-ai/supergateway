@@ -54,6 +54,10 @@ test.before(async () => {
       SSE_PATH,
       '--messagePath',
       '/message',
+      '--minConcurrency',
+      '1',
+      '--maxConcurrency',
+      '10',
     ],
     { stdio: 'ignore', shell: false },
   )

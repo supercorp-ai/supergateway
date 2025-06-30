@@ -33,24 +33,16 @@ export class StdioChildProcessPool {
     if (this.idleProcesses.length > 0) {
       const child = this.idleProcesses.shift()!
       this.activeProcesses.add(child)
-      this.logger.info(
-        `Reusing child process, active: ${this.activeProcesses.size}`,
-      )
+
       return child
     }
 
     if (this.activeProcesses.size < this.maxConcurrency) {
       const child = this.createChild()
       this.activeProcesses.add(child)
-      this.logger.info(
-        `New child created, active: ${this.activeProcesses.size}`,
-      )
       return child
     }
 
-    this.logger.info(
-      `Waiting for available process (${this.queue.length} queued)`,
-    )
     return new Promise((resolve) => {
       this.queue.push(() => {
         const child = this.idleProcesses.shift() || this.createChild()
@@ -64,10 +56,6 @@ export class StdioChildProcessPool {
     if (child.exitCode === null && !child.killed) {
       this.activeProcesses.delete(child)
       this.idleProcesses.push(child)
-      this.logger.info(
-        `Process released to pool, active: ${this.activeProcesses.size}, idle: ${this.idleProcesses.length}`,
-      )
-
       child.stdout.removeAllListeners('data')
       child.stderr.removeAllListeners('data')
       child.removeAllListeners('exit')
@@ -77,7 +65,7 @@ export class StdioChildProcessPool {
         next()
       }
     } else {
-      this.logger.info('Cannot release exited process')
+      this.logger.error('Cannot release exited process')
     }
   }
 

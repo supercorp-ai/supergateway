@@ -8,7 +8,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 
 const BASE_URL = 'http://localhost:11001'
 const SSE_PATH = '/sse'
-const CONCURRENCY = 100
+const CONCURRENCY = 400
 
 function makeLimiter(maxConcurrency: number) {
   let active = 0

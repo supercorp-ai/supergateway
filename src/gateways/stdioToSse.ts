@@ -21,8 +21,6 @@ export interface StdioToSseArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
-  minConcurrency: number
-  maxConcurrency: number
 }
 
 const setResponseHeaders = ({
@@ -47,8 +45,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
     corsOrigin,
     healthEndpoints,
     headers,
-    minConcurrency,
-    maxConcurrency,
   } = args
 
   logger.info(
@@ -68,19 +64,21 @@ export async function stdioToSse(args: StdioToSseArgs) {
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
-  if (minConcurrency > 1 || maxConcurrency > 1) {
-    logger.info(`  - minConcurrency: ${minConcurrency}`)
-    logger.info(`  - maxConcurrency: ${maxConcurrency}`)
-  }
 
   onSignals({ logger })
 
-  const pool = new StdioChildProcessPool({
+  const preFork = parseInt(process.env.MCP_STDIO_PROCESS_PRE_FORK || '1', 10)
+  const maxConcurrency = parseInt(process.env.MCP_STDIO_PROCESS_MAX || '10', 10)
+  const pool = new StdioChildProcessPool(
     stdioCmd,
-    minConcurrency,
     maxConcurrency,
     logger,
-  })
+    preFork,
+  )
+
+  logger.info(
+    `Starting stdio process pool: min=${preFork}, max=${maxConcurrency}`,
+  )
 
   const sessions: Record<
     string,

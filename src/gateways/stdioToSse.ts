@@ -161,10 +161,13 @@ export async function stdioToSse(args: StdioToSseArgs) {
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)
-          logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
+          logger.info(`Child → SSE (session ${sessionId}) [JSON]:`, {
+            parsed: jsonMsg,
+            raw: line,
+          })
           sseTransport.send(jsonMsg)
         } catch (err) {
-          logger.error(`Child non-JSON (session ${sessionId}): ${line}`, err)
+          logger.error(`Child non-JSON: ${line}`, err)
         }
       })
     }

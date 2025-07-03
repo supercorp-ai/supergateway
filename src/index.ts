@@ -123,18 +123,6 @@ async function main() {
       description:
         'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. If not set, the session will only be deleted when client transport explicitly terminates the session.',
     })
-    .option('minConcurrency', {
-      type: 'number',
-      default: 1,
-      description:
-        'Minimum number of concurrent processes (stdio→SSE). Default is 1.',
-    })
-    .option('maxConcurrency', {
-      type: 'number',
-      default: 1,
-      description:
-        'Maximum number of concurrent processes (stdio→SSE). Default is 1.',
-    })
     .help()
     .parseSync()
 
@@ -185,8 +173,6 @@ async function main() {
             argv,
             logger,
           }),
-          minConcurrency: argv.minConcurrency,
-          maxConcurrency: argv.maxConcurrency,
         })
       } else if (argv.outputTransport === 'ws') {
         await stdioToWs({

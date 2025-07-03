@@ -124,22 +124,8 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
             const originalRequest = sseClient.request
 
-            sseClient.request = async function (requestMessage, ...restArgs) {
-              // pass protocol version from original client
-              if (
-                requestMessage.method === 'initialize' &&
-                message.params?.protocolVersion &&
-                requestMessage.params?.protocolVersion
-              ) {
-                requestMessage.params.protocolVersion =
-                  message.params.protocolVersion
-              }
-
-              result = await originalRequest.apply(this, [
-                requestMessage,
-                ...restArgs,
-              ])
-
+            sseClient.request = async function (...args) {
+              result = await originalRequest.apply(this, args)
               return result
             }
 

@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomInt } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
-import { spawn, ChildProcess } from 'child_process'
+import { stdioToSse } from '../src/gateways/stdioToSse.js'
+import { getLogger } from '../src/lib/getLogger.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 
@@ -33,39 +34,23 @@ function makeLimiter(maxConcurrency: number) {
 
 const limit = makeLimiter(CONCURRENCY)
 
-let gatewayProc: ChildProcess
-
 test.before(async () => {
-  gatewayProc = spawn(
-    'npm',
-    [
-      'run',
-      'start',
-      '--',
-      '--stdio',
-      'node tests/helpers/mock-mcp-server.js stdio',
-      '--outputTransport',
-      'sse',
-      '--port',
-      '11001',
-      '--baseUrl',
-      BASE_URL,
-      '--ssePath',
-      SSE_PATH,
-      '--messagePath',
-      '/message',
-    ],
-    { stdio: 'ignore', shell: false },
-  )
-
-  gatewayProc.unref()
-
-  await new Promise((resolve) => setTimeout(resolve, 2000))
+  await stdioToSse({
+    stdioCmd: 'npx -y @modelcontextprotocol/server-everything',
+    port: 11001,
+    baseUrl: BASE_URL,
+    ssePath: SSE_PATH,
+    messagePath: '/message',
+    logger: getLogger({ logLevel: 'info', outputTransport: 'stdio' }),
+    corsOrigin: false,
+    healthEndpoints: [],
+    headers: {},
+  })
 })
 
 test.after(async () => {
-  gatewayProc.kill('SIGINT')
-  await new Promise((resolve) => gatewayProc.once('exit', resolve))
+  await new Promise<void>((res) => setTimeout(res, 30000))
+  process.kill(process.pid, 'SIGINT')
 })
 
 test('concurrent listTools → callTool', async () => {
@@ -113,7 +98,6 @@ test('concurrent listTools → callTool', async () => {
     assert.strictEqual(text, `The sum of ${id} and ${rnd} is ${id + rnd}.`)
 
     await client.close()
-    transport.close()
     console.log(`Instance ${id} timings:`, timing)
     succeededInstances.push({
       id,

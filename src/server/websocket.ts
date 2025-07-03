@@ -1,7 +1,4 @@
-import {
-  Transport,
-  TransportSendOptions,
-} from '@modelcontextprotocol/sdk/shared/transport.js'
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { v4 as uuidv4 } from 'uuid'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -68,42 +65,34 @@ export class WebSocketServerTransport implements Transport {
     })
   }
 
-  async send(
-    msg: JSONRPCMessage,
-    options?: TransportSendOptions | string,
-  ): Promise<void> {
-    // decide if they passed a raw clientId (legacy) or options object
-    const clientId = typeof options === 'string' ? options : undefined
-
-    // if your protocol mangles IDs to include clientId, strip it off
-    const [cId, rawId] = clientId?.split(':') ?? []
-    if (rawId !== undefined) {
-      // @ts-ignore
-      msg.id = parseInt(rawId, 10)
-    }
-
-    const payload = JSON.stringify(msg)
+  async send(msg: JSONRPCMessage, clientId?: string): Promise<void> {
+    const [cId, msgId] = clientId?.split(':') ?? []
+    // @ts-ignore
+    msg.id = parseInt(msgId)
+    const data = JSON.stringify(msg)
+    const deadClients: string[] = []
 
     if (cId) {
-      // send only to the one client
-      const ws = this.clients.get(cId)
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(payload)
+      // Send to specific client
+      const client = this.clients.get(cId)
+      if (client?.readyState === WebSocket.OPEN) {
+        client.send(data)
       } else {
         this.clients.delete(cId)
         this.ondisconnection?.(cId)
       }
-    } else {
-      // broadcast to everyone
-      for (const [id, ws] of this.clients) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(payload)
-        } else {
-          this.clients.delete(id)
-          this.ondisconnection?.(id)
-        }
+    }
+
+    for (const [id, client] of this.clients.entries()) {
+      if (client.readyState !== WebSocket.OPEN) {
+        deadClients.push(id)
       }
     }
+    // Cleanup dead clients
+    deadClients.forEach((id) => {
+      this.clients.delete(id)
+      this.ondisconnection?.(id)
+    })
   }
 
   async broadcast(msg: JSONRPCMessage): Promise<void> {

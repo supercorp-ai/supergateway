@@ -1,62 +1,91 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, ChildProcess } from 'child_process'
+import { stdioToSse } from '../src/gateways/stdioToSse.js'
+import { getLogger } from '../src/lib/getLogger.js'
 
-const PORT = 11000
-const BASE_URL = `http://0.0.0.0:${PORT}`
-const SSE_PATH = '/sse'
-const MESSAGE_PATH = '/message'
+const startGateway = async ({
+  baseUrl,
+  ssePath,
+  messagePath,
+}: {
+  baseUrl: string
+  ssePath: string
+  messagePath: string
+}) => {
+  const logger = getLogger({
+    logLevel: 'none',
+    outputTransport: 'stdio',
+  })
 
-let gatewayProc: ChildProcess
+  await stdioToSse({
+    stdioCmd: 'npx -y @modelcontextprotocol/server-memory',
+    port: 11000,
+    baseUrl,
+    ssePath,
+    messagePath,
+    logger,
+    corsOrigin: false,
+    healthEndpoints: [],
+    headers: {},
+  })
 
-test.before(() => {
-  gatewayProc = spawn(
-    'npm',
-    [
-      'run',
-      'start',
-      '--',
-      '--stdio',
-      'node tests/helpers/mock-mcp-server.js stdio',
-      '--outputTransport',
-      'sse',
-      '--port',
-      String(PORT),
-      '--baseUrl',
-      BASE_URL,
-      '--ssePath',
-      SSE_PATH,
-      '--messagePath',
-      MESSAGE_PATH,
-    ],
-    { stdio: 'ignore', shell: false },
-  )
-  gatewayProc.unref()
-})
+  return async () => {
+    process.kill(process.pid, 'SIGINT')
+  }
+}
 
-test.after(async () => {
-  gatewayProc.kill('SIGINT')
-  await new Promise((resolve) => gatewayProc.once('exit', resolve))
-})
+test('baseUrl should be passed correctly in endpoint event', async (t) => {
+  // 0.0.0.0 is just simplest to test on all machines
+  // also tested with ngrok just to make sure
+  const baseUrl = 'http://0.0.0.0:11000'
+  const ssePath = '/sse'
+  const messagePath = '/message'
 
-test('baseUrl should be passed correctly in endpoint event', async () => {
+  const teardown = await startGateway({
+    baseUrl,
+    ssePath,
+    messagePath,
+  })
+
+  t.after(() => teardown())
+
+  const endpointSpy = t.mock.fn()
+
+  const { EventSource } = await import('eventsource')
+
+  class EventSourceSpy extends EventSource {
+    constructor(url: string | URL, init?: EventSourceInit) {
+      super(url as any, init)
+      this.addEventListener('endpoint', endpointSpy)
+    }
+  }
+
+  t.mock.module('eventsource', {
+    defaultExport: EventSourceSpy,
+    namedExports: { EventSource: EventSourceSpy },
+  })
+
   const [{ Client }, { SSEClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/sse.js'),
   ])
 
-  const transport = new SSEClientTransport(new URL(SSE_PATH, BASE_URL))
-  const client = new Client({ name: 'endpoint-tester', version: '1.0.0' })
-
-  await new Promise((resolve) => setTimeout(resolve, 3000))
+  const transport = new SSEClientTransport(new URL(ssePath, baseUrl))
+  const client = new Client({ name: 'endpoint-tester', version: '0.0.0' })
 
   await client.connect(transport)
-  const endpoint = (transport as any)._endpoint as URL | undefined
   await client.close()
-  transport.close()
+
+  assert.strictEqual(
+    endpointSpy.mock.callCount(),
+    1,
+    'endpoint event should fire exactly once',
+  )
+
+  const data = endpointSpy.mock.calls[0].arguments[0].data
 
   assert.ok(
-    endpoint && endpoint.href.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
-    `endpoint should start with "${BASE_URL}${MESSAGE_PATH}", got: ${endpoint?.href}`,
+    data.startsWith(`${baseUrl}${messagePath}`),
+    `expected endpoint URL to start with ${baseUrl}${messagePath}, got ${data}`,
   )
 })

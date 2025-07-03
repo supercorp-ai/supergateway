@@ -14,16 +14,12 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
-- **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
-- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
+- **`--outputTransport stdio | sse | ws`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse`)
 - **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE or WS clients (stdio→SSE mode; optional)
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
-- **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
-- **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
-- **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
-- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
+- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE or SSE→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
@@ -61,47 +57,6 @@ npx -y supergateway \
     --oauth2Bearer "some-access-token" \
     --header "X-My-Header: another-header-value"
 ```
-
-## Streamable HTTP → stdio
-
-Connect to a remote Streamable HTTP server and expose locally via stdio:
-
-```bash
-npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
-```
-
-This mode is useful for connecting to MCP servers that use the newer Streamable HTTP transport protocol. Like SSE mode, you can also pass headers for authentication:
-
-```bash
-npx -y supergateway \
-    --streamableHttp "https://mcp-server.example.com/mcp" \
-    --oauth2Bearer "some-access-token" \
-    --header "X-My-Header: another-header-value"
-```
-
-## stdio → Streamable HTTP
-
-Expose an MCP stdio server as a Streamable HTTP server.
-
-### Stateless mode
-
-```bash
-npx -y supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
-    --outputTransport streamableHttp \
-    --port 8000
-```
-
-### Stateful mode
-
-```bash
-npx -y supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
-    --outputTransport streamableHttp --stateful \
-    --sessionTimeout 60000 --port 8000
-```
-
-The Streamable HTTP endpoint defaults to `http://localhost:8000/mcp` (configurable via `--streamableHttpPath`).
 
 ## stdio → WS
 
@@ -295,11 +250,6 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
-- [@griffinqiu](https://github.com/griffinqiu)
-- [@folkvir](https://github.com/folkvir)
-- [@wizizm](https://github.com/wizizm)
-- [@dtinth](https://github.com/dtinth)
-- [@rajivml](https://github.com/rajivml)
 - [@NicoBonaminio](https://github.com/NicoBonaminio)
 - [@sibbl](https://github.com/sibbl)
 - [@podarok](https://github.com/podarok)
@@ -327,20 +277,15 @@ Issues and PRs welcome. Please open one if you encounter problems or have featur
 
 ## Tests
 
-Supergateway is tested with the Node Test Runner.
+Supergateway is tested with Node Test Runner.
 
-To run the suite locally you need Node **24+**. Using [nvm](https://github.com/nvm-sh/nvm) you can install and activate it with:
+To run tests locally, Node version 24+ that supports [`--experimental-test-module-mocks`](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) is required.
+
+Run tests with:
 
 ```bash
-nvm install 24
-nvm use 24
-npm install
-npm run build
 npm test
 ```
-
-The `tests/helpers/mock-mcp-server.js` script provides a local MCP server so all
-tests run without network access.
 
 ## License
 

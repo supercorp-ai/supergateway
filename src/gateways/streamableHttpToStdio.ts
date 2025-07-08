@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { safeJsonStringify } from '../lib/jsonBuffer.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -63,7 +64,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
   logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
   logger.info(
-    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object.keys(headers).length ? safeJsonStringify(headers) : '(none)'}`,
   )
   logger.info('Connecting to Streamable HTTP...')
 
@@ -175,7 +176,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
             message: errorMsg,
           },
         })
-        process.stdout.write(JSON.stringify(errorResp) + '\n')
+        process.stdout.write(safeJsonStringify(errorResp) + '\n')
         return
       }
       const response = wrapResponse(
@@ -185,10 +186,10 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
           : { result: { ...result } },
       )
       logger.info('Response:', response)
-      process.stdout.write(JSON.stringify(response) + '\n')
+      process.stdout.write(safeJsonStringify(response) + '\n')
     } else {
       logger.info('Streamable HTTP → Stdio:', message)
-      process.stdout.write(JSON.stringify(message) + '\n')
+      process.stdout.write(safeJsonStringify(message) + '\n')
     }
   }
 

@@ -11,6 +11,12 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
+import {
+  safeJsonStringify,
+  safeJsonParse,
+  JsonBuffer,
+  sanitizeJsonObject,
+} from '../lib/jsonBuffer.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -49,7 +55,7 @@ export async function stdioToStatefulStreamableHttp(
   } = args
 
   logger.info(
-    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object(headers).length ? safeJsonStringify(headers) : '(none)'}`,
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
@@ -143,34 +149,36 @@ export async function stdioToStatefulStreamableHttp(
         transport.close()
       })
 
-      let buffer = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        const lines = buffer.split(/\r?\n/)
-        buffer = lines.pop() ?? ''
-        lines.forEach((line) => {
-          if (!line.trim()) return
+      const jsonBuffer = new JsonBuffer(
+        (jsonMsg) => {
+          logger.info('Child → StreamableHttp:', safeJsonStringify(jsonMsg))
           try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
+            transport.send(sanitizeJsonObject(jsonMsg))
+          } catch (e) {
+            logger.error(`Failed to send to StreamableHttp`, e)
           }
-        })
+        },
+        (error, rawData) => {
+          logger.error(`Child JSON parsing error: ${error}`)
+          logger.error(`Raw data: ${rawData.slice(0, 200)}...`)
+        },
+      )
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        jsonBuffer.addChunk(chunk.toString('utf8'))
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
         logger.error(`Child stderr: ${chunk.toString('utf8')}`)
       })
 
+      child.on('close', () => {
+        jsonBuffer.flush()
+      })
+
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
-        child.stdin.write(JSON.stringify(msg) + '\n')
+        logger.info(`StreamableHttp → Child: ${safeJsonStringify(msg)}`)
+        child.stdin.write(safeJsonStringify(msg) + '\n')
       }
 
       transport.onclose = () => {
@@ -200,14 +208,17 @@ export async function stdioToStatefulStreamableHttp(
       }
     } else {
       // Invalid request
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
-        },
-        id: null,
-      })
+      res.setHeader('Content-Type', 'application/json')
+      res.status(400).end(
+        safeJsonStringify({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Bad Request: No valid session ID provided',
+          },
+          id: null,
+        }),
+      )
       return
     }
 

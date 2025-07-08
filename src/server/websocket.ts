@@ -6,6 +6,7 @@ import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { v4 as uuidv4 } from 'uuid'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Server } from 'http'
+import { safeJsonStringify, safeJsonParse } from '../lib/jsonBuffer.js'
 
 export class WebSocketServerTransport implements Transport {
   private wss!: WebSocketServer
@@ -50,7 +51,7 @@ export class WebSocketServerTransport implements Transport {
 
       ws.on('message', (data: Buffer) => {
         try {
-          const msg = JSON.parse(data.toString())
+          const msg = safeJsonParse(data.toString())
           this.messageHandler?.(msg, clientId)
         } catch (err) {
           this.onerror?.(new Error(`Failed to parse message: ${err}`))
@@ -82,7 +83,7 @@ export class WebSocketServerTransport implements Transport {
       msg.id = parseInt(rawId, 10)
     }
 
-    const payload = JSON.stringify(msg)
+    const payload = safeJsonStringify(msg)
 
     if (cId) {
       // send only to the one client

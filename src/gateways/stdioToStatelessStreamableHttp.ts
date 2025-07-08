@@ -8,6 +8,12 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import {
+  safeJsonStringify,
+  safeJsonParse,
+  JsonBuffer,
+  sanitizeJsonObject,
+} from '../lib/jsonBuffer.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -44,7 +50,7 @@ export async function stdioToStatelessStreamableHttp(
   } = args
 
   logger.info(
-    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object(headers).length ? safeJsonStringify(headers) : '(none)'}`,
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
@@ -97,34 +103,36 @@ export async function stdioToStatelessStreamableHttp(
         transport.close()
       })
 
-      let buffer = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        const lines = buffer.split(/\r?\n/)
-        buffer = lines.pop() ?? ''
-        lines.forEach((line) => {
-          if (!line.trim()) return
+      const jsonBuffer = new JsonBuffer(
+        (jsonMsg) => {
+          logger.info('Child → StreamableHttp:', safeJsonStringify(jsonMsg))
           try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
+            transport.send(sanitizeJsonObject(jsonMsg))
+          } catch (e) {
+            logger.error(`Failed to send to StreamableHttp`, e)
           }
-        })
+        },
+        (error, rawData) => {
+          logger.error(`Child JSON parsing error: ${error}`)
+          logger.error(`Raw data: ${rawData.slice(0, 200)}...`)
+        },
+      )
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        jsonBuffer.addChunk(chunk.toString('utf8'))
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
         logger.error(`Child stderr: ${chunk.toString('utf8')}`)
       })
 
+      child.on('close', () => {
+        jsonBuffer.flush()
+      })
+
       transport.onmessage = (msg: JSONRPCMessage) => {
-        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
-        child.stdin.write(JSON.stringify(msg) + '\n')
+        logger.info(`StreamableHttp → Child: ${safeJsonStringify(msg)}`)
+        child.stdin.write(safeJsonStringify(msg) + '\n')
       }
 
       transport.onclose = () => {
@@ -141,14 +149,17 @@ export async function stdioToStatelessStreamableHttp(
     } catch (error) {
       logger.error('Error handling MCP request:', error)
       if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32603,
-            message: 'Internal server error',
-          },
-          id: null,
-        })
+        res.setHeader('Content-Type', 'application/json')
+        res.status(500).end(
+          safeJsonStringify({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal server error',
+            },
+            id: null,
+          }),
+        )
       }
     }
   })
@@ -156,7 +167,7 @@ export async function stdioToStatelessStreamableHttp(
   app.get(streamableHttpPath, async (req, res) => {
     logger.info('Received GET MCP request')
     res.writeHead(405).end(
-      JSON.stringify({
+      safeJsonStringify({
         jsonrpc: '2.0',
         error: {
           code: -32000,
@@ -170,7 +181,7 @@ export async function stdioToStatelessStreamableHttp(
   app.delete(streamableHttpPath, async (req, res) => {
     logger.info('Received DELETE MCP request')
     res.writeHead(405).end(
-      JSON.stringify({
+      safeJsonStringify({
         jsonrpc: '2.0',
         error: {
           code: -32000,

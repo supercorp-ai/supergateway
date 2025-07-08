@@ -9,6 +9,12 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import {
+  safeJsonStringify,
+  safeJsonParse,
+  JsonBuffer,
+  sanitizeJsonObject,
+} from '../lib/jsonBuffer.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -47,7 +53,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   } = args
 
   logger.info(
-    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object(headers).length ? safeJsonStringify(headers) : '(none)'}`,
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
@@ -120,8 +126,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
     }
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
-      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      child.stdin.write(JSON.stringify(msg) + '\n')
+      logger.info(
+        `SSE → Child (session ${sessionId}): ${safeJsonStringify(msg)}`,
+      )
+      child.stdin.write(safeJsonStringify(msg) + '\n')
     }
 
     sseTransport.onclose = () => {
@@ -168,31 +176,34 @@ export async function stdioToSse(args: StdioToSseArgs) {
     logger.info(`POST messages: http://localhost:${port}${messagePath}`)
   })
 
-  let buffer = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8')
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    lines.forEach((line) => {
-      if (!line.trim()) return
-      try {
-        const jsonMsg = JSON.parse(line)
-        logger.info('Child → SSE:', jsonMsg)
-        for (const [sid, session] of Object.entries(sessions)) {
-          try {
-            session.transport.send(jsonMsg)
-          } catch (err) {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          }
+  const jsonBuffer = new JsonBuffer(
+    (jsonMsg) => {
+      logger.info('Child → SSE:', jsonMsg)
+      const sanitizedMsg = sanitizeJsonObject(jsonMsg)
+      for (const [sid, session] of Object.entries(sessions)) {
+        try {
+          session.transport.send(sanitizedMsg)
+        } catch (err) {
+          logger.error(`Failed to send to session ${sid}:`, err)
+          delete sessions[sid]
         }
-      } catch {
-        logger.error(`Child non-JSON: ${line}`)
       }
-    })
+    },
+    (error, rawData) => {
+      logger.error(`Child JSON parsing error: ${error}`)
+      logger.error(`Raw data: ${rawData.slice(0, 200)}...`)
+    },
+  )
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    jsonBuffer.addChunk(chunk.toString('utf8'))
   })
 
   child.stderr.on('data', (chunk: Buffer) => {
     logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+  })
+
+  child.on('close', () => {
+    jsonBuffer.flush()
   })
 }

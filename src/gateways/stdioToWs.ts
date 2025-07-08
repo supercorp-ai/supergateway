@@ -1,14 +1,20 @@
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
-import { createServer } from 'http'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
-import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { WebSocketServerTransport } from '../server/websocket.js'
+import { createServer } from 'node:http'
+import {
+  safeJsonStringify,
+  safeJsonParse,
+  JsonBuffer,
+  sanitizeJsonObject,
+} from '../lib/jsonBuffer.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -66,28 +72,32 @@ export async function stdioToWs(args: StdioToWsArgs) {
     )
 
     // Handle child process output
-    let buffer = ''
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString('utf8')
-      const lines = buffer.split(/\r?\n/)
-      buffer = lines.pop() ?? ''
-      lines.forEach((line) => {
-        if (!line.trim()) return
-        try {
-          const jsonMsg = JSON.parse(line)
-          logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
-          // Broadcast to all connected clients
-          wsTransport?.send(jsonMsg, jsonMsg.id).catch((err) => {
+    const jsonBuffer = new JsonBuffer(
+      (jsonMsg) => {
+        logger.info(`Child → WebSocket: ${safeJsonStringify(jsonMsg)}`)
+        // Broadcast to all connected clients
+        wsTransport
+          ?.send(sanitizeJsonObject(jsonMsg), jsonMsg.id)
+          .catch((err) => {
             logger.error('Failed to broadcast message:', err)
           })
-        } catch {
-          logger.error(`Child non-JSON: ${line}`)
-        }
-      })
+      },
+      (error, rawData) => {
+        logger.error(`Child JSON parsing error: ${error}`)
+        logger.error(`Raw data: ${rawData.slice(0, 200)}...`)
+      },
+    )
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      jsonBuffer.addChunk(chunk.toString('utf8'))
     })
 
     child.stderr.on('data', (chunk: Buffer) => {
       logger.info(`Child stderr: ${chunk.toString('utf8')}`)
+    })
+
+    child.on('close', () => {
+      jsonBuffer.flush()
     })
 
     const app = express()
@@ -120,7 +130,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
     await server.connect(wsTransport)
 
     wsTransport.onmessage = (msg: JSONRPCMessage) => {
-      const line = JSON.stringify(msg)
+      const line = safeJsonStringify(msg)
       logger.info(`WebSocket → Child: ${line}`)
       child!.stdin.write(line + '\n')
     }

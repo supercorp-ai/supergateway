@@ -87,7 +87,27 @@ const stdioToWebSocket = async (
   })
 
   try {
-    child = spawn(stdioCmd, { shell: true })
+    // Parse command and arguments for better process control
+    const cmdParts = stdioCmd.split(' ')
+    const command = cmdParts[0]
+    const args = cmdParts.slice(1)
+    
+    logger.info(`Spawning: ${command} with ${args.length} arguments`)
+    
+    child = spawn(command, args, {
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    })
+    
+    child.on('spawn', () => {
+      logger.info(`Process started with PID: ${child?.pid}`)
+    })
+    
+    child.on('error', (error) => {
+      logger.error(`Process error: ${error.message}`)
+    })
+    
     child.on('exit', (code, signal) => {
       logger.error(`Child exited: code=${code}, signal=${signal}`)
       cleanup()
@@ -170,7 +190,30 @@ const main = async () => {
     .parseSync()
 
   const port = parseInt(process.env.PORT ?? argv.port?.toString() ?? '8000', 10)
-  await stdioToWebSocket(argv.stdio!, port)
+  
+  // Handle the case where stdio command and args are passed separately
+  let stdioCmd = argv.stdio!
+  
+  // Check if there are additional arguments after --stdio that should be part of the command
+  const rawArgs = process.argv
+  const stdioIndex = rawArgs.findIndex(arg => arg === '--stdio')
+  
+  if (stdioIndex !== -1 && stdioIndex + 1 < rawArgs.length) {
+    // Find the next option (starts with --) or end of args
+    const nextOptionIndex = rawArgs.findIndex((arg, index) => 
+      index > stdioIndex + 1 && arg.startsWith('--')
+    )
+    
+    const endIndex = nextOptionIndex === -1 ? rawArgs.length : nextOptionIndex
+    const allStdioArgs = rawArgs.slice(stdioIndex + 1, endIndex)
+    
+    if (allStdioArgs.length > 1) {
+      stdioCmd = allStdioArgs.join(' ')
+      logger.info(`Reconstructed command: ${stdioCmd}`)
+    }
+  }
+  
+  await stdioToWebSocket(stdioCmd, port)
 }
 
 main().catch(err => {

@@ -1,0 +1,8 @@
+dist
+node_modules
+.git
+.github
+package-lock.json
+.DS_Store
+**/.hermit/**
+**/cache/**

@@ -1,0 +1,57 @@
+{
+  "name": "supergateway-with-auth",
+  "version": "3.4.0",
+  "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supercorp-ai/supergateway.git"
+  },
+  "keywords": [
+    "mcp",
+    "stdio",
+    "sse",
+    "gateway",
+    "proxy",
+    "bridge"
+  ],
+  "type": "module",
+  "bin": {
+    "supergateway": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
+    "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
+    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "**/*": "prettier --write --ignore-unknown"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.2",
+    "yargs": "^17.7.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/body-parser": "^1.19.5",
+    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.18",
+    "@types/ws": "^8.18.1",
+    "@types/yargs": "^17.0.33",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.0.0",
+    "prettier": "^3.5.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

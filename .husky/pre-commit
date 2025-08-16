@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Ensure we're in the project directory
+GIT_ROOT=$(git rev-parse --show-toplevel)
+cd "$GIT_ROOT" || exit 1
+
+# Get staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|jsx|ts|tsx|json|css|scss|md|yaml|yml)$' || true)
+
+if [ -n "$STAGED_FILES" ]; then
+  echo "Formatting staged files before commit..."
+  # Use the installed Prettier to format only the staged files
+  ./node_modules/.bin/prettier --write --ignore-unknown $STAGED_FILES
+  # Re-add the formatted files to the staging area
+  git add $STAGED_FILES
+fi

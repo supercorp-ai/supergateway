@@ -9,6 +9,7 @@ import { getVersion } from '../lib/getVersion.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { createAuthMiddleware } from '../lib/authMiddleware.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -17,11 +18,19 @@ export interface StdioToWsArgs {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  authToken?: string
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
-  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
-    args
+  const {
+    stdioCmd,
+    port,
+    messagePath,
+    logger,
+    healthEndpoints,
+    corsOrigin,
+    authToken,
+  } = args
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - messagePath: ${messagePath}`)
@@ -30,6 +39,9 @@ export async function stdioToWs(args: StdioToWsArgs) {
   )
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+  logger.info(
+    `  - Auth: ${authToken ? 'enabled (health endpoints exempt)' : 'disabled'}`,
   )
 
   let wsTransport: WebSocketServerTransport | null = null
@@ -96,6 +108,10 @@ export async function stdioToWs(args: StdioToWsArgs) {
       app.use(cors({ origin: corsOrigin }))
     }
 
+    // Create auth middleware
+    const authMiddleware = createAuthMiddleware({ authToken, logger })
+
+    // Health endpoints are not protected by auth
     for (const ep of healthEndpoints) {
       app.get(ep, (_req, res) => {
         if (child?.killed) {

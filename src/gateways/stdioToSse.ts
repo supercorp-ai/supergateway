@@ -9,6 +9,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { createAuthMiddleware } from '../lib/authMiddleware.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -20,6 +21,7 @@ export interface StdioToSseArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  authToken?: string
 }
 
 const setResponseHeaders = ({
@@ -44,6 +46,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     corsOrigin,
     healthEndpoints,
     headers,
+    authToken,
   } = args
 
   logger.info(
@@ -62,6 +65,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
   )
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+  logger.info(
+    `  - Auth: ${authToken ? 'enabled (health endpoints exempt)' : 'disabled'}`,
   )
 
   onSignals({ logger })
@@ -93,6 +99,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
     return bodyParser.json()(req, res, next)
   })
 
+  // Create auth middleware
+  const authMiddleware = createAuthMiddleware({ authToken, logger })
+
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
       setResponseHeaders({
@@ -103,7 +112,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     })
   }
 
-  app.get(ssePath, async (req, res) => {
+  app.get(ssePath, authMiddleware, async (req, res) => {
     logger.info(`New SSE connection from ${req.ip}`)
 
     setResponseHeaders({
@@ -141,7 +150,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   })
 
   // @ts-ignore
-  app.post(messagePath, async (req, res) => {
+  app.post(messagePath, authMiddleware, async (req, res) => {
     const sessionId = req.query.sessionId as string
 
     setResponseHeaders({

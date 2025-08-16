@@ -8,6 +8,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { createAuthMiddleware } from '../lib/authMiddleware.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
@@ -21,6 +22,7 @@ export interface StdioToStreamableHttpArgs {
   healthEndpoints: string[]
   headers: Record<string, string>
   sessionTimeout: number | null
+  authToken?: string
 }
 
 const setResponseHeaders = ({
@@ -46,6 +48,7 @@ export async function stdioToStatefulStreamableHttp(
     healthEndpoints,
     headers,
     sessionTimeout,
+    authToken,
   } = args
 
   logger.info(
@@ -64,6 +67,9 @@ export async function stdioToStatefulStreamableHttp(
   logger.info(
     `  - Session timeout: ${sessionTimeout ? `${sessionTimeout}ms` : 'disabled'}`,
   )
+  logger.info(
+    `  - Auth: ${authToken ? 'enabled (health endpoints exempt)' : 'disabled'}`,
+  )
 
   onSignals({ logger })
 
@@ -78,6 +84,9 @@ export async function stdioToStatefulStreamableHttp(
       }),
     )
   }
+
+  // Create auth middleware
+  const authMiddleware = createAuthMiddleware({ authToken, logger })
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
@@ -109,7 +118,7 @@ export async function stdioToStatefulStreamableHttp(
     : null
 
   // Handle POST requests for client-to-server communication
-  app.post(streamableHttpPath, async (req, res) => {
+  app.post(streamableHttpPath, authMiddleware, async (req, res) => {
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -260,10 +269,10 @@ export async function stdioToStatefulStreamableHttp(
   }
 
   // Handle GET requests for server-to-client notifications via SSE
-  app.get(streamableHttpPath, handleSessionRequest)
+  app.get(streamableHttpPath, authMiddleware, handleSessionRequest)
 
   // Handle DELETE requests for session termination
-  app.delete(streamableHttpPath, handleSessionRequest)
+  app.delete(streamableHttpPath, authMiddleware, handleSessionRequest)
 
   app.listen(port, () => {
     logger.info(`Listening on port ${port}`)

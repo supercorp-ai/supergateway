@@ -112,6 +112,11 @@ async function main() {
       description:
         'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
     })
+    .option('auth', {
+      type: 'string',
+      description:
+        'Require Authorization Bearer token for incoming requests (stdio→* only), e.g. --auth "your-secret-token"',
+    })
     .option('stateful', {
       type: 'boolean',
       default: false,
@@ -173,6 +178,7 @@ async function main() {
             argv,
             logger,
           }),
+          authToken: argv.auth,
         })
       } else if (argv.outputTransport === 'ws') {
         await stdioToWs({
@@ -182,6 +188,7 @@ async function main() {
           logger,
           corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
+          authToken: argv.auth,
         })
       } else if (argv.outputTransport === 'streamableHttp') {
         const stateful = argv.stateful
@@ -214,6 +221,7 @@ async function main() {
               logger,
             }),
             sessionTimeout,
+            authToken: argv.auth,
           })
         } else {
           logger.info('Running stateless server')
@@ -229,6 +237,7 @@ async function main() {
               argv,
               logger,
             }),
+            authToken: argv.auth,
           })
         }
       } else {

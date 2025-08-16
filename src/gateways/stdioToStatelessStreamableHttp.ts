@@ -8,6 +8,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { createAuthMiddleware } from '../lib/authMiddleware.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -17,6 +18,7 @@ export interface StdioToStreamableHttpArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  authToken?: string
 }
 
 const setResponseHeaders = ({
@@ -41,6 +43,7 @@ export async function stdioToStatelessStreamableHttp(
     corsOrigin,
     healthEndpoints,
     headers,
+    authToken,
   } = args
 
   logger.info(
@@ -56,6 +59,9 @@ export async function stdioToStatelessStreamableHttp(
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
+  logger.info(
+    `  - Auth: ${authToken ? 'enabled (health endpoints exempt)' : 'disabled'}`,
+  )
 
   onSignals({ logger })
 
@@ -65,6 +71,9 @@ export async function stdioToStatelessStreamableHttp(
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))
   }
+
+  // Create auth middleware
+  const authMiddleware = createAuthMiddleware({ authToken, logger })
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
@@ -76,7 +85,7 @@ export async function stdioToStatelessStreamableHttp(
     })
   }
 
-  app.post(streamableHttpPath, async (req, res) => {
+  app.post(streamableHttpPath, authMiddleware, async (req, res) => {
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
@@ -153,7 +162,7 @@ export async function stdioToStatelessStreamableHttp(
     }
   })
 
-  app.get(streamableHttpPath, async (req, res) => {
+  app.get(streamableHttpPath, authMiddleware, async (req, res) => {
     logger.info('Received GET MCP request')
     res.writeHead(405).end(
       JSON.stringify({
@@ -167,7 +176,7 @@ export async function stdioToStatelessStreamableHttp(
     )
   })
 
-  app.delete(streamableHttpPath, async (req, res) => {
+  app.delete(streamableHttpPath, authMiddleware, async (req, res) => {
     logger.info('Received DELETE MCP request')
     res.writeHead(405).end(
       JSON.stringify({

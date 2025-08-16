@@ -1,5 +1,5 @@
 {
-  "name": "supergateway",
+  "name": "supergateway-with-auth",
   "version": "3.4.0",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {

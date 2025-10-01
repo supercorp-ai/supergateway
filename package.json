@@ -1,6 +1,6 @@
 {
   "name": "supergateway",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
@@ -30,7 +30,7 @@
     "**/*": "prettier --write --ignore-unknown"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.18.2",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",

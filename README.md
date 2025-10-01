@@ -295,6 +295,7 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@longfin](https://github.com/longfin)
 - [@griffinqiu](https://github.com/griffinqiu)
 - [@folkvir](https://github.com/folkvir)
 - [@wizizm](https://github.com/wizizm)

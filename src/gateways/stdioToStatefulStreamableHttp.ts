@@ -8,6 +8,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { safeTransportSend } from '../lib/safeSend.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
@@ -153,11 +154,12 @@ export async function stdioToStatefulStreamableHttp(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            safeTransportSend({
+              transport,
+              message: jsonMsg,
+              logger,
+              context: `Child → StreamableHttp (session ${transport.sessionId ?? 'unknown'})`,
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

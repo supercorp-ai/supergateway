@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { safeTransportSend } from '../lib/safeSend.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -127,9 +128,30 @@ export async function stdioToStatelessStreamableHttp(
 
       await server.connect(transport)
       const child = spawn(stdioCmd, { shell: true })
+      let cleanedUp = false
+      const cleanup = (why: string) => {
+        if (cleanedUp) return
+        cleanedUp = true
+        logger.info(`Cleaning up stateless request (${why})`)
+        try {
+          transport.close()
+        } catch {
+          // ignore
+        }
+        try {
+          child.kill()
+        } catch {
+          // ignore
+        }
+      }
+
+      res.on('finish', () => cleanup('res finish'))
+      res.on('close', () => cleanup('res close'))
+      req.on('aborted', () => cleanup('req aborted'))
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
-        transport.close()
+        cleanup('child exit')
       })
 
       // State tracking for initialization flow
@@ -188,11 +210,12 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            safeTransportSend({
+              transport,
+              message: jsonMsg,
+              logger,
+              context: `Child → StreamableHttp (stateless)`,
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }
@@ -242,12 +265,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        cleanup('transport close')
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        cleanup('transport error')
       }
 
       await transport.handleRequest(req, res, req.body)

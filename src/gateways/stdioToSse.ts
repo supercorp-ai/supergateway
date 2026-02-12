@@ -9,6 +9,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { safeTransportSend } from '../lib/safeSend.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -179,12 +180,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
         const jsonMsg = JSON.parse(line)
         logger.info('Child → SSE:', jsonMsg)
         for (const [sid, session] of Object.entries(sessions)) {
-          try {
-            session.transport.send(jsonMsg)
-          } catch (err) {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          }
+          safeTransportSend({
+            transport: session.transport,
+            message: jsonMsg,
+            logger,
+            context: `Child → SSE (session ${sid})`,
+          })
         }
       } catch {
         logger.error(`Child non-JSON: ${line}`)

@@ -1,6 +1,6 @@
 {
-  "name": "supergateway",
-  "version": "3.4.3",
+  "name": "@openclaw/supergateway",
+  "version": "3.4.3-openclaw.0",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
@@ -23,7 +23,7 @@
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
-    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
+    "test": "npm run build && node --test --test-concurrency=1 --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' --experimental-test-module-mocks tests/**/*.test.ts",
     "prepare": "husky"
   },
   "lint-staged": {

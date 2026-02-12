@@ -16,7 +16,7 @@
   ],
   "type": "module",
   "bin": {
-    "supergateway": "dist/index.js"
+    "openclaw-supergateway": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

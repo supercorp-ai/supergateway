@@ -251,6 +251,12 @@ export async function stdioToStatelessStreamableHttp(
       }
 
       await transport.handleRequest(req, res, req.body)
+
+      // Clean up child process and transport after request completes.
+      // In stateless mode, transport.onclose is never called because there
+      // is no session management, so we must clean up explicitly.
+      child.kill()
+      await transport.close()
     } catch (error) {
       logger.error('Error handling MCP request:', error)
       if (!res.headersSent) {
@@ -263,6 +269,7 @@ export async function stdioToStatelessStreamableHttp(
           id: null,
         })
       }
+      // Child cleanup on error is handled by child.on('exit') and transport.onerror above
     }
   })
 

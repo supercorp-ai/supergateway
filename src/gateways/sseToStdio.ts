@@ -12,8 +12,9 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js'
 
-export interface SseToStdioArgs {
+interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
   headers: Record<string, string>
@@ -152,7 +153,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
           logger.info('SSE connected')
         } else {
-          result = await sseClient.request(req, z.any())
+          result = await sseClient.request<AnySchema>(req, z.any() as any)
         }
       } catch (err) {
         logger.error('Request error:', err)

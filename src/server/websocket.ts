@@ -16,6 +16,7 @@ export class WebSocketServerTransport implements Transport {
   private messageHandler?: (msg: JSONRPCMessage, clientId: string) => void
   onconnection?: (clientId: string) => void
   ondisconnection?: (clientId: string) => void
+  path: string
 
   set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
     this.messageHandler = handler
@@ -36,6 +37,7 @@ export class WebSocketServerTransport implements Transport {
   }
 
   constructor({ path, server }: { path: string; server: Server }) {
+    this.path = path
     this.wss = new WebSocketServer({
       path,
       server,

@@ -21,21 +21,29 @@
 
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
-import { stdioToSse } from './gateways/stdioToSse.js'
+import { readFile } from 'node:fs/promises'
+import { stdioToSse, multiStdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
-import { stdioToWs } from './gateways/stdioToWs.js'
+import { stdioToWs, multiStdioToWs } from './gateways/stdioToWs.js'
 import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
-import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import { multiStdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
+import {
+  stdioToStatefulStreamableHttp,
+  multiStdioToStatefulStreamableHttp,
+} from './gateways/stdioToStatefulStreamableHttp.js'
+import express from 'express'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .option('stdio', {
       type: 'string',
-      description: 'Command to run an MCP server over Stdio',
+      array: true,
+      description:
+        'Command to run an MCP server over Stdio. Can be provided multiple times as name=command for multi-server mode.',
     })
     .option('sse', {
       type: 'string',
@@ -44,6 +52,11 @@ async function main() {
     .option('streamableHttp', {
       type: 'string',
       description: 'Streamable HTTP URL to connect to',
+    })
+    .option('multiServerConfig', {
+      type: 'string',
+      description:
+        'Path to a JSON file defining multiple stdio-backed servers served on different paths.',
     })
     .option('outputTransport', {
       type: 'string',
@@ -135,10 +148,18 @@ async function main() {
   const hasStdio = Boolean(argv.stdio)
   const hasSse = Boolean(argv.sse)
   const hasStreamableHttp = Boolean(argv.streamableHttp)
+  const hasMultiServerConfig = Boolean(argv.multiServerConfig)
 
-  const activeCount = [hasStdio, hasSse, hasStreamableHttp].filter(
-    Boolean,
-  ).length
+  const activeCount = [
+    hasStdio,
+    hasSse,
+    hasStreamableHttp,
+    hasMultiServerConfig,
+  ].filter(Boolean).length
+
+  const stdioValues = (argv.stdio as string[] | undefined) ?? []
+  const isStdioMapCli =
+    stdioValues.length > 0 && stdioValues.every((v) => v.includes('='))
 
   const logger = getLogger({
     logLevel: argv.logLevel,
@@ -164,31 +185,379 @@ async function main() {
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
   try {
-    if (hasStdio) {
-      if (argv.outputTransport === 'sse') {
-        await stdioToSse({
-          stdioCmd: argv.stdio!,
-          port: argv.port,
-          baseUrl: argv.baseUrl,
-          ssePath: argv.ssePath,
-          messagePath: argv.messagePath,
-          logger,
-          corsOrigin: corsOrigin({ argv }),
-          healthEndpoints: argv.healthEndpoint as string[],
-          headers: headers({
-            argv,
+    if (hasMultiServerConfig) {
+      if (hasStdio || hasSse || hasStreamableHttp) {
+        logger.error(
+          'Error: --multiServerConfig cannot be combined with --stdio, --sse, or --streamableHttp',
+        )
+        process.exit(1)
+      }
+      const configPath = argv.multiServerConfig as string
+      let configRaw: string
+      try {
+        configRaw = await readFile(configPath, 'utf8')
+      } catch (err) {
+        logger.error(
+          `Error: Failed to read multi-server config file at ${configPath}:`,
+          err,
+        )
+        process.exit(1)
+      }
+
+      let configJson: unknown
+      try {
+        configJson = JSON.parse(configRaw)
+      } catch (err) {
+        logger.error('Error: Failed to parse multi-server config JSON:', err)
+        process.exit(1)
+      }
+
+      const servers =
+        (configJson &&
+          typeof configJson === 'object' &&
+          Array.isArray((configJson as any).servers) &&
+          (configJson as any).servers.map((s: any, index: number) => {
+            if (!s || typeof s !== 'object') {
+              logger.error(
+                `Error: Invalid server entry at index ${index} in multi-server config`,
+              )
+              process.exit(1)
+            }
+
+            const path = typeof s.path === 'string' ? s.path : ''
+            const stdioCmd = typeof s.stdio === 'string' ? s.stdio : ''
+
+            if (!path || !stdioCmd) {
+              logger.error(
+                `Error: Each server in multi-server config must have non-empty "path" and "stdio" fields (index ${index})`,
+              )
+              process.exit(1)
+            }
+
+            const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+            return {
+              path: normalizedPath,
+              stdioCmd,
+            }
+          })) ||
+        []
+
+      if (!servers.length) {
+        logger.error(
+          'Error: multi-server config must define at least one server in "servers" array',
+        )
+        process.exit(1)
+      }
+
+      if (argv.outputTransport === 'streamableHttp') {
+        if (argv.stateful) {
+          const app = express()
+
+          await multiStdioToStatefulStreamableHttp(
+            {
+              servers,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
+              logger,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              sessionTimeout:
+                typeof argv.sessionTimeout === 'number'
+                  ? argv.sessionTimeout
+                  : null,
+            },
+            app,
+          )
+
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateful Streamable HTTP multi-server listening on port ${argv.port}`,
+            )
+          })
+        } else {
+          const app = express()
+
+          await multiStdioToStatelessStreamableHttp(
+            {
+              servers,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
+              logger,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              protocolVersion: argv.protocolVersion,
+            },
+            app,
+          )
+
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateless Streamable HTTP multi-server listening on port ${argv.port}`,
+            )
+          })
+        }
+      } else if (argv.outputTransport === 'sse') {
+        if (argv.stateful) {
+          logger.error(
+            'Error: --stateful is not supported for stdio→SSE multi-server mode',
+          )
+          process.exit(1)
+        }
+
+        const app = express()
+
+        await multiStdioToSse(
+          {
+            servers,
+            port: argv.port,
+            baseUrl: argv.baseUrl,
+            ssePath: argv.ssePath,
+            messagePath: argv.messagePath,
             logger,
-          }),
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+          },
+          app,
+        )
+
+        app.listen(argv.port, () => {
+          logger.info(`SSE multi-server listening on port ${argv.port}`)
         })
       } else if (argv.outputTransport === 'ws') {
-        await stdioToWs({
-          stdioCmd: argv.stdio!,
-          port: argv.port,
-          messagePath: argv.messagePath,
-          logger,
-          corsOrigin: corsOrigin({ argv }),
-          healthEndpoints: argv.healthEndpoint as string[],
+        if (argv.stateful) {
+          logger.error(
+            'Error: --stateful is not supported for stdio→WS multi-server mode',
+          )
+          process.exit(1)
+        }
+
+        const app = express()
+
+        await multiStdioToWs(
+          {
+            servers,
+            port: argv.port,
+            messagePath: argv.messagePath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+          },
+          app,
+        )
+      } else {
+        logger.error(
+          'Error: --multiServerConfig requires --outputTransport sse, ws, or streamableHttp',
+        )
+        process.exit(1)
+      }
+    } else if (isStdioMapCli) {
+      if (hasSse || hasStreamableHttp) {
+        logger.error(
+          'Error: When using --stdio name=command form, do not also pass --sse or --streamableHttp',
+        )
+        process.exit(1)
+      }
+
+      const servers = stdioValues.map((value, index) => {
+        const eqIndex = value.indexOf('=')
+        if (eqIndex === -1) {
+          logger.error(
+            `Error: Invalid --stdio value at position ${index}. Expected name=command format.`,
+          )
+          process.exit(1)
+        }
+
+        const name = value.slice(0, eqIndex).trim()
+        const cmd = value.slice(eqIndex + 1).trim()
+
+        if (!name || !cmd) {
+          logger.error(
+            `Error: Invalid --stdio value at position ${index}. Both name and command must be non-empty.`,
+          )
+          process.exit(1)
+        }
+
+        const path = name.startsWith('/') ? name : `/${name}`
+
+        return {
+          path,
+          stdioCmd: cmd,
+        }
+      })
+
+      if (argv.outputTransport === 'streamableHttp') {
+        if (argv.stateful) {
+          const app = express()
+
+          await multiStdioToStatefulStreamableHttp(
+            {
+              servers,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
+              logger,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              sessionTimeout:
+                typeof argv.sessionTimeout === 'number'
+                  ? argv.sessionTimeout
+                  : null,
+            },
+            app,
+          )
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateful Streamable HTTP multi-server listening on port ${argv.port}`,
+            )
+          })
+        } else {
+          const app = express()
+
+          await multiStdioToStatelessStreamableHttp(
+            {
+              servers,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
+              logger,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              protocolVersion: argv.protocolVersion,
+            },
+            app,
+          )
+
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateless Streamable HTTP multi-server listening on port ${argv.port}`,
+            )
+          })
+        }
+      } else if (argv.outputTransport === 'sse') {
+        if (argv.stateful) {
+          logger.error(
+            'Error: --stateful is not supported for stdio→SSE multi-server mode',
+          )
+          process.exit(1)
+        }
+
+        const app = express()
+
+        await multiStdioToSse(
+          {
+            servers,
+            port: argv.port,
+            baseUrl: argv.baseUrl,
+            ssePath: argv.ssePath,
+            messagePath: argv.messagePath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+          },
+          app,
+        )
+
+        app.listen(argv.port, () => {
+          logger.info(`SSE multi-server listening on port ${argv.port}`)
         })
+      } else if (argv.outputTransport === 'ws') {
+        if (argv.stateful) {
+          logger.error(
+            'Error: --stateful is not supported for stdio→WS multi-server mode',
+          )
+          process.exit(1)
+        }
+
+        const app = express()
+
+        await multiStdioToWs(
+          {
+            servers,
+            port: argv.port,
+            messagePath: argv.messagePath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+          },
+          app,
+        )
+      } else {
+        logger.error(
+          'Error: Multi-server --stdio name=command form requires --outputTransport sse, ws, or streamableHttp',
+        )
+        process.exit(1)
+      }
+    } else if (hasStdio) {
+      const stdioArg = Array.isArray(argv.stdio)
+        ? (argv.stdio[0] as string | undefined)
+        : (argv.stdio as string | undefined)
+
+      if (!stdioArg) {
+        logger.error('Error: --stdio requires a command')
+        process.exit(1)
+      }
+
+      if (argv.outputTransport === 'sse') {
+        const app = express()
+
+        await stdioToSse(
+          {
+            stdioCmd: stdioArg,
+            port: argv.port,
+            baseUrl: argv.baseUrl,
+            ssePath: argv.ssePath,
+            messagePath: argv.messagePath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+          },
+          app,
+        )
+
+        app.listen(argv.port, () => {
+          logger.info(`SSE server listening on port ${argv.port}`)
+        })
+      } else if (argv.outputTransport === 'ws') {
+        const app = express()
+
+        await stdioToWs(
+          {
+            stdioCmd: stdioArg,
+            port: argv.port,
+            messagePath: argv.messagePath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+          },
+          app,
+        )
       } else if (argv.outputTransport === 'streamableHttp') {
         const stateful = argv.stateful
         if (stateful) {
@@ -208,34 +577,56 @@ async function main() {
             sessionTimeout = null
           }
 
-          await stdioToStatefulStreamableHttp({
-            stdioCmd: argv.stdio!,
-            port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
-            logger,
-            corsOrigin: corsOrigin({ argv }),
-            healthEndpoints: argv.healthEndpoint as string[],
-            headers: headers({
-              argv,
+          const app = express()
+
+          await stdioToStatefulStreamableHttp(
+            {
+              stdioCmd: stdioArg,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
               logger,
-            }),
-            sessionTimeout,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              sessionTimeout,
+            },
+            app,
+          )
+
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateful Streamable HTTP server listening on port ${argv.port}`,
+            )
           })
         } else {
           logger.info('Running stateless server')
 
-          await stdioToStatelessStreamableHttp({
-            stdioCmd: argv.stdio!,
-            port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
-            logger,
-            corsOrigin: corsOrigin({ argv }),
-            healthEndpoints: argv.healthEndpoint as string[],
-            headers: headers({
-              argv,
+          const app = express()
+
+          await stdioToStatelessStreamableHttp(
+            {
+              stdioCmd: stdioArg,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
               logger,
-            }),
-            protocolVersion: argv.protocolVersion,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              protocolVersion: argv.protocolVersion,
+            },
+            app,
+          )
+
+          app.listen(argv.port, () => {
+            logger.info(
+              `Stateless Streamable HTTP server listening on port ${argv.port}`,
+            )
           })
         }
       } else {

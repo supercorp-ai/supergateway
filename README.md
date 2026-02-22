@@ -28,6 +28,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+- **`--multiServerConfig multi-server.json`**: JSON config for running multiple stdio-backed MCP servers behind one Streamable HTTP gateway
 
 ## stdio → SSE
 
@@ -102,6 +103,53 @@ npx -y supergateway \
 ```
 
 The Streamable HTTP endpoint defaults to `http://localhost:8000/mcp` (configurable via `--streamableHttpPath`).
+
+### Multiple stdio servers on one port (Streamable HTTP)
+
+You can expose multiple MCP stdio servers behind a single HTTP port and host, each under its own path prefix.
+
+#### Using a JSON config file
+
+Create a config file, for example `multi-server.json`:
+
+```json
+{
+  "servers": [
+    { "path": "/git", "stdio": "uvx mcp-server-git" },
+    { "path": "/docker", "stdio": "uvx mcp-server-docker" }
+  ]
+}
+```
+
+Run Supergateway in stateless Streamable HTTP mode:
+
+```bash
+supergateway \
+  --multiServerConfig multi-server.json \
+  --outputTransport streamableHttp \
+  --port 8000
+```
+
+This exposes:
+
+- HTTP endpoint: `http://localhost:8000/git/mcp`
+- HTTP endpoint: `http://localhost:8000/docker/mcp`
+
+All servers share the same CORS, headers, and health endpoint configuration.
+
+#### Using a one-liner
+
+You can also configure multiple servers inline using repeated `--stdio name=command` flags:
+
+```bash
+supergateway \
+  --stdio git="uvx mcp-server-git" \
+  --stdio docker="uvx mcp-server-docker" \
+  --outputTransport streamableHttp \
+  --port 8000
+```
+
+This is equivalent to the JSON config example above and exposes the same `/git/mcp` and `/docker/mcp` endpoints.
 
 ## stdio → WS
 

@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "path": "/git",
+      "stdio": "node tests/helpers/mock-mcp-server.js stdio"
+    },
+    {
+      "path": "/docker",
+      "stdio": "node tests/helpers/mock-mcp-server.js stdio"
+    }
+  ]
+}

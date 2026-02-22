@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -132,7 +133,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
                 message.params?.protocolVersion
               ) {
                 // respect the protocol version from the stdio client's init request
-                possibleInitRequestMessage.params!.protocolVersion =
+                ;(possibleInitRequestMessage.params as any).protocolVersion =
                   message.params.protocolVersion
               }
               result = await originalRequest.apply(this, [
@@ -153,7 +154,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
           logger.info('Streamable HTTP connected')
         } else {
-          result = await mcpClient.request(req, z.any())
+          result = await mcpClient.request<AnySchema>(req, z.any() as any)
         }
       } catch (err) {
         logger.error('Request error:', err)

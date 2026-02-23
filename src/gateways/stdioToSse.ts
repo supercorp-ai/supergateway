@@ -72,14 +72,13 @@ export async function stdioToSse(args: StdioToSseArgs) {
     process.exit(code ?? 1)
   })
 
-  const server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-
   const sessions: Record<
     string,
-    { transport: SSEServerTransport; response: express.Response }
+    {
+      server: Server
+      transport: SSEServerTransport
+      response: express.Response
+    }
   > = {}
 
   const app = express()
@@ -112,11 +111,19 @@ export async function stdioToSse(args: StdioToSseArgs) {
     })
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
-    await server.connect(sseTransport)
+    const sessionServer = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
+    await sessionServer.connect(sseTransport)
 
     const sessionId = sseTransport.sessionId
     if (sessionId) {
-      sessions[sessionId] = { transport: sseTransport, response: res }
+      sessions[sessionId] = {
+        server: sessionServer,
+        transport: sseTransport,
+        response: res,
+      }
     }
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
@@ -124,19 +131,26 @@ export async function stdioToSse(args: StdioToSseArgs) {
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
 
+    const cleanupSession = () => {
+      if (sessionId && sessions[sessionId]) {
+        sessions[sessionId].server.close().catch(() => {})
+        delete sessions[sessionId]
+      }
+    }
+
     sseTransport.onclose = () => {
       logger.info(`SSE connection closed (session ${sessionId})`)
-      delete sessions[sessionId]
+      cleanupSession()
     }
 
     sseTransport.onerror = (err) => {
       logger.error(`SSE error (session ${sessionId}):`, err)
-      delete sessions[sessionId]
+      cleanupSession()
     }
 
     req.on('close', () => {
       logger.info(`Client disconnected (session ${sessionId})`)
-      delete sessions[sessionId]
+      cleanupSession()
     })
   })
 

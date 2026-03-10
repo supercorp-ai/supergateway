@@ -77,9 +77,11 @@ export async function stdioToWs(args: StdioToWsArgs) {
           const jsonMsg = JSON.parse(line)
           logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
           // Broadcast to all connected clients
-          wsTransport?.send(jsonMsg, jsonMsg.id).catch((err) => {
-            logger.error('Failed to broadcast message:', err)
-          })
+          wsTransport
+            ?.sendToClient(jsonMsg, jsonMsg.id as string | undefined)
+            .catch((err) => {
+              logger.error('Failed to broadcast message:', err)
+            })
         } catch {
           logger.error(`Child non-JSON: ${line}`)
         }

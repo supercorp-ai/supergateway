@@ -22,6 +22,9 @@ import { Logger } from './types.js'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
 import { stdioToWs } from './gateways/stdioToWs.js'
+import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
+import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 
@@ -61,19 +64,24 @@ async function main() {
       type: 'string',
       description: 'SSE URL to connect to',
     })
+    .option('streamableHttp', {
+      type: 'string',
+      description: 'Streamable HTTP URL to connect to',
+    })
     .option('outputTransport', {
       type: 'string',
-      choices: ['stdio', 'sse', 'ws'],
+      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
       default: () => {
         const args = hideBin(process.argv)
 
         if (args.includes('--stdio')) return 'sse'
         if (args.includes('--sse')) return 'stdio'
+        if (args.includes('--streamableHttp')) return 'stdio'
 
         return undefined
       },
       description:
-        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse.',
+        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse or --streamableHttp.',
     })
     .option('port', {
       type: 'number',
@@ -94,6 +102,23 @@ async function main() {
       type: 'string',
       default: '/message',
       description: '(stdio→SSE, stdio→WS) Path for messages',
+    })
+    .option('streamableHttpPath', {
+      type: 'string',
+      default: '/mcp',
+      description: '(stdio→StreamableHttp) Path for StreamableHttp endpoint',
+    })
+    .option('stateful', {
+      type: 'boolean',
+      default: false,
+      description:
+        '(stdio→StreamableHttp) Enable stateful mode with persistent sessions',
+    })
+    .option('protocolVersion', {
+      type: 'string',
+      default: '2024-11-05',
+      description:
+        '(stdio→StreamableHttp stateless) MCP protocol version for auto-initialization',
     })
     .option('logLevel', {
       choices: ['info', 'none'] as const,
@@ -122,17 +147,30 @@ async function main() {
       description:
         'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
     })
+    .option('headersPassthrough', {
+      type: 'array',
+      default: [],
+      description:
+        '(stdio→StreamableHttp) HTTP request headers to forward as HEADER_<NAME> env vars to the child process, e.g. --headersPassthrough Authorization',
+    })
     .help()
     .parseSync()
 
   const hasStdio = Boolean(argv.stdio)
   const hasSse = Boolean(argv.sse)
+  const hasStreamableHttp = Boolean(argv.streamableHttp)
 
-  if (hasStdio && hasSse) {
-    logStderr('Error: Specify only one of --stdio or --sse, not all')
+  const activeCount = [hasStdio, hasSse, hasStreamableHttp].filter(
+    Boolean,
+  ).length
+
+  if (activeCount === 0) {
+    logStderr(
+      'Error: You must specify one of --stdio, --sse, or --streamableHttp',
+    )
     process.exit(1)
-  } else if (!hasStdio && !hasSse) {
-    logStderr('Error: You must specify one of --stdio or --sse')
+  } else if (activeCount > 1) {
+    logStderr('Error: Specify only one of --stdio, --sse, or --streamableHttp')
     process.exit(1)
   }
 
@@ -173,6 +211,33 @@ async function main() {
           corsOrigin: corsOrigin({ argv }),
           healthEndpoints: argv.healthEndpoint as string[],
         })
+      } else if (argv.outputTransport === 'streamableHttp') {
+        if (argv.stateful) {
+          logger.info('Running stateful StreamableHttp server')
+          await stdioToStatefulStreamableHttp({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHttpPath: argv.streamableHttpPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({ argv, logger }),
+            headersPassthrough: argv.headersPassthrough as string[],
+          })
+        } else {
+          logger.info('Running stateless StreamableHttp server')
+          await stdioToStatelessStreamableHttp({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHttpPath: argv.streamableHttpPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({ argv, logger }),
+            protocolVersion: argv.protocolVersion,
+            headersPassthrough: argv.headersPassthrough as string[],
+          })
+        }
       } else {
         logStderr(`Error: stdio→${argv.outputTransport} not supported`)
         process.exit(1)
@@ -189,6 +254,17 @@ async function main() {
         })
       } else {
         logStderr(`Error: sse→${argv.outputTransport} not supported`)
+        process.exit(1)
+      }
+    } else if (hasStreamableHttp) {
+      if (argv.outputTransport === 'stdio') {
+        await streamableHttpToStdio({
+          streamableHttpUrl: argv.streamableHttp!,
+          logger,
+          headers: headers({ argv, logger }),
+        })
+      } else {
+        logStderr(`Error: streamableHttp→${argv.outputTransport} not supported`)
         process.exit(1)
       }
     } else {

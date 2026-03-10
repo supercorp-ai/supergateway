@@ -1,4 +1,7 @@
-import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import {
+  Transport,
+  TransportSendOptions,
+} from '@modelcontextprotocol/sdk/shared/transport.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { v4 as uuidv4 } from 'uuid'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -65,7 +68,14 @@ export class WebSocketServerTransport implements Transport {
     })
   }
 
-  async send(msg: JSONRPCMessage, clientId?: string): Promise<void> {
+  async send(
+    msg: JSONRPCMessage,
+    _options?: TransportSendOptions,
+  ): Promise<void> {
+    return this.sendToClient(msg)
+  }
+
+  async sendToClient(msg: JSONRPCMessage, clientId?: string): Promise<void> {
     const [cId, msgId] = clientId?.split(':') ?? []
     // @ts-ignore
     msg.id = parseInt(msgId)

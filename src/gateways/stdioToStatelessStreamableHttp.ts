@@ -1,6 +1,6 @@
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { killProcessTree } from '../lib/killProcessTree.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -116,6 +117,8 @@ export async function stdioToStatelessStreamableHttp(
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
 
+    let child: ChildProcess | null = null
+
     try {
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
@@ -126,10 +129,26 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+
+      // `detached: true` puts the child in its own process group so we can
+      // signal the whole tree via `process.kill(-pid, ...)`. Without it,
+      // `child.kill()` only signals the `/bin/sh -c` wrapper and leaves the
+      // real MCP server (e.g. npx → node) running.
+      child = spawn(stdioCmd, { shell: true, detached: true })
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
+      })
+
+      // If the HTTP client disconnects mid-request, tear the child down.
+      // transport.onclose is not guaranteed to fire in this path.
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          logger.info('Client disconnected before response completed')
+          killProcessTree(child, logger)
+          transport.close()
+        }
       })
 
       // State tracking for initialization flow
@@ -139,69 +158,80 @@ export async function stdioToStatelessStreamableHttp(
       let pendingOriginalMessage: JSONRPCMessage | null = null
 
       let buffer = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        const lines = buffer.split(/\r?\n/)
-        buffer = lines.pop() ?? ''
-        lines.forEach((line) => {
-          if (!line.trim()) return
-          try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-
-            // Handle initialize response (both auto and client initiated)
-            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
-              logger.info('Initialize response received')
-              isInitialized = true
-
-              // If this was our auto-initialization, send initialized notification and pending message
-              if (isAutoInitializing) {
-                // Send initialized notification
-                const initializedNotification = createInitializedNotification()
-                logger.info(
-                  `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
-                )
-                child.stdin.write(
-                  JSON.stringify(initializedNotification) + '\n',
-                )
-
-                // Now send the original message
-                if (pendingOriginalMessage) {
-                  logger.info(
-                    `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
-                  )
-                  child.stdin.write(
-                    JSON.stringify(pendingOriginalMessage) + '\n',
-                  )
-                  pendingOriginalMessage = null
-                }
-
-                // Reset auto-initialize tracking
-                isAutoInitializing = false
-                initializeRequestId = null
-
-                // Don't forward our auto-initialize response to the client
-                return
-              } else {
-                // Client-initiated initialize response, just reset tracking
-                initializeRequestId = null
-              }
-            }
-
+      if (child.stdout) {
+        child.stdout.on('data', (chunk: Buffer) => {
+          buffer += chunk.toString('utf8')
+          const lines = buffer.split(/\r?\n/)
+          buffer = lines.pop() ?? ''
+          lines.forEach((line) => {
+            if (!line.trim()) return
             try {
-              transport.send(jsonMsg)
-            } catch (e) {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            }
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
-          }
-        })
-      })
+              const jsonMsg = JSON.parse(line)
+              logger.info('Child → StreamableHttp:', line)
 
-      child.stderr.on('data', (chunk: Buffer) => {
-        logger.error(`Child stderr: ${chunk.toString('utf8')}`)
-      })
+              // Handle initialize response (both auto and client initiated)
+              if (initializeRequestId && jsonMsg.id === initializeRequestId) {
+                logger.info('Initialize response received')
+                isInitialized = true
+
+                // If this was our auto-initialization, send initialized notification and pending message
+                if (isAutoInitializing) {
+                  // Send initialized notification
+                  const initializedNotification =
+                    createInitializedNotification()
+                  logger.info(
+                    `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
+                  )
+                  if (child && child.stdin) {
+                    child.stdin.write(
+                      JSON.stringify(initializedNotification) + '\n',
+                    )
+                  }
+
+                  // Now send the original message
+                  if (pendingOriginalMessage) {
+                    logger.info(
+                      `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
+                    )
+                    if (child && child.stdin) {
+                      child.stdin.write(
+                        JSON.stringify(pendingOriginalMessage) + '\n',
+                      )
+                    }
+                    pendingOriginalMessage = null
+                  }
+
+                  // Reset auto-initialize tracking
+                  isAutoInitializing = false
+                  initializeRequestId = null
+
+                  // Don't forward our auto-initialize response to the client
+                  return
+                } else {
+                  // Client-initiated initialize response, just reset tracking
+                  initializeRequestId = null
+                }
+              }
+
+              try {
+                transport.send(jsonMsg).catch((e) =>
+                  logger.error(`Failed to send to StreamableHttp (async)`, e),
+                )
+              } catch (e) {
+                logger.error(`Failed to send to StreamableHttp`, e)
+              }
+            } catch {
+              logger.error(`Child non-JSON: ${line}`)
+            }
+          })
+        })
+      }
+
+      if (child.stderr) {
+        child.stderr.on('data', (chunk: Buffer) => {
+          logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+        })
+      }
 
       transport.onmessage = (msg: JSONRPCMessage) => {
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
@@ -223,7 +253,9 @@ export async function stdioToStatelessStreamableHttp(
           logger.info(
             `StreamableHttp → Child (auto-initialize): ${JSON.stringify(initRequest)}`,
           )
-          child.stdin.write(JSON.stringify(initRequest) + '\n')
+          if (child && child.stdin) {
+            child.stdin.write(JSON.stringify(initRequest) + '\n')
+          }
 
           // Don't send the original message yet - it will be sent after initialization
           return
@@ -237,22 +269,39 @@ export async function stdioToStatelessStreamableHttp(
         }
 
         // Send all messages to child process normally
-        child.stdin.write(JSON.stringify(msg) + '\n')
+        if (child && child.stdin) {
+          child.stdin.write(JSON.stringify(msg) + '\n')
+        }
       }
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       await transport.handleRequest(req, res, req.body)
+
+      // Clean up child process and transport after request completes.
+      // In stateless mode, transport.onclose is never called because there
+      // is no session management, so we must clean up explicitly.
+      killProcessTree(child, logger)
+      await transport.close()
     } catch (error) {
       logger.error('Error handling MCP request:', error)
+
+      if (child && child.exitCode === null && child.signalCode === null) {
+        logger.error(
+          `Killing child [pid: ${child.pid}] due to setup error.`,
+          error,
+        )
+        killProcessTree(child, logger)
+      }
+
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
@@ -263,6 +312,7 @@ export async function stdioToStatelessStreamableHttp(
           id: null,
         })
       }
+      // Child cleanup on error is handled by child.on('exit') and transport.onerror above
     }
   })
 

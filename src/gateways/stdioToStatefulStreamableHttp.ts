@@ -8,6 +8,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { killProcessTree } from '../lib/killProcessTree.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
@@ -137,7 +138,11 @@ export async function stdioToStatefulStreamableHttp(
         },
       })
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      // `detached: true` puts the child in its own process group so we can
+      // signal the whole tree via `process.kill(-pid, ...)`. Without it,
+      // `child.kill()` only signals the `/bin/sh -c` wrapper and leaves the
+      // real MCP server (e.g. npx → node) running.
+      const child = spawn(stdioCmd, { shell: true, detached: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
@@ -154,7 +159,9 @@ export async function stdioToStatefulStreamableHttp(
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
             try {
-              transport.send(jsonMsg)
+              transport.send(jsonMsg).catch((e) =>
+                logger.error(`Failed to send to StreamableHttp (async)`, e),
+              )
             } catch (e) {
               logger.error(`Failed to send to StreamableHttp`, e)
             }
@@ -183,7 +190,7 @@ export async function stdioToStatefulStreamableHttp(
           )
           delete transports[transport.sessionId]
         }
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       transport.onerror = (err) => {
@@ -196,7 +203,7 @@ export async function stdioToStatefulStreamableHttp(
           )
           delete transports[transport.sessionId]
         }
-        child.kill()
+        killProcessTree(child, logger)
       }
     } else {
       // Invalid request

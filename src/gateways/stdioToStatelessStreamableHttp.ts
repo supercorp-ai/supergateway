@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { killProcessTree } from '../lib/killProcessTree.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -129,11 +130,25 @@ export async function stdioToStatelessStreamableHttp(
 
       await server.connect(transport)
 
-      child = spawn(stdioCmd, { shell: true })
+      // `detached: true` puts the child in its own process group so we can
+      // signal the whole tree via `process.kill(-pid, ...)`. Without it,
+      // `child.kill()` only signals the `/bin/sh -c` wrapper and leaves the
+      // real MCP server (e.g. npx → node) running.
+      child = spawn(stdioCmd, { shell: true, detached: true })
 
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
+      })
+
+      // If the HTTP client disconnects mid-request, tear the child down.
+      // transport.onclose is not guaranteed to fire in this path.
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          logger.info('Client disconnected before response completed')
+          killProcessTree(child, logger)
+          transport.close()
+        }
       })
 
       // State tracking for initialization flow
@@ -261,16 +276,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        if (child && child.exitCode === null && child.signalCode === null) {
-          child.kill()
-        }
+        killProcessTree(child, logger)
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        if (child && child.exitCode === null && child.signalCode === null) {
-          child.kill()
-        }
+        killProcessTree(child, logger)
       }
 
       await transport.handleRequest(req, res, req.body)
@@ -278,7 +289,7 @@ export async function stdioToStatelessStreamableHttp(
       // Clean up child process and transport after request completes.
       // In stateless mode, transport.onclose is never called because there
       // is no session management, so we must clean up explicitly.
-      child.kill()
+      killProcessTree(child, logger)
       await transport.close()
     } catch (error) {
       logger.error('Error handling MCP request:', error)
@@ -288,7 +299,7 @@ export async function stdioToStatelessStreamableHttp(
           `Killing child [pid: ${child.pid}] due to setup error.`,
           error,
         )
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       if (!res.headersSent) {

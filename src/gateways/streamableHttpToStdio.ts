@@ -129,11 +129,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
               if (
                 InitializeRequestSchema.safeParse(possibleInitRequestMessage)
                   .success &&
-                message.params?.protocolVersion
+                (message.params as any)?.protocolVersion
               ) {
                 // respect the protocol version from the stdio client's init request
-                possibleInitRequestMessage.params!.protocolVersion =
-                  message.params.protocolVersion
+                ;(possibleInitRequestMessage.params as any)!.protocolVersion = (
+                  message.params as any
+                ).protocolVersion
               }
               result = await originalRequest.apply(this, [
                 possibleInitRequestMessage,
@@ -153,7 +154,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
           logger.info('Streamable HTTP connected')
         } else {
-          result = await mcpClient.request(req, z.any())
+          result = await (mcpClient as any).request(req, z.any())
         }
       } catch (err) {
         logger.error('Request error:', err)

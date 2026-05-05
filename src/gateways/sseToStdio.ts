@@ -152,7 +152,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
           logger.info('SSE connected')
         } else {
-          result = await sseClient.request(req, z.any())
+          result = await (sseClient as any).request(req, z.any())
         }
       } catch (err) {
         logger.error('Request error:', err)

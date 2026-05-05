@@ -12,6 +12,24 @@ import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 
+// The MCP SDK's stateful streamable HTTP transport raises some errors via
+// `transport.onerror` that are recoverable at the HTTP layer — the SDK still
+// returns a proper 4xx response to the client. The most common one is a
+// duplicate `GET /mcp` for an already-active standalone SSE stream, which is
+// triggered routinely whenever a client (e.g. Claude Code) reconnects without
+// an explicit `DELETE`. Treating these as fatal would SIGTERM the stdio child
+// and destroy session-scoped state for every reconnect — see issue #126.
+const RECOVERABLE_TRANSPORT_ERROR_MESSAGES: readonly string[] = [
+  'Conflict: Only one SSE stream is allowed per session',
+]
+
+function isRecoverableTransportError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    RECOVERABLE_TRANSPORT_ERROR_MESSAGES.includes(err.message)
+  )
+}
+
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
   port: number
@@ -174,7 +192,9 @@ export async function stdioToStatefulStreamableHttp(
       }
 
       transport.onclose = () => {
-        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
+        logger.info(
+          `StreamableHttp connection closed (session ${transport.sessionId ?? '<pre-init>'})`,
+        )
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,
@@ -187,7 +207,20 @@ export async function stdioToStatefulStreamableHttp(
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
+        // Some SDK errors are surfaced via onerror but are recoverable at the
+        // HTTP layer (the SDK still returns a 4xx). Tearing down the session
+        // and SIGTERMing the child for those would destroy session state on
+        // every routine client reconnect — see issue #126.
+        if (isRecoverableTransportError(err)) {
+          logger.info(
+            `StreamableHttp recoverable error (session ${transport.sessionId ?? '<pre-init>'}): ${(err as Error).message}`,
+          )
+          return
+        }
+        logger.error(
+          `StreamableHttp error (session ${transport.sessionId ?? '<pre-init>'}):`,
+          err,
+        )
         if (transport.sessionId) {
           sessionCounter?.clear(
             transport.sessionId,

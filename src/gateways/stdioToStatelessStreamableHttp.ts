@@ -126,7 +126,7 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, { shell: true, detached: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
@@ -242,12 +242,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
 
       await transport.handleRequest(req, res, req.body)

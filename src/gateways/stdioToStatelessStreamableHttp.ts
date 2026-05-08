@@ -250,6 +250,18 @@ export async function stdioToStatelessStreamableHttp(
         try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
 
+      // In stateless mode the underlying transport never receives a
+      // session-close signal because clients don't issue DELETE.
+      // Close the transport (and group-kill the child) as soon as the
+      // HTTP response finishes — otherwise long-running daemon MCPs
+      // (e.g. lightpanda, headless browsers) stay alive forever and
+      // leak processes per request.
+      const cleanup = () => {
+        try { transport.close() } catch (_) {}
+      }
+      res.on('finish', cleanup)
+      res.on('close', cleanup)
+
       await transport.handleRequest(req, res, req.body)
     } catch (error) {
       logger.error('Error handling MCP request:', error)

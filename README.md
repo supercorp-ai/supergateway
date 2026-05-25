@@ -103,6 +103,23 @@ npx -y supergateway \
 
 The Streamable HTTP endpoint defaults to `http://localhost:8000/mcp` (configurable via `--streamableHttpPath`).
 
+### Package-backed stdio server example
+
+Supergateway can also expose an MCP server installed from npm. This example
+bridges Bilig WorkPaper, a local formula workbook MCP server, to Streamable
+HTTP:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y --package @bilig/workpaper@latest bilig-workpaper-mcp --demo-workpaper-tools" \
+    --outputTransport streamableHttp \
+    --port 8000
+```
+
+The MCP endpoint is available at `http://localhost:8000/mcp`. The Bilig server
+runs over stdio with a no-credential demo WorkPaper; Supergateway handles the
+HTTP transport.
+
 ## stdio → WS
 
 Expose an MCP stdio server as a WebSocket server:

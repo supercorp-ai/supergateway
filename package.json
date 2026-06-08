@@ -24,6 +24,7 @@
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
     "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
+    "test:unit": "node --import tsx --test tests/stdioToStatelessStreamableHttpDispatch.test.ts tests/stdioToStatefulStreamableHttpDispatch.test.ts tests/stdioToSseDispatch.test.ts",
     "prepare": "husky"
   },
   "lint-staged": {

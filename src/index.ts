@@ -28,6 +28,7 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
+import { getVersion } from './lib/getVersion.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 
@@ -129,6 +130,7 @@ async function main() {
         'MCP protocol version to use for auto-initialization. Defaults to "2024-11-05" if not specified.',
       default: '2024-11-05',
     })
+    .version(getVersion())
     .help()
     .parseSync()
 

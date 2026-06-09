@@ -11,6 +11,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
+import { applySseKeepalive } from '../lib/sseKeepalive.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -224,6 +225,8 @@ export async function stdioToStatefulStreamableHttp(
     res.on('finish', () => handleResponseEnd('finished'))
     res.on('close', () => handleResponseEnd('closed'))
 
+    applySseKeepalive({ res, logger })
+
     // Handle the request
     await transport.handleRequest(req, res, req.body)
   })
@@ -256,6 +259,7 @@ export async function stdioToStatefulStreamableHttp(
     res.on('close', () => handleResponseEnd('closed'))
 
     const transport = transports[sessionId]
+    applySseKeepalive({ res, logger })
     await transport.handleRequest(req, res)
   }
 

@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { applySseKeepalive } from '../lib/sseKeepalive.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -115,6 +116,8 @@ export async function stdioToStatelessStreamableHttp(
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
+
+    applySseKeepalive({ res, logger })
 
     try {
       const server = new Server(

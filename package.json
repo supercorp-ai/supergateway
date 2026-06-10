@@ -2,6 +2,7 @@
   "name": "supergateway",
   "version": "3.4.3",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/supercorp-ai/supergateway.git"

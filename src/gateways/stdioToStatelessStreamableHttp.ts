@@ -127,10 +127,26 @@ export async function stdioToStatelessStreamableHttp(
 
       await server.connect(transport)
       const child = spawn(stdioCmd, { shell: true })
+
+      // Single idempotent cleanup — called from transport.onclose, transport.onerror,
+      // AND res.on('close') so the spawned child is always reaped regardless of
+      // whether the HTTP connection closes cleanly or drops unexpectedly.
+      let cleaned = false
+      const cleanup = () => {
+        if (cleaned) return
+        cleaned = true
+        child.kill()
+        transport.close()
+      }
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
       })
+
+      // Reap child + transport whenever the HTTP response closes — this covers
+      // unclean client disconnects where transport.onclose would otherwise never fire.
+      res.on('close', cleanup)
 
       // State tracking for initialization flow
       let isInitialized = false
@@ -242,12 +258,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        cleanup()
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        cleanup()
       }
 
       await transport.handleRequest(req, res, req.body)

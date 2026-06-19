@@ -198,6 +198,16 @@ export async function stdioToStatefulStreamableHttp(
         }
         child.kill()
       }
+    } else if (sessionId) {
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Session not found',
+        },
+        id: null,
+      })
+      return
     } else {
       // Invalid request
       res.status(400).json({

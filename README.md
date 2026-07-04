@@ -79,6 +79,16 @@ npx -y supergateway \
     --header "X-My-Header: another-header-value"
 ```
 
+For example, connect the hosted [Xquik MCP endpoint](https://docs.xquik.com/mcp/overview) with an API key:
+
+```bash
+npx -y supergateway \
+    --streamableHttp "https://xquik.com/mcp" \
+    --oauth2Bearer "$XQUIK_API_KEY"
+```
+
+Xquik is a hosted proprietary third-party service. It is not affiliated with or endorsed by X Corp.
+
 ## stdio → Streamable HTTP
 
 Expose an MCP stdio server as a Streamable HTTP server.

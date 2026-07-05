@@ -126,9 +126,46 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, { shell: true, detached: true })
+
+      // #108: reap the spawned child (and its shell process group) when the HTTP
+      // response ends. In stateless mode the child serves exactly one request;
+      // transport.onclose does not reliably fire, so hook the response lifecycle.
+      let reaped = false
+      const reapChild = () => {
+        if (reaped) return
+        reaped = true
+        try {
+          if (typeof child.pid === 'number') process.kill(-child.pid, 'SIGTERM')
+        } catch {}
+        const t = setTimeout(() => {
+          try {
+            if (typeof child.pid === 'number')
+              process.kill(-child.pid, 'SIGKILL')
+          } catch {}
+        }, 2000)
+        t.unref?.()
+      }
+      res.on('close', reapChild)
+      res.on('finish', reapChild)
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
+        reaped = true
+        // #139: a child that dies before producing a response must not leave the
+        // HTTP client hanging until its timeout — surface a JSON-RPC error.
+        if (!res.headersSent) {
+          try {
+            res.status(502).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32000,
+                message: `MCP child exited before response (code=${code}, signal=${signal})`,
+              },
+              id: null,
+            })
+          } catch {}
+        }
         transport.close()
       })
 
@@ -188,11 +225,9 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            Promise.resolve(transport.send(jsonMsg)).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

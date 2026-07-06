@@ -1,4 +1,5 @@
 import express from 'express'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -14,6 +15,26 @@ const server = new McpServer({ name: 'mock-server', version: '1.0.0' })
 server.tool('add', { a: z.number(), b: z.number() }, async ({ a, b }) => ({
   content: [{ type: 'text', text: `The sum of ${a} and ${b} is ${a + b}.` }],
 }))
+
+// Test hook for the per-request reap: spawn one DETACHED sleeper (setsid → its
+// own session, must SURVIVE the reap) and one IN-SESSION sleeper (inherits this
+// request's session, must be REAPED). Returns both PIDs so the test can assert.
+server.tool('spawn_probe', {}, async () => {
+  const detached = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' })
+  detached.unref()
+  const inSession = spawn('sleep', ['30'], { stdio: 'ignore' })
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          detachedPid: detached.pid,
+          inSessionPid: inSession.pid,
+        }),
+      },
+    ],
+  }
+})
 
 if (mode === 'stdio') {
   const transport = new StdioServerTransport()

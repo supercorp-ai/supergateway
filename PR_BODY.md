@@ -12,9 +12,14 @@ In stateless mode a stdio child is spawned per request. It was only cleaned up v
 (does not fire after a one-shot stateless response). The stateful gateway already reaps on
 `res.on('finish'|'close')`; the stateless one did not — so children accumulated until OOM.
 
-Fix: spawn the child `detached` (its own process group) and reap the whole group on response
-end. `{ shell: true }` runs the server as a grandchild under `/bin/sh`, so a plain
-`child.kill()` orphans it — we send `SIGTERM` to `-child.pid` with a `SIGKILL` fallback.
+Fix: spawn the child `detached` (its own process group) and reap on response end. `{ shell:
+true }` runs the server as a grandchild under `/bin/sh`, so a plain `child.kill()` orphans it.
+We `SIGTERM` the request's process group, then after a grace window
+(`SUPERGATEWAY_REAP_GRACE_MS`, default 2000) `SIGKILL` **only the processes still in this
+request's own session** — anything that deliberately detached (called `setsid`, was handed to a
+supervisor such as `systemd-run`, or double-forked and re-parented to init) is spared, so
+intentionally long-lived work started during a request is not killed as collateral. The grace
+window also gives a job the chance to detach itself and survive.
 
 ## #143 — client disconnect crashes the whole gateway
 
@@ -29,13 +34,16 @@ fatal. (The stateful/stdio variants have the same pattern — see #142/#144 — 
 
 ## Tests
 
-Two regression tests (`tests/statelessChildReap.test.ts`, `tests/statelessDisconnect.test.ts`):
+Three regression tests (`tests/statelessChildReap.test.ts`, `tests/statelessDisconnect.test.ts`,
+`tests/statelessDetachedSurvives.test.ts`):
 
 - reap: after 12 connect→callTool→close cycles, residual child count returns to baseline
   (process inspection is Linux-gated).
 - disconnect: after 8 aborted mid-flight requests the gateway still serves a clean `callTool`.
+- detached-survives: a child that `setsid`-detaches during a request outlives the reap while an
+  in-session sibling is reaped — proving the SIGKILL sweep is scoped to the request's own session.
 
-Full suite green (10/10). Benchmark: over 200 sequential stateless inits, child count stays
+Full suite green (11/11). Benchmark: over 200 sequential stateless inits, child count stays
 flat (was linear growth).
 
 ## Prior art

@@ -1,4 +1,4 @@
-# fix(stateless): reap child process group on response end + survive client disconnect
+# fix(stateless): reap per-request child session on response end + survive client disconnect
 
 Closes #108. Closes #143.
 

@@ -112,6 +112,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
     })
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
+    // Close any existing transport before connecting to avoid
+    // "Already connected to a transport" error on SSE reconnect
+    if (server.transport) {
+      await server.close()
+    }
     await server.connect(sseTransport)
 
     const sessionId = sseTransport.sessionId

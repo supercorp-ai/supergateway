@@ -1,6 +1,6 @@
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { killProcessTree } from '../lib/killProcessTree.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -116,6 +117,8 @@ export async function stdioToStatelessStreamableHttp(
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
 
+    let spawnedChild: ChildProcess | undefined
+
     try {
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
@@ -126,10 +129,24 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      // Run the shell wrapper in its own process group.  `child.kill()` only
+      // signals that wrapper; the actual stdio MCP server would otherwise
+      // remain running as a grandchild.
+      const child = spawn(stdioCmd, { shell: true, detached: true })
+      spawnedChild = child
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
+      })
+
+      // Stateless HTTP transports do not reliably invoke `transport.onclose`.
+      // Tear down the request-owned child if the client disconnects early.
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          logger.info('Client disconnected before response completed')
+          killProcessTree(child, logger)
+          transport.close()
+        }
       })
 
       // State tracking for initialization flow
@@ -189,7 +206,14 @@ export async function stdioToStatelessStreamableHttp(
             }
 
             try {
-              transport.send(jsonMsg)
+              transport
+                .send(jsonMsg)
+                .catch((error) =>
+                  logger.error(
+                    'Failed to send to StreamableHttp (async)',
+                    error,
+                  ),
+                )
             } catch (e) {
               logger.error(`Failed to send to StreamableHttp`, e)
             }
@@ -242,17 +266,22 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        killProcessTree(child, logger)
       }
 
       await transport.handleRequest(req, res, req.body)
+      // Stateless mode owns one stdio child per request.  The HTTP response
+      // has completed here, so release the full process group explicitly.
+      killProcessTree(child, logger)
+      await transport.close()
     } catch (error) {
       logger.error('Error handling MCP request:', error)
+      killProcessTree(spawnedChild, logger)
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',

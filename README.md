@@ -22,6 +22,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
+- **`--shared`**: Spawn a single shared stdio child process and multiplex all client sessions onto it, instead of one child per session (stateful stdio→Streamable HTTP mode only). Use for upstream stdio servers that only tolerate a single client connection.
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token

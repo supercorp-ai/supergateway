@@ -12,7 +12,7 @@ bodies. Run the existing CLI/network reproducers as ordinary tests with:
 ```sh
 nvm use 24
 npm run build
-RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/headerDiagnosticsE2e.test.ts
+RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/statefulStaleReplyE2e.test.ts tests/headerDiagnosticsE2e.test.ts
 ```
 
 This opt-in command is expected to fail until the bugs are fixed. Default TODOs
@@ -56,9 +56,10 @@ The batch TODO in `tests/statelessBatchE2e.test.ts` failed against the original
 implementation. Expected: one initialization exchange and every response
 correctly matched to its original request.
 
-## GW-004: rejected stateless transport sends can crash the process
+## GW-004: rejected HTTP transport sends can crash the process
 
-Affected: `stdioToStatelessStreamableHttp.ts`.
+Affected: `stdioToStatelessStreamableHttp.ts` and
+`stdioToStatefulStreamableHttp.ts`.
 
 `transport.send(jsonMsg)` returns a promise, but only synchronous exceptions
 are caught. An unsolicited stale response ID can cause an unhandled rejection.
@@ -66,6 +67,13 @@ are caught. An unsolicited stale response ID can cause an unhandled rejection.
 The interleaving/stale-reply TODO in `tests/statelessBatchE2e.test.ts` expects
 the error to be reported without stopping subsequent requests. This crash also
 occurred during the GW-003 batch reproduction.
+
+The stateful variant is retained in `tests/statefulStaleReplyE2e.test.ts` as an
+opt-in TODO regression. It uses a real initialized HTTP session and an external
+peer emitting an unsolicited reply before the requested tools-list response.
+The opt-in run reproduced process termination with
+`No connection established for request ID: stale-peer-request`; the HTTP request
+failed with a connection reset. No production fix is included.
 
 ## GW-005: initialization ID zero is not recognized
 
@@ -108,10 +116,82 @@ matching/mismatched protocol prefixes, and no input mutation.
 The proposed helper and implementation-dependent tests were removed.
 Executable regressions need a justified public boundary.
 
-## Coverage constraints, not bug reports
+## Dead code and constrained coverage paths (not automatically bugs)
 
-Some remaining conditions are unreachable or constrained by validation. For
-example, after validating exactly one CLI input transport, ruling out stdio and
-SSE guarantees HTTP. SDK-generated IDs and lifecycle invariants constrain other
-checks. These observations do not authorize deleting checks: no production
-simplifications or safety-guard removals are included.
+The following observations describe the current code and installed SDK. They
+are not exclusions from the reported coverage and do not authorize changes to
+production code. An unobserved guard is not automatically dead code.
+
+### DC-001: final CLI transport alternative — proven redundant
+
+`src/index.ts:148-158` exits unless exactly one of the three input flags is
+true. They are immutable local booleans. At `src/index.ts:259`, the preceding
+stdio and SSE alternatives are false, so `hasStreamableHttp` must be true.
+The final invalid-input error at lines 275-277 cannot execute through the CLI.
+Earlier validation already covers no-input and multiple-input cases.
+
+### DC-002: stateless initialized-state branch — current lifecycle constraint
+
+Each HTTP POST creates a fresh child, transport, and `isInitialized=false`.
+The SDK parses the entire JSON body and synchronously delivers its messages
+to `onmessage`; the child response that sets `isInitialized=true` arrives on a
+later event-loop turn. Therefore the false side of `!isInitialized` at
+`stdioToStatelessStreamableHttp.ts:210` is not reached by ordinary POST/batch
+delivery. A later POST gets different state, not this initialized instance.
+This depends on the installed SDK's delivery model; it is not a universal
+protocol invariant.
+
+### DC-003: stateless pending-message guard — internal invariant
+
+`isAutoInitializing` is set true only after assigning `pendingOriginalMessage`.
+When the message is cleared, the flag is reset in the same synchronous
+callback. With ordinary non-reentrant logging, entering the auto-initialize
+response block with a missing pending message at line 169 is unreachable.
+Overwriting a pending message is still a real bug (GW-003), not proof that the
+missing-message alternative can occur.
+
+### DC-004: JSON request IDs — wire/schema constraint, not all checks redundant
+
+For messages that survive SDK JSON-RPC validation, a present request ID is a
+string or number. JSON cannot encode an own property with value `undefined`.
+Thus independently falsifying `msg.id !== undefined` after `'id' in msg` at
+stateless line 233 cannot be achieved with ordinary wire input.
+Do not generalize this to the preceding ID-presence check: the SDK's
+`isInitializeRequest` validates method/params, not the JSON-RPC ID itself.
+Initialization-shaped notifications need separate analysis.
+
+### DC-005: WebSocket health/cleanup — CLI reachability constraints
+
+`stdioToWs.ts` sets readiness true before starting its HTTP listener and never
+resets it. The not-ready health branch at line 105 is not available through a
+listening CLI. `child.killed` is set during cleanup, followed synchronously by
+process exit, so a normal health request cannot observe that state.
+The child-absent cleanup branch at line 45 could matter if spawning throws
+synchronously through the public function; invalid NUL command strings cannot
+be passed as CLI arguments. Keep these distinctions instead of deleting guards.
+
+### DC-006: session-counter guard — non-reentrant public API invariant
+
+An active entry starts at one. Decrementing to zero replaces it with a pending
+timer entry; another decrement hits the pending-cleanup check first.
+`sessionAccessCounter.ts:68` therefore cannot observe a nonpositive active
+count through ordinary public operations. Reentrant logger callbacks or
+private-state corruption are not representative tests of gateway behavior.
+
+### DC-007: SDK-generated fields — contract-constrained, not globally dead
+
+The SSE server transport constructs its session ID with `randomUUID()`;
+`stdioToSse.ts:118` does not receive an absent ID from a normal client request.
+Both reverse-bridge request wrappers normally see the SDK-generated initialize
+request, including its method and protocol version. Falsifying those fields
+requires a different lifecycle or contract, not merely malformed JSON input.
+The wrapper checks are not classified as universally unreachable.
+
+### Remaining guards still under investigation
+
+The stateful timeout callback's missing-transport check, stateless
+`!res.headersSent` error guard, and defensive primitive/missing-message error
+normalization have no demonstrated ordinary CLI inputs for all alternatives.
+They remain unclassified rather than being labeled dead based on coverage alone.
+
+No production simplifications or safety-guard removals are included.

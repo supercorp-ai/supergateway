@@ -4,18 +4,18 @@
 
 ## Current result
 
-The default suite has **42 passing tests and 13 TODOs**, with zero failures.
+The default suite has **47 passing tests and 14 TODOs**, with zero failures.
 There are no production source changes relative to the PR base. Previously
 attempted bug fixes have been removed; the old 87.60% result does not describe
 the current branch.
 
 | Metric   | Original 8 tests | Current default suite |
 | -------- | ---------------- | --------------------- |
-| MC/DC    | 17/129 (13.18%)  | 95/129 (73.64%)       |
-| Lines    | 498/818 (60.88%) | 773/818 (94.50%)      |
-| Branches | 138/368 (37.50%) | 313/368 (85.05%)      |
+| MC/DC    | 17/129 (13.18%)  | 98/129 (75.97%)       |
+| Lines    | 498/818 (60.88%) | 785/818 (95.97%)      |
+| Branches | 138/368 (37.50%) | 315/368 (85.60%)      |
 
-Current measured run: `run_fff63c925b8f7694`, with zero measurement limitations.
+Current measured run: `run_1a72e3cd3bae8eda`, with zero measurement limitations.
 The original source denominator of 129 is restored. Default TODO bodies do not
 execute and contribute no coverage. Opt-in failing reproductions are not merged
 into this result. Coverage is execution evidence, not proof of assertion quality.
@@ -37,9 +37,9 @@ Process helpers provide bounded readiness checks and process-group cleanup.
 `MCDC_E2E_FINDINGS.md` records seven identified issues, distinguishing observed
 failures from code-level findings and missing independent reproductions.
 
-- Eleven TODOs retain opt-in CLI/network reproduction bodies: four fallback,
-  two successful-result preservation, two stateless sequencing/batch, and three
-  header-diagnostic cases.
+- Twelve TODOs retain opt-in CLI/network reproduction bodies: four fallback,
+  two successful-result preservation, two stateless sequencing/batch, one
+  stateful stale-response case, and three header-diagnostic cases.
 - Two error-normalization TODOs are specifications only. They do not import a
   nonexistent proposed helper and do not claim executable reproduction.
 - Ordinary passing tests remain enabled, including actual header delivery.
@@ -60,7 +60,7 @@ TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
 Build and standalone TypeScript checking pass. Native and measured full-suite
-runs both report 42 passed, 13 TODO, zero failed.
+runs both report 47 passed, 14 TODO, zero failed.
 
 The existing ts-node typechecking-loader issue requires
 `TS_NODE_TRANSPILE_ONLY=true` in this environment despite standalone TypeScript
@@ -68,7 +68,26 @@ checking passing. Runner configuration remains unchanged.
 
 ## Remaining work
 
-34 MC/DC conditions remain. These include documented bugs, defensive lifecycle
+31 MC/DC conditions remain. These include documented bugs, defensive lifecycle
 paths, and conditions constrained by earlier CLI/SDK validation. Continue
 adding high-level tests and recording bugs, without fixing production code or
 removing safety checks until explicitly requested. This is not 100% MC/DC.
+
+## Latest test-only increment
+
+Five tests in `tests/initializationLifecycleE2e.test.ts` cover both reverse
+bridges terminating with a nonzero status when the upstream rejects explicit
+or fallback initialization, plus stateless HTTP handling an interleaved
+notification before its automatic initialization reply. They use real CLI
+chains and an external JSON-RPC peer, with no mocked gateway/SDK methods.
+
+This adds three independent-condition witnesses: the first-request method
+choice in each reverse bridge, and the stateless initialization-response ID
+match. MC/DC increased from 95/129 to 98/129 with no production changes.
+The existing successful-fallback bugs remain TODO; exercising rejected
+initialization does not claim those bugs are fixed.
+
+The findings document now has seven separately labeled dead-code/lifecycle
+analyses (DC-001 through DC-007), distinguishing proofs from SDK constraints
+and unclassified guards. It also records a freshly reproduced stateful variant
+of the unchecked transport-send crash (GW-004), retained as an opt-in TODO.

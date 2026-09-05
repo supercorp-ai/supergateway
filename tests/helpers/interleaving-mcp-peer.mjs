@@ -7,6 +7,14 @@ for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line)
   if (!('id' in message)) continue
   if (message.method === 'initialize') {
+    if (process.argv.includes('--reject-initialize')) {
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: { code: -32603, message: 'Initialization unavailable' },
+      })
+      continue
+    }
     write({
       jsonrpc: '2.0',
       method: 'notifications/message',

@@ -31,25 +31,25 @@ or SDK method is modified.
 Paths in the table are relative to `src/`. Repeated predicates at different
 locations count separately.
 
-| Location                                                                                                                     | Missing condition(s)                                 |  Count | Classification / reason                                                                                                                                                              |
-| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `gateways/sseToStdio.ts:160`                                                                                                 | `err`; `typeof err === 'object'`                     |      2 | No ordinary wire witness: observed network/SDK failures are error objects, not falsy or truthy primitive throws.                                                                     |
-| `gateways/sseToStdio.ts:164`                                                                                                 | `err`; `typeof err === 'object'`; `'message' in err` |      3 | Same boundary constraint, additionally requiring a thrown object without a message.                                                                                                  |
-| `gateways/streamableHttpToStdio.ts:161`                                                                                      | `err`; `typeof err === 'object'`                     |      2 | Same error-object constraint.                                                                                                                                                        |
-| `gateways/streamableHttpToStdio.ts:165`                                                                                      | `err`; `typeof err === 'object'`; `'message' in err` |      3 | Same error-object/message constraint.                                                                                                                                                |
-| `gateways/sseToStdio.ts:182`; `gateways/streamableHttpToStdio.ts:183`                                                        | `result.hasOwnProperty('error')` in each bridge      |      2 | Reachable, but correct-behavior regression fails (GW-002). Kept TODO; do not assert corrupted results as intended behavior.                                                          |
-| `gateways/stdioToSse.ts:50`; `gateways/stdioToStatefulStreamableHttp.ts:52`; `gateways/stdioToStatelessStreamableHttp.ts:81` | `Object(headers).length` in each gateway             |      3 | Broken header diagnostic (GW-006). Ordinary headers have no length property; a contrived header named length would exercise the bug, not validate the intended check.                |
-| `gateways/stdioToStatelessStreamableHttp.ts:169`                                                                             | `pendingOriginalMessage`                             |      1 | Internal invariant: setting auto-initialization sets a pending message first; clearing it resets the flag in the same callback (assuming non-reentrant logging).                     |
-| `gateways/stdioToStatelessStreamableHttp.ts:210`                                                                             | `!isInitialized`                                     |      1 | Current lifecycle: each POST owns fresh state, and SDK messages are delivered synchronously before child initialization responses arrive.                                            |
-| `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `isInitializeRequest(msg)`                           |      1 | Same lifecycle plus earlier return: while uninitialized, every non-initialize message returns before this check.                                                                     |
-| `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `msg.id !== undefined`                               |      1 | Wire/schema: after ID presence is true, JSON cannot supply undefined and SDK-validated request IDs are strings/numbers.                                                              |
-| `gateways/stdioToWs.ts:101`                                                                                                  | `child?.killed`                                      |      1 | Current CLI lifecycle: cleanup kills the child and exits synchronously; no health request runs between those operations.                                                             |
-| `gateways/stdioToWs.ts:105`                                                                                                  | `!isReady`                                           |      1 | Current lifecycle: readiness is set before listening and is never reset.                                                                                                             |
-| `gateways/stdioToSse.ts:118`                                                                                                 | `sessionId`                                          |      1 | SDK contract: SSEServerTransport constructs the ID with randomUUID before exposing it.                                                                                               |
-| `gateways/stdioToStatefulStreamableHttp.ts:102`                                                                              | `transport`                                          |      1 | No demonstrated missing-transport timeout callback. Close/error paths clear counter timers before deleting the transport. Keep the defensive check; not claimed globally impossible. |
-| `index.ts:259`                                                                                                               | `hasStreamableHttp`                                  |      1 | Proven redundant after exactly-one-input validation and the preceding two false transport alternatives.                                                                              |
-| `lib/sessionAccessCounter.ts:68`                                                                                             | `session.accessCount <= 0`                           |      1 | Non-reentrant public API invariant: reaching zero replaces the active entry with a timer entry. Duplicate decrements take the timer guard first.                                     |
-| **Total**                                                                                                                    |                                                      | **25** |                                                                                                                                                                                      |
+| Location                                                                                                                     | Missing condition(s)                                 |  Count | Classification / reason                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | -----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateways/sseToStdio.ts:160`                                                                                                 | `err`; `typeof err === 'object'`                     |      2 | No ordinary wire witness: observed network/SDK failures are error objects, not falsy or truthy primitive throws.                                                                             |
+| `gateways/sseToStdio.ts:164`                                                                                                 | `err`; `typeof err === 'object'`; `'message' in err` |      3 | Same boundary constraint, additionally requiring a thrown object without a message.                                                                                                          |
+| `gateways/streamableHttpToStdio.ts:161`                                                                                      | `err`; `typeof err === 'object'`                     |      2 | Same error-object constraint.                                                                                                                                                                |
+| `gateways/streamableHttpToStdio.ts:165`                                                                                      | `err`; `typeof err === 'object'`; `'message' in err` |      3 | Same error-object/message constraint.                                                                                                                                                        |
+| `gateways/sseToStdio.ts:182`; `gateways/streamableHttpToStdio.ts:183`                                                        | `result.hasOwnProperty('error')` in each bridge      |      2 | Reachable, but correct-behavior regression fails (GW-002). Kept TODO; do not assert corrupted results as intended behavior.                                                                  |
+| `gateways/stdioToSse.ts:50`; `gateways/stdioToStatefulStreamableHttp.ts:52`; `gateways/stdioToStatelessStreamableHttp.ts:81` | `Object(headers).length` in each gateway             |      3 | Broken header diagnostic (GW-006). Ordinary headers have no length property; a contrived header named length would exercise the bug, not validate the intended check.                        |
+| `gateways/stdioToStatelessStreamableHttp.ts:169`                                                                             | `pendingOriginalMessage`                             |      1 | Internal invariant: setting auto-initialization sets a pending message first; clearing it resets the flag in the same callback (assuming non-reentrant logging).                             |
+| `gateways/stdioToStatelessStreamableHttp.ts:210`                                                                             | `!isInitialized`                                     |      1 | Current lifecycle: each POST owns fresh state, and SDK messages are delivered synchronously before child initialization responses arrive.                                                    |
+| `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `isInitializeRequest(msg)`                           |      1 | Same lifecycle plus earlier return: while uninitialized, every non-initialize message returns before this check.                                                                             |
+| `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `msg.id !== undefined`                               |      1 | Wire/schema: after ID presence is true, JSON cannot supply undefined and SDK-validated request IDs are strings/numbers.                                                                      |
+| `gateways/stdioToWs.ts:101`                                                                                                  | `child?.killed`                                      |      1 | Current CLI lifecycle: cleanup kills the child and exits synchronously; no health request runs between those operations.                                                                     |
+| `gateways/stdioToWs.ts:105`                                                                                                  | `!isReady`                                           |      1 | Current lifecycle: readiness is set before listening and is never reset.                                                                                                                     |
+| `gateways/stdioToSse.ts:118`                                                                                                 | `sessionId`                                          |      1 | SDK contract: SSEServerTransport constructs the ID with randomUUID before exposing it.                                                                                                       |
+| `gateways/stdioToStatefulStreamableHttp.ts:102`                                                                              | `transport`                                          |      1 | Current non-reentrant lifecycle: every external map deletion clears the counter first; timeout cleanup consumes its own timer entry before deleting the transport. See deletion audit below. |
+| `index.ts:259`                                                                                                               | `hasStreamableHttp`                                  |      1 | Proven redundant after exactly-one-input validation and the preceding two false transport alternatives.                                                                                      |
+| `lib/sessionAccessCounter.ts:68`                                                                                             | `session.accessCount <= 0`                           |      1 | Non-reentrant public API invariant: reaching zero replaces the active entry with a timer entry. Duplicate decrements take the timer guard first.                                             |
+| **Total**                                                                                                                    |                                                      | **25** |                                                                                                                                                                                              |
 
 ## What that means for further test-only gains
 
@@ -58,11 +58,9 @@ locations count separately.
 - **10 concern arbitrary thrown values:** a focused fault-injection test could
   reach them, but no ordinary network input has been found. Artificial logger
   throws or replaced SDK methods are not included just to make the metric green.
-- **9 are constrained by the current control flow, wire representation, SDK
+- **10 are constrained by the current control flow, wire representation, SDK
   construction, or non-reentrant state invariants.** This is scoped reasoning,
   not a promise that future dependency or lifecycle changes cannot reach them.
-- **1 safety guard remains without a full witness pair:** missing transport
-  during a stateful timeout. It is an investigation target, not proven dead code.
 
 There is no demonstrated path to literal 100% under the current test-only,
 no-artificial-state constraints. Continue testing meaningful external failure
@@ -115,3 +113,47 @@ The request-shaped deep-input companion hangs rather than completing. It is
 GW-009, documented in `MCDC_E2E_FINDINGS_DEEP_INPUT.md` and retained as a TODO.
 The passing notification test asserts failure containment, not support for
 unlimited nesting or successful delivery of a malformed notification.
+
+## Session termination and timeout-range follow-up
+
+`sessionTerminationE2e.test.ts` deletes a session while both a standalone SSE
+stream and a tool request are active. Both exchanges settle, child work stops,
+and waiting beyond the idle deadline produces no old-session timer callback.
+A fresh session initializes normally. `sessionTimeoutRangeE2e.test.ts` also
+checks that a one-day timeout does not expire a session after 100 ms.
+
+The 30-day companion reproduces GW-010: Node clamps the accepted value to
+1 ms and the session expires almost immediately. It remains TODO, with details
+in `MCDC_E2E_FINDINGS_SESSION_TIMEOUT.md`; it adds no passing-suite coverage.
+
+### Complete transport-deletion audit
+
+There are three transport-map deletion sites in the stateful gateway:
+
+- Lines 179–184: `onclose` clears counter state and any pending timer before
+  deleting the transport.
+- Lines 192–197: `onerror` uses the same ordering.
+- Lines 102–105: timeout cleanup looks up and closes the transport before
+  deleting it. Its counter callback has already removed the consumed timer
+  entry before calling cleanup (`sessionAccessCounter.ts:85–88`).
+
+The gateway never requests the counter's optional explicit cleanup callback.
+The installed transport's `close()` invokes `onclose` synchronously, and these
+map operations contain no await points. Under normal event-loop ordering and
+non-reentrant logging, neither close nor error leaves a timer targeting a
+deleted transport. Completion events arriving afterward call `dec` on an
+absent counter entry, which returns without scheduling another timer.
+
+This narrows the last previously unresolved guard to a current lifecycle
+invariant, supported by source review and the deletion/child-exit tests. It is
+not a recommendation to remove the defensive check, or a claim about future
+SDK implementations, custom reentrant loggers, or externally mutated state.
+
+The existing 104/129 result is the demonstrated high-level coverage, not a
+universal mathematical maximum. No new clean witness for the remaining 25
+conditions has been found in this follow-up. Literal 100% would require
+addressing bugs and/or relaxing the present test-only, realistic-boundary
+constraints; adding arbitrary thrown values just for coverage is not included.
+
+Run `run_996e518044a55cb9` confirms unchanged coverage with 62 passing tests,
+21 unexecuted TODOs, zero failures, and zero measurement limitations.

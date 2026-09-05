@@ -6,6 +6,8 @@ diff. Ordinary passing behavior tests remain enabled.
 
 New finding GW-009 (deep-input HTTP hang) is recorded separately in
 `MCDC_E2E_FINDINGS_DEEP_INPUT.md`, with an opt-in reproduction command.
+GW-010 (accepted long idle timeout expires immediately) is recorded in
+`MCDC_E2E_FINDINGS_SESSION_TIMEOUT.md` with its own reproduction command.
 
 ## Running pending regressions
 
@@ -245,10 +247,11 @@ tool requests. The previous SDK-only reachability assumption was too narrow.
 
 ### Remaining guards still under investigation
 
-The stateful timeout callback's missing-transport check and defensive
-primitive/missing-message error normalization have no demonstrated ordinary
-CLI inputs for all alternatives.
-They remain unclassified rather than being labeled dead based on coverage alone.
+Defensive primitive/missing-message error normalization has no demonstrated
+ordinary CLI input for all alternatives. It is not labeled dead based on
+coverage alone. The timeout follow-up in `MCDC_REACHABILITY.md` now traces all
+transport-map deletions and explains the missing-transport check's constraint
+under the current non-reentrant lifecycle.
 
 See `MCDC_REACHABILITY.md` for the current inventory of remaining
 conditions and what evidence would be required to cover them.

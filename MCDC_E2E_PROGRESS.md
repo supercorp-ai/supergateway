@@ -4,7 +4,7 @@
 
 ## Current result
 
-The default suite has **60 passing tests and 20 TODOs**, with zero failures.
+The default suite has **62 passing tests and 21 TODOs**, with zero failures.
 There are no production source changes relative to the PR base. Previously
 attempted bug fixes have been removed; the old 87.60% result does not describe
 the current branch.
@@ -15,7 +15,7 @@ the current branch.
 | Lines    | 498/818 (60.88%) | 795/818 (97.19%)      |
 | Branches | 138/368 (37.50%) | 321/368 (87.23%)      |
 
-Current measured run: `run_067c733636cd5017`, with zero measurement limitations.
+Current measured run: `run_996e518044a55cb9`, with zero measurement limitations.
 The original source denominator of 129 is restored. Default TODO bodies do not
 execute and contribute no coverage. Opt-in failing reproductions are not merged
 into this result. Coverage is execution evidence, not proof of assertion quality.
@@ -37,6 +37,8 @@ Process helpers provide bounded readiness checks and process-group cleanup.
 `MCDC_E2E_FINDINGS.md` records eight identified issues, distinguishing observed
 failures from code-level findings and missing independent reproductions.
 `MCDC_E2E_FINDINGS_DEEP_INPUT.md` records the ninth, a hung deep-input request.
+`MCDC_E2E_FINDINGS_SESSION_TIMEOUT.md` records the tenth, immediate expiration
+of an accepted 30-day idle timeout.
 
 - Seventeen TODOs retain opt-in CLI/network reproduction bodies: four fallback,
   two successful-result preservation, two stateless sequencing/batch, one
@@ -44,6 +46,7 @@ failures from code-level findings and missing independent reproductions.
   inherited-property session-ID cases, plus two ordinary-disconnect/late-reply
   cases (one per HTTP mode).
 - One further executable TODO retains the deep-input request regression.
+- One executable TODO retains the 30-day idle-timeout regression.
 - Two error-normalization TODOs are specifications only. They do not import a
   nonexistent proposed helper and do not claim executable reproduction.
 - Ordinary passing tests remain enabled, including actual header delivery.
@@ -64,7 +67,7 @@ TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
 Build and standalone TypeScript checking pass. Native and measured full-suite
-runs both report 60 passed, 20 TODO, zero failed.
+runs both report 62 passed, 21 TODO, zero failed.
 
 The existing ts-node typechecking-loader issue requires
 `TS_NODE_TRANSPILE_ONLY=true` in this environment despite standalone TypeScript
@@ -142,7 +145,7 @@ An earlier measured attempt had two port-in-use startup failures while another
 test command overlapped it. That failed run is diagnostic only and is not
 merged into the passing-suite coverage; full verification is run serially.
 
-## Latest test-only increment: malformed startup and deep input
+## Previous test-only increment: malformed startup and deep input
 
 Two passing pipelined-startup tests reject an initialize request without a
 protocol version while preserving the valid handshake and later tool replies.
@@ -160,3 +163,26 @@ The deeply nested request companion reproduces GW-009: the HTTP exchange
 hangs after a header error while the health endpoint still returns 200. It is
 kept as a TODO and documented in a new findings file. Native and measured
 default suites pass serially; the opt-in reproduction is not merged into them.
+
+## Latest follow-up: session termination and timeout range
+
+Two passing E2E tests cover deletion during concurrent SSE/tool work and a
+one-day idle timeout retaining its session. DELETE settles both active HTTP
+exchanges, stops child work, cancels idle cleanup, and permits a fresh session.
+The 30-day companion reproduces GW-010 and remains an opt-in TODO.
+
+The full suite passes natively and under measurement. Coverage is unchanged:
+104/129 MC/DC, 795/818 lines, and 321/368 branches. No failing reproduction
+is included in those totals.
+
+Source review traced all three stateful transport-map deletion sites and the
+counter's timer lifecycle. Under current non-reentrant operation, a pending
+cleanup timer cannot outlive removal of its transport. The reachability audit
+now groups that remaining guard with current lifecycle constraints, rather
+than treating it as an unexplored ordinary-scheduling case. Safety guards and
+production sources remain untouched.
+
+The 25 missing conditions now group as five tied to known bugs, ten involving
+arbitrary thrown values without ordinary wire witnesses, and ten constrained
+by current flow/schema/state. No additional clean E2E witness was found in this
+follow-up; 80.62% remains the demonstrated result, not a universal maximum.

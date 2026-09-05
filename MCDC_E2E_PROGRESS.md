@@ -1,8 +1,6 @@
 # MC/DC progress: first end-to-end test batch
 
-2026-09-05, Node 24.18.0, patched local SuperCov binary built from the isolated
-`codex/supergateway-supercov-036-audit` worktree branch, based on v0.0.36.
-The SuperCov fixes are separate from this test-only change.
+2026-09-05, Node 24.18.0.
 
 ## Result
 
@@ -65,10 +63,6 @@ nvm use 24
 npm run build
 npx --no-install tsc --noEmit
 TS_NODE_TRANSPILE_ONLY=true npm test
-# Point this at the patched SuperCov build described above.
-SUPERCOV_BINARY=/path/to/supercov/target/debug/supercov
-TS_NODE_TRANSPILE_ONLY=true SUPERCOV_COMMAND_TIMEOUT_MS=90000 \
-  "$SUPERCOV_BINARY" -- npm test
 ```
 
 The repository's existing ts-node typechecking-loader failure still requires
@@ -111,7 +105,6 @@ mean all of its other coverage obligations are satisfied.
    number of public-API component tests. Do not mutate private state or invent
    impossible SDK behavior merely to force 100%.
 
-The separate fallback reproducer fails without SuperCov and is not included
-in the passing-suite metric. No new confirmed SuperCov bug was found in this
-batch. The existing SuperCov worktree and shared checkout were not edited.
-No production fixes or SuperCov release are included in this test batch.
+The separate fallback reproducer fails in a normal CLI run and is not included
+in the passing-suite metric. No production fixes are included in this first
+test batch.

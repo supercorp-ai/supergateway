@@ -1,6 +1,6 @@
 # Findings from the end-to-end MC/DC audit
 
-2026-09-05, Node 24.18.0. These are Supergateway findings, not SuperCov bugs.
+2026-09-05, Node 24.18.0. Findings from real Supergateway CLI/network tests.
 No production source changes were made in this test-expansion batch.
 
 ## Confirmed: fallback initialization crashes both upstream-to-stdio bridges
@@ -19,7 +19,7 @@ upstream connection succeeds, but the original request is never forwarded and
 TypeError: Cannot read properties of undefined (reading 'hasOwnProperty')
 ```
 
-Reproduce without SuperCov, from the repository root on Node 24:
+Reproduce from the repository root on Node 24:
 
 ```sh
 npm run build

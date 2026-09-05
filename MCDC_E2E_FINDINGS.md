@@ -1,91 +1,117 @@
-# Findings from end-to-end coverage work
+# Known gateway bugs and pending regressions
 
-2026-09-05, Node 24.18.0. Fixes below are included in this branch.
+2026-09-05. These bugs are intentionally **not fixed** in this branch.
+Previously attempted production fixes have been removed from the current PR
+diff. Ordinary passing behavior tests remain enabled.
 
-## Fallback initialization lost the first reverse-bridge request
+## Running pending regressions
 
-Both upstream-to-stdio bridges connected a fallback client when the first
-request was not `initialize`, but never forwarded that request. The undefined
-result then crashed response construction. Both bridges now send the original
-request within the existing error-handling boundary.
+The default suite reports known-bug tests as TODO without executing their
+bodies. Run the existing CLI/network reproducers as ordinary tests with:
 
-`tests/bridgeFallbackE2e.test.ts` runs real upstream and bridge CLI processes.
-It covers a successful first `tools/list`, an unknown-method error, and a
-subsequent successful request for each transport. The former standalone failing
-reproducer has been replaced by these regular passing regression tests.
+```sh
+nvm use 24
+npm run build
+RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/headerDiagnosticsE2e.test.ts
+```
 
-Normal MCP clients initialize first. This fixes the fallback behavior the
-gateway explicitly offers, not a protocol requirement to accept such clients.
+This opt-in command is expected to fail until the bugs are fixed. Default TODOs
+contribute no execution coverage. The two error-normalization TODOs are
+specifications only; no proposed production helper is retained.
 
-## Successful results with an error-named field were corrupted
+## GW-001: fallback initialization loses the first request
 
-Both reverse bridges interpreted `result.error` as a JSON-RPC error envelope,
-even though protocol errors already reject the SDK request. A successful result
-may legitimately contain application data named `error`. Both bridges now
-preserve successful results unchanged.
+Affected: both upstream-to-stdio bridges.
 
-`tests/bridgeResultE2e.test.ts` reproduced the failure before the fix with an
-actual SDK tool returning diagnostic data, through both real CLI chains.
+A first non-initialize request connects the fallback SDK client but is never
+forwarded. The undefined result crashes response construction on
+`hasOwnProperty`.
 
-## Stateless batches lost requests and could crash the gateway
+Four TODOs in `tests/bridgeFallbackE2e.test.ts` cover first tools/list and
+unknown-method requests, followed by a subsequent valid request, for both
+transports. The tools/list cases reproduced the crash. Unknown-method cases
+specify the associated error behavior. This concerns the gateway's explicit
+compatibility fallback, not a protocol requirement to skip initialization.
 
-The stateless HTTP gateway kept only one pending request during automatic
-initialization. Multiple requests in one HTTP batch overwrote each other and
-started multiple initialization exchanges. A resulting unexpected reply could
-also reject the unawaited transport send and terminate the gateway.
+## GW-002: successful results containing an error field are corrupted
 
-Pending messages are now queued in order behind one automatic initialization.
-Transport-send rejections are logged, and initialization ID zero is recognized
-instead of being rejected by a truthiness check.
+Affected: both upstream-to-stdio bridges.
 
-`tests/statelessBatchE2e.test.ts` covers two tool calls in one real HTTP batch,
-zero IDs, a notification interleaved before initialization completes, stale
-replies, and successful subsequent requests. The batch regression failed
-against the previous implementation and passes with the fix.
+The SDK already rejects protocol errors, but the gateway interprets application
+data named `error` inside a successful result as an outer JSON-RPC error.
 
-## Configured headers were logged as absent
+Two TODOs in `tests/bridgeResultE2e.test.ts` reproduced this with a real SDK
+diagnostic tool through actual CLI chains. Expected: preserve the entire result.
 
-SSE, stateful HTTP, and stateless HTTP server gateways used
-`Object(headers).length`, which is undefined for ordinary header objects.
-They now use `Object.keys(headers).length`. CLI tests assert both startup
-diagnostics and delivered response headers.
+## GW-003: stateless batches overwrite pending requests
 
-## Duplicated error normalization accepted invalid fields
+Affected: `stdioToStatelessStreamableHttp.ts`.
 
-Both reverse bridges assumed an object's `message` was a string and accepted
-any `code`. Shared `toJsonRpcError` now normalizes unknown inputs to a string
-message and integer code, preserving valid codes and trimming matching SDK
-prefixes. Public helper tests cover null/primitive inputs, malformed properties,
-non-finite/fractional codes, and matching/mismatched prefixes. Existing CLI
-tests cover actual SDK/network failures; arbitrary SDK throws are not mocked.
+Only one pending message is retained during automatic initialization. A second
+message overwrites it and starts another initialization exchange. A two-call
+HTTP batch lost responses and could crash when an unexpected initialization
+reply reached the transport.
 
-## Constraints on literal 100% MC/DC
+The batch TODO in `tests/statelessBatchE2e.test.ts` failed against the original
+implementation. Expected: one initialization exchange and every response
+correctly matched to its original request.
 
-These are specific source/SDK observations, not a claim that every remaining
-gap is unreachable:
+## GW-004: rejected stateless transport sends can crash the process
 
-- The final CLI `hasStreamableHttp` false case follows validation that exactly
-  one input transport is selected and the other two are false. It is logically
-  unreachable on this path.
-- Reverse-bridge initialization wrappers receive SDK-generated initialize
-  requests. Method and protocol-version alternatives are constrained by that
-  contract; malformed user requests do not necessarily reach those checks.
-- Stateless request handling creates a child/transport per HTTP request.
-  Initialization checks are downstream of SDK validation and synchronous batch
-  delivery. Independent false cases need further lifecycle analysis, not
-  arbitrary bypasses of validation. Its response-header error guard is also
-  not fully exercised.
-- The session counter replaces an active entry with a timer when its count
-  reaches zero, so the nonpositive-active-count guard is not reached through
-  ordinary public operations. Public `clear(true)` and `clear(false)` behavior
-  is now tested without private-state mutation.
-- WebSocket health routes start listening after readiness is true. The
-  not-ready health response is not reachable through an already-listening CLI;
-  child cleanup/killed checks have related shutdown constraints.
-- SSE session IDs are generated by the SDK. An absent ID is not producible by
-  choosing an ordinary client request. Stateful timeout cleanup's missing
-  transport guard likewise remains unexercised.
+Affected: `stdioToStatelessStreamableHttp.ts`.
 
-No tests invent impossible SDK behavior to satisfy these conditions. Removing
-redundant branches is a production-code decision, distinct from adding test
-evidence; safety guards should not be deleted merely to improve a metric.
+`transport.send(jsonMsg)` returns a promise, but only synchronous exceptions
+are caught. An unsolicited stale response ID can cause an unhandled rejection.
+
+The interleaving/stale-reply TODO in `tests/statelessBatchE2e.test.ts` expects
+the error to be reported without stopping subsequent requests. This crash also
+occurred during the GW-003 batch reproduction.
+
+## GW-005: initialization ID zero is not recognized
+
+Affected: `stdioToStatelessStreamableHttp.ts`.
+
+`initializeRequestId && jsonMsg.id === initializeRequestId` treats valid ID zero
+as absent, skipping initialization bookkeeping.
+
+Confirmed code-level defect. The combined interleaving TODO exercises zero IDs
+but does not independently prove an externally visible failure from ID zero
+alone. A dedicated regression still needs that observable consequence.
+
+## GW-006: configured headers are logged as absent
+
+Affected: SSE, stateful HTTP, and stateless HTTP server gateways.
+
+`Object(headers).length` is undefined for ordinary header objects, so startup
+reports no headers even when they are delivered correctly.
+
+Three TODOs in `tests/headerDiagnosticsE2e.test.ts` assert configured headers
+appear in startup logs. Existing passing header-delivery tests remain enabled.
+
+## GW-007: defensive error formatting assumes valid property types
+
+Affected: both upstream-to-stdio bridges.
+
+An object's message is accepted without checking its type, then passed to
+`startsWith`. A numeric message can throw in the error handler. Code values
+are also copied without validating their type or whether they are finite
+integers.
+
+This is a code-level finding, not a demonstrated ordinary SDK/network failure.
+Real tested SDK errors have normal properties. Do not mock impossible SDK
+behavior to claim an E2E reproduction.
+
+Two specification TODOs in `tests/jsonRpcError.test.ts` reserve these acceptance
+cases: null/primitive inputs, missing or malformed fields, non-finite/fractional
+codes, valid integer codes including zero, ordinary Error objects,
+matching/mismatched protocol prefixes, and no input mutation.
+The proposed helper and implementation-dependent tests were removed.
+Executable regressions need a justified public boundary.
+
+## Coverage constraints, not bug reports
+
+Some remaining conditions are unreachable or constrained by validation. For
+example, after validating exactly one CLI input transport, ruling out stdio and
+SSE guarantees HTTP. SDK-generated IDs and lifecycle invariants constrain other
+checks. These observations do not authorize deleting checks: no production
+simplifications or safety-guard removals are included.

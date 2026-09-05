@@ -47,7 +47,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   } = args
 
   logger.info(
-    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)

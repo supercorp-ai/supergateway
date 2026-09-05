@@ -78,7 +78,7 @@ export async function stdioToStatelessStreamableHttp(
   } = args
 
   logger.info(
-    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
+    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
   )
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
@@ -136,7 +136,7 @@ export async function stdioToStatelessStreamableHttp(
       let isInitialized = false
       let initializeRequestId: string | number | null = null // Current initialize request ID
       let isAutoInitializing = false // Flag to indicate if we're auto-initializing
-      const pendingOriginalMessages: JSONRPCMessage[] = []
+      let pendingOriginalMessage: JSONRPCMessage | null = null
 
       let buffer = ''
       child.stdout.on('data', (chunk: Buffer) => {
@@ -150,10 +150,7 @@ export async function stdioToStatelessStreamableHttp(
             logger.info('Child → StreamableHttp:', line)
 
             // Handle initialize response (both auto and client initiated)
-            if (
-              initializeRequestId !== null &&
-              jsonMsg.id === initializeRequestId
-            ) {
+            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
               logger.info('Initialize response received')
               isInitialized = true
 
@@ -168,17 +165,15 @@ export async function stdioToStatelessStreamableHttp(
                   JSON.stringify(initializedNotification) + '\n',
                 )
 
-                // A single HTTP batch can queue several messages before the
-                // child replies to initialize. Preserve their original order.
-                for (const pendingOriginalMessage of pendingOriginalMessages.splice(
-                  0,
-                )) {
+                // Now send the original message
+                if (pendingOriginalMessage) {
                   logger.info(
                     `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
                   )
                   child.stdin.write(
                     JSON.stringify(pendingOriginalMessage) + '\n',
                   )
+                  pendingOriginalMessage = null
                 }
 
                 // Reset auto-initialize tracking
@@ -194,9 +189,7 @@ export async function stdioToStatelessStreamableHttp(
             }
 
             try {
-              transport.send(jsonMsg).catch((error) => {
-                logger.error('Failed to send to StreamableHttp', error)
-              })
+              transport.send(jsonMsg)
             } catch (e) {
               logger.error(`Failed to send to StreamableHttp`, e)
             }
@@ -216,8 +209,7 @@ export async function stdioToStatelessStreamableHttp(
         // Check if we need to auto-initialize first
         if (!isInitialized && !isInitializeRequest(msg)) {
           // Store the original message and send initialize first
-          pendingOriginalMessages.push(msg)
-          if (isAutoInitializing) return
+          pendingOriginalMessage = msg
           initializeRequestId = `init_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
           isAutoInitializing = true
 

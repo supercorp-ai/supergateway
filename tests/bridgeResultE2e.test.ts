@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import {
   initialize,
@@ -8,7 +8,8 @@ import {
 } from './helpers/gateway-process.js'
 
 for (const protocol of ['sse', 'streamableHttp']) {
-  test(
+  knownBugTest(
+    'GW-002',
     `${protocol} bridge preserves an error-named field inside a successful result`,
     { timeout: 15000 },
     async (t) => {

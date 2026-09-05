@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import {
   initialize,
@@ -8,7 +8,8 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
-test(
+knownBugTest(
+  'GW-004/GW-005',
   'stateless HTTP handles zero IDs and interleaved notifications without losing responses',
   { timeout: 15000 },
   async (t) => {
@@ -56,7 +57,8 @@ test(
   },
 )
 
-test(
+knownBugTest(
+  'GW-003',
   'stateless HTTP forwards every request in a batch after one initialization',
   { timeout: 15000 },
   async (t) => {

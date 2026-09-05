@@ -1,6 +1,6 @@
 // A first non-initialize request uses the gateway's fallback initialization.
 // Exercise that compatibility path with real CLI processes and SDK peers.
-import { test } from 'node:test'
+import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import {
   launchGateway,
@@ -10,7 +10,8 @@ import {
 
 for (const protocol of ['sse', 'streamableHttp']) {
   for (const firstMethod of ['tools/list', 'audit/unknown']) {
-    test(
+    knownBugTest(
+      'GW-001',
       `${protocol} fallback forwards ${firstMethod} after auto-initialization`,
       { timeout: 15000 },
       async (t) => {

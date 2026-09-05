@@ -8,6 +8,8 @@ New finding GW-009 (deep-input HTTP hang) is recorded separately in
 `MCDC_E2E_FINDINGS_DEEP_INPUT.md`, with an opt-in reproduction command.
 GW-010 (accepted long idle timeout expires immediately) is recorded in
 `MCDC_E2E_FINDINGS_SESSION_TIMEOUT.md` with its own reproduction command.
+GW-011 (result extension crashes bridges) and GW-012 (lost structured error
+details) are recorded in `MCDC_E2E_FINDINGS_WIRE_RESPONSES.md`.
 
 ## Running pending regressions
 

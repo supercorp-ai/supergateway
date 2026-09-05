@@ -157,3 +157,25 @@ constraints; adding arbitrary thrown values just for coverage is not included.
 
 Run `run_996e518044a55cb9` confirms unchanged coverage with 62 passing tests,
 21 unexecuted TODOs, zero failures, and zero measurement limitations.
+
+## Upstream wire-error follow-up
+
+Three passing tests in `bridgeWireResponsesE2e.test.ts` send malformed response
+envelopes through actual SSE and HTTP connections. Primitive or malformed
+`error` fields are rejected by SDK envelope validation before becoming request
+exceptions. Event-stream validation ignores bad frames while allowing a later
+valid reply; direct-JSON validation rejects with a normal error object. The
+tests verify correlated responses and continued usability, not log text alone.
+
+The remaining ten arbitrary-throw conditions are therefore still missing:
+these real wire values do not make `err` falsy, make it a primitive, or remove
+the exception's message property. No SDK methods or abort reasons are replaced.
+
+The same audit reproduced two valid-data failures in both reverse bridges:
+an application field named `hasOwnProperty` crashes response construction
+(GW-011), and structured protocol `error.data` disappears (GW-012). Four TODOs
+retain those failures; see `MCDC_E2E_FINDINGS_WIRE_RESPONSES.md`. They do not
+provide passing-suite coverage or authorize production fixes.
+
+Run `run_601743121289961b` confirms 104/129 MC/DC with 65 passing tests,
+25 unexecuted TODOs, zero failures, and zero measurement limitations.

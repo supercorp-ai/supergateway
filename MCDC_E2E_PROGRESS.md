@@ -4,7 +4,7 @@
 
 ## Current result
 
-The default suite has **62 passing tests and 21 TODOs**, with zero failures.
+The default suite has **65 passing tests and 25 TODOs**, with zero failures.
 There are no production source changes relative to the PR base. Previously
 attempted bug fixes have been removed; the old 87.60% result does not describe
 the current branch.
@@ -15,7 +15,7 @@ the current branch.
 | Lines    | 498/818 (60.88%) | 795/818 (97.19%)      |
 | Branches | 138/368 (37.50%) | 321/368 (87.23%)      |
 
-Current measured run: `run_996e518044a55cb9`, with zero measurement limitations.
+Current measured run: `run_601743121289961b`, with zero measurement limitations.
 The original source denominator of 129 is restored. Default TODO bodies do not
 execute and contribute no coverage. Opt-in failing reproductions are not merged
 into this result. Coverage is execution evidence, not proof of assertion quality.
@@ -39,6 +39,8 @@ failures from code-level findings and missing independent reproductions.
 `MCDC_E2E_FINDINGS_DEEP_INPUT.md` records the ninth, a hung deep-input request.
 `MCDC_E2E_FINDINGS_SESSION_TIMEOUT.md` records the tenth, immediate expiration
 of an accepted 30-day idle timeout.
+`MCDC_E2E_FINDINGS_WIRE_RESPONSES.md` records two more: a result-extension
+process crash and lost structured protocol error details, both reverse bridges.
 
 - Seventeen TODOs retain opt-in CLI/network reproduction bodies: four fallback,
   two successful-result preservation, two stateless sequencing/batch, one
@@ -47,6 +49,8 @@ of an accepted 30-day idle timeout.
   cases (one per HTTP mode).
 - One further executable TODO retains the deep-input request regression.
 - One executable TODO retains the 30-day idle-timeout regression.
+- Four executable TODOs retain the two response-preservation regressions on
+  both reverse bridges.
 - Two error-normalization TODOs are specifications only. They do not import a
   nonexistent proposed helper and do not claim executable reproduction.
 - Ordinary passing tests remain enabled, including actual header delivery.
@@ -67,7 +71,7 @@ TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
 Build and standalone TypeScript checking pass. Native and measured full-suite
-runs both report 62 passed, 21 TODO, zero failed.
+runs both report 65 passed, 25 TODO, zero failed.
 
 The existing ts-node typechecking-loader issue requires
 `TS_NODE_TRANSPILE_ONLY=true` in this environment despite standalone TypeScript
@@ -164,7 +168,7 @@ hangs after a header error while the health endpoint still returns 200. It is
 kept as a TODO and documented in a new findings file. Native and measured
 default suites pass serially; the opt-in reproduction is not merged into them.
 
-## Latest follow-up: session termination and timeout range
+## Previous follow-up: session termination and timeout range
 
 Two passing E2E tests cover deletion during concurrent SSE/tool work and a
 one-day idle timeout retaining its session. DELETE settles both active HTTP
@@ -186,3 +190,22 @@ The 25 missing conditions now group as five tied to known bugs, ten involving
 arbitrary thrown values without ordinary wire witnesses, and ten constrained
 by current flow/schema/state. No additional clean E2E witness was found in this
 follow-up; 80.62% remains the demonstrated result, not a universal maximum.
+
+## Latest follow-up: malformed upstream responses
+
+Three passing E2E tests send malformed upstream SSE frames or direct-JSON
+error envelopes. They check that malformed payloads do not leak to the client,
+replies remain correlated, and later requests work. SDK envelope validation
+still prevents malformed wire values from reaching the gateway as primitive
+or message-less exceptions. The remaining MC/DC conditions are unchanged.
+
+Two valid-data bugs reproduce on both transports: a `hasOwnProperty` result
+extension crashes response construction (GW-011), and upstream `error.data`
+is discarded (GW-012). Four TODOs preserve correct-behavior expectations; the
+new findings file records the details. Neither bug is fixed or counted as
+passing coverage.
+
+Full native and measured suites pass serially with 65 passes and 25 TODOs.
+MC/DC remains 104/129 (80.62%), lines 795/818 (97.19%), and branches 321/368
+(87.23%). These tests add robustness evidence and bug reproductions, not a
+claimed route to 100% under the present constraints.

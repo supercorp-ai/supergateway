@@ -82,6 +82,26 @@ export async function unusedPort() {
 }
 
 export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'
+export async function stdioRpc(
+  gateway: ReturnType<typeof launchGateway>,
+  message: { id: string | number; [key: string]: unknown },
+) {
+  const response = () =>
+    gateway
+      .output()
+      .split('\n')
+      .slice(0, -1)
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line))
+      .find((result) => result.id === message.id)
+  gateway.child.stdin.write(JSON.stringify(message) + '\n')
+  await gateway.waitFor(
+    () => Boolean(response()),
+    `reply to request ${message.id}`,
+  )
+  return response()
+}
+
 export const initialize = (id: number | string = 1) => ({
   jsonrpc: '2.0',
   id,

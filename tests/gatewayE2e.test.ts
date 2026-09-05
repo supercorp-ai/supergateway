@@ -165,6 +165,7 @@ for (const stateful of [true, false]) {
       assert.equal(health.status, 200)
       assert.equal(await health.text(), 'ok')
       assert.equal(health.headers.get('x-audit'), 'value:with:colons')
+      assert.match(gateway.output(), /Headers: \{"X-Audit":"value:with:colons"/)
       assert.equal(health.headers.get('authorization'), 'Bearer test-token')
       assert.equal(
         health.headers.get('access-control-allow-origin'),
@@ -586,6 +587,7 @@ test(
     assert.equal(await health.text(), 'ok')
     assert.equal(health.headers.get('access-control-allow-origin'), '*')
     assert.equal(health.headers.get('x-audit'), 'yes')
+    assert.match(gateway.output(), /Headers: \{"X-Audit":"yes"\}/)
     for (const [query, status, error] of [
       ['', 400, /Missing sessionId/],
       ['?sessionId=missing', 503, /No active SSE connection/],

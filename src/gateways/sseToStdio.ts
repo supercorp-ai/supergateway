@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { toJsonRpcError } from '../lib/toJsonRpcError.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -148,6 +149,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
           } else {
             logger.info('SSE client not initialized, creating fallback client')
             sseClient = await newFallbackSseClient({ sseTransport })
+            result = await sseClient.request(req, z.any())
           }
 
           logger.info('SSE connected')
@@ -156,33 +158,15 @@ export async function sseToStdio(args: SseToStdioArgs) {
         }
       } catch (err) {
         logger.error('Request error:', err)
-        const errorCode =
-          err && typeof err === 'object' && 'code' in err
-            ? (err as any).code
-            : -32000
-        let errorMsg =
-          err && typeof err === 'object' && 'message' in err
-            ? (err as any).message
-            : 'Internal error'
-        const prefix = `MCP error ${errorCode}:`
-        if (errorMsg.startsWith(prefix)) {
-          errorMsg = errorMsg.slice(prefix.length).trim()
-        }
         const errorResp = wrapResponse(req, {
-          error: {
-            code: errorCode,
-            message: errorMsg,
-          },
+          error: toJsonRpcError(err),
         })
         process.stdout.write(JSON.stringify(errorResp) + '\n')
         return
       }
-      const response = wrapResponse(
-        req,
-        result.hasOwnProperty('error')
-          ? { error: { ...result.error } }
-          : { result: { ...result } },
-      )
+      // Protocol errors reject request() and are handled above. A successful
+      // result may itself contain an application field named "error".
+      const response = wrapResponse(req, { result })
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {

@@ -1,86 +1,91 @@
-# Findings from the end-to-end MC/DC audit
+# Findings from end-to-end coverage work
 
-2026-09-05, Node 24.18.0. Findings from real Supergateway CLI/network tests.
-No production source changes were made in this test-expansion batch.
+2026-09-05, Node 24.18.0. Fixes below are included in this branch.
 
-## Confirmed: fallback initialization crashes both upstream-to-stdio bridges
+## Fallback initialization lost the first reverse-bridge request
 
-Affected source:
+Both upstream-to-stdio bridges connected a fallback client when the first
+request was not `initialize`, but never forwarded that request. The undefined
+result then crashed response construction. Both bridges now send the original
+request within the existing error-handling boundary.
 
-- `src/gateways/sseToStdio.ts`: fallback branch at line 149; response construction at line 182.
-- `src/gateways/streamableHttpToStdio.ts`: fallback branch at line 148; response construction at line 183.
+`tests/bridgeFallbackE2e.test.ts` runs real upstream and bridge CLI processes.
+It covers a successful first `tools/list`, an unknown-method error, and a
+subsequent successful request for each transport. The former standalone failing
+reproducer has been replaced by these regular passing regression tests.
 
-When the first incoming stdio request is `tools/list` instead of `initialize`,
-both bridges enter their explicit fallback-client initialization path. The
-upstream connection succeeds, but the original request is never forwarded and
-`result` remains undefined. The process then exits with:
+Normal MCP clients initialize first. This fixes the fallback behavior the
+gateway explicitly offers, not a protocol requirement to accept such clients.
 
-```text
-TypeError: Cannot read properties of undefined (reading 'hasOwnProperty')
-```
+## Successful results with an error-named field were corrupted
 
-Reproduce from the repository root on Node 24:
+Both reverse bridges interpreted `result.error` as a JSON-RPC error envelope,
+even though protocol errors already reject the SDK request. A successful result
+may legitimately contain application data named `error`. Both bridges now
+preserve successful results unchanged.
 
-```sh
-npm run build
-node tests/helpers/reproduce-bridge-fallback.mjs
-```
+`tests/bridgeResultE2e.test.ts` reproduced the failure before the fix with an
+actual SDK tool returning diagnostic data, through both real CLI chains.
 
-The reproducer starts real upstream and bridge CLI processes, sends an actual
-JSON-RPC request over stdin, and expects a tools-list response. Both cases fail
-against current production code. It is deliberately outside the default
-`*.test.ts` test glob so the passing coverage baseline does not include these
-failing executions. It should become a regular end-to-end regression test when
-the bug is fixed, not a permanent exception.
+## Stateless batches lost requests and could crash the gateway
 
-Normal MCP clients initialize first. This finding concerns the fallback
-behavior that these gateway functions explicitly attempt to implement, not a
-claim that uninitialized requests are required by the MCP protocol.
+The stateless HTTP gateway kept only one pending request during automatic
+initialization. Multiple requests in one HTTP batch overwrote each other and
+started multiple initialization exchanges. A resulting unexpected reply could
+also reject the unawaited transport send and terminate the gateway.
 
-Suggested fix: after creating/connecting the fallback client, forward the
-original request and assign its result inside the existing error-handling
-boundary. Test both success and remote error handling. Not implemented here.
+Pending messages are now queued in order behind one automatic initialization.
+Transport-send rejections are logged, and initialization ID zero is recognized
+instead of being rejected by a truthiness check.
 
-## Code-level defect: configured headers are logged as absent
+`tests/statelessBatchE2e.test.ts` covers two tool calls in one real HTTP batch,
+zero IDs, a notification interleaved before initialization completes, stale
+replies, and successful subsequent requests. The batch regression failed
+against the previous implementation and passes with the fix.
 
-The SSE, stateful HTTP, and stateless HTTP server gateways use
-`Object(headers).length` when choosing whether to log headers. A normal header
-object has no `length`, so this stays false even for nonempty configured
-headers. The E2E tests verify that the actual response headers are delivered;
-the problem is the startup diagnostic.
+## Configured headers were logged as absent
 
-Locations: `stdioToSse.ts:50`, `stdioToStatefulStreamableHttp.ts:52`,
-`stdioToStatelessStreamableHttp.ts:81`.
+SSE, stateful HTTP, and stateless HTTP server gateways used
+`Object(headers).length`, which is undefined for ordinary header objects.
+They now use `Object.keys(headers).length`. CLI tests assert both startup
+diagnostics and delivered response headers.
 
-Use `Object.keys(headers).length` consistently with the reverse gateways.
-Do not add an artificial HTTP header named `length` just to cover the other
-side of this condition. No fix made in this batch.
+## Duplicated error normalization accepted invalid fields
 
-## Constraints relevant to pursuing 100% MC/DC
+Both reverse bridges assumed an object's `message` was a string and accepted
+any `code`. Shared `toJsonRpcError` now normalizes unknown inputs to a string
+message and integer code, preserving valid codes and trimming matching SDK
+prefixes. Public helper tests cover null/primitive inputs, malformed properties,
+non-finite/fractional codes, and matching/mismatched prefixes. Existing CLI
+tests cover actual SDK/network failures; arbitrary SDK throws are not mocked.
 
-These are source/SDK observations, not a blanket claim that every remaining
+## Constraints on literal 100% MC/DC
+
+These are specific source/SDK observations, not a claim that every remaining
 gap is unreachable:
 
-- The CLI's final `hasStreamableHttp` false branch follows validation that
-  exactly one input transport is selected and the other two are false.
-- Several initialization checks are downstream of SDK schema validation.
-  Independently falsifying every subcondition may require bypassing that
-  validation, which would not be an end-to-end test.
-- Both reverse gateways handle errors defensively as potentially null,
-  primitive, or missing a message. Real tested SDK/network failures are Error
-  objects. Producing arbitrary thrown primitives would require lower-level
-  fault injection, not ordinary JSON-RPC error responses.
-- `SessionAccessCounter`'s nonpositive-active-count guard cannot be reached
-  by normal public increments/decrements: reaching zero replaces the active
-  entry with a pending timer. The gateway always calls `clear` with
-  `runCleanup=false`; its true branch is available only through the counter's
-  public API, not the current CLI.
-- WebSocket health routes become reachable only after `isReady=true` and the
-  HTTP listener starts. The not-ready response is therefore not naturally
-  testable through an already-listening CLI.
-- WebSocket/SSE transport setup relies on SDK-generated handlers/session IDs;
-  absent-handler or absent-generated-ID cases may need focused public
-  transport tests rather than CLI-only tests.
+- The final CLI `hasStreamableHttp` false case follows validation that exactly
+  one input transport is selected and the other two are false. It is logically
+  unreachable on this path.
+- Reverse-bridge initialization wrappers receive SDK-generated initialize
+  requests. Method and protocol-version alternatives are constrained by that
+  contract; malformed user requests do not necessarily reach those checks.
+- Stateless request handling creates a child/transport per HTTP request.
+  Initialization checks are downstream of SDK validation and synchronous batch
+  delivery. Independent false cases need further lifecycle analysis, not
+  arbitrary bypasses of validation. Its response-header error guard is also
+  not fully exercised.
+- The session counter replaces an active entry with a timer when its count
+  reaches zero, so the nonpositive-active-count guard is not reached through
+  ordinary public operations. Public `clear(true)` and `clear(false)` behavior
+  is now tested without private-state mutation.
+- WebSocket health routes start listening after readiness is true. The
+  not-ready health response is not reachable through an already-listening CLI;
+  child cleanup/killed checks have related shutdown constraints.
+- SSE session IDs are generated by the SDK. An absent ID is not producible by
+  choosing an ordinary client request. Stateful timeout cleanup's missing
+  transport guard likewise remains unexercised.
 
-No exclusions, private-state mutation, production-code rewrites, or failed-run
-merging were used to improve the reported MC/DC percentage.
+No tests invent impossible SDK behavior to satisfy these conditions. Removing
+redundant branches is a production-code decision, distinct from adding test
+evidence; safety guards should not be deleted merely to improve a metric.

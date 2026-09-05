@@ -22,6 +22,11 @@ server.tool('delayed', {}, async () => {
   await setTimeout(100)
   return { content: [{ type: 'text', text: 'delayed result' }] }
 })
+server.tool('diagnostic', {}, async () => ({
+  content: [{ type: 'text', text: 'completed with diagnostic data' }],
+  // An extension field in a successful result is not a JSON-RPC error envelope.
+  error: { code: 123, message: 'application diagnostic' },
+}))
 await server.connect(new StdioServerTransport())
 
 process.stdout.write('\n  \r\npeer startup diagnostic (not JSON)\n')

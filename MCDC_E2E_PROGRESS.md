@@ -1,59 +1,52 @@
-# MC/DC progress: first end-to-end test batch
+# MC/DC progress
 
 2026-09-05, Node 24.18.0.
 
 ## Result
 
-Added 24 CLI/network end-to-end tests in `tests/gatewayE2e.test.ts`.
-The regular suite now has 32 passing tests. No production source changes,
-coverage exclusions, private-state manipulation, or SDK method mocks.
+The regular suite now has 52 passing tests, up from 8. Tests prioritize real
+CLI processes, local HTTP/SSE/WebSocket connections, and SDK peers. Focused
+public-API tests cover signal ownership, session cleanup, WebSocket lifecycle,
+and shared error normalization. No coverage exclusions, private-state mutation,
+or SDK method mocks were added.
 
-| Metric   | Original 8-test suite | Current 32-test suite |
-| -------- | --------------------- | --------------------- |
-| MC/DC    | 17/129 (13.18%)       | 89/129 (68.99%)       |
-| Lines    | 498/818 (60.88%)      | 762/818 (93.15%)      |
-| Branches | 138/368 (37.50%)      | 304/368 (82.61%)      |
+| Metric   | Original 8 tests | First 32 tests   | Current 52 tests |
+| -------- | ---------------- | ---------------- | ---------------- |
+| MC/DC    | 17/129 (13.18%)  | 89/129 (68.99%)  | 106/121 (87.60%) |
+| Lines    | 498/818 (60.88%) | 762/818 (93.15%) | 786/821 (95.74%) |
+| Branches | 138/368 (37.50%) | 304/368 (82.61%) | 316/362 (87.29%) |
 
-Original run: `run_331f4b2e9e5a3a9a`.
-Current run: `run_96322890cc45f94f`, valid and non-stale when checked.
-All 32 outcomes are passed; zero measurement limitations or evidence corruption.
-This run took about 20.4 seconds for the test command and 22.3 seconds overall.
-The previous disposable 12-test experiment was not installed in the repository;
-this batch obtains its gains through the actual CLI and network boundaries.
+The current measured run is `run_51f7bc3aece99b63`: 52 passed, zero measurement
+limitations or evidence corruption. A separate native run also passed all 52
+tests. Build and standalone TypeScript checking passed.
 
-The MC/DC denominator remains 129. The 72 additional covered conditions are
-from new test evidence, not removing source from the measured model. Coverage
-is execution evidence, not a guarantee that every fault is caught by assertions.
+The MC/DC denominator changed from 129 to 121 because production bugs were
+fixed and duplicated error normalization was consolidated: two erroneous
+success-result checks were removed; fourteen duplicated normalization
+conditions were replaced by eight shared conditions. This is not an unchanged
+source comparison, and no source was excluded from measurement. Coverage is
+execution evidence, not a guarantee that every fault is caught by assertions.
 
-## What is exercised
+## Behavior exercised
 
-- Invalid and conflicting CLI inputs, unsupported transport combinations,
-  invalid timeout values, invalid URLs, and logging modes.
-- Real HTTP health endpoints, authorization override, custom headers with
-  colons, invalid header entries, wildcard/list/regex CORS, and denied origins.
-- Stateful HTTP missing/unknown/deleted/expired sessions; malformed envelopes
-  before and after initialization; session recovery; an active SSE stream
-  keeping a session alive across the idle timeout; graceful DELETE cleanup.
-- Stateless HTTP initialization, automatic initialization for standalone
-  tool requests, and GET/DELETE rejection.
-- Both reverse bridges with explicit/default client metadata, tool responses,
-  JSON-RPC errors, real injected HTTP 503 failures, retry recovery, and header
-  forwarding. The outage injector is an actual local HTTP proxy; healthy
-  traffic reaches the actual gateway and SDK MCP peer.
-- SSE request forwarding, invalid session handling, and noisy peer stdout/stderr.
-- WebSocket colliding request IDs across two clients, notifications broadcast
-  to both, malformed frames, disconnection, late-reply isolation, optional
-  CORS/health configuration, invalid route configuration, and shutdown.
+- CLI validation, transport selection, timeout validation, URL validation,
+  logging modes, header parsing, authorization precedence, and CORS variants.
+- HTTP health checks, malformed envelopes, missing/unknown/deleted/expired
+  sessions, idle timeout recovery, and active SSE streams delaying cleanup.
+- Stateless initialization, batched tool requests, zero request IDs,
+  interleaved notifications, stale replies, and unsupported HTTP methods.
+- Both reverse bridges with explicit/default metadata, fallback initialization,
+  successful results containing diagnostic error data, protocol errors, real
+  upstream HTTP failures, retry recovery, and header forwarding.
+- SSE forwarding, invalid session handling, and noisy peer stdout/stderr.
+- WebSocket colliding IDs across clients, broadcast notifications, malformed
+  frames, disconnects, late replies, closing peers, and detached handlers.
+- SIGINT, SIGTERM, SIGHUP, and stdin EOF with and without a cleanup callback;
+  public session-counter cleanup modes; malformed error normalization inputs.
 
-`tests/helpers/gateway-process.ts` supplies bounded readiness checks, ephemeral
-port allocation, JSON-RPC HTTP helpers, and process-group cleanup. It waits for
-observable events rather than fixed startup sleeps. A race found during a
-repeat run was fixed by waiting for diagnostics independently of RPC replies:
-stdout, stderr, and the response socket are separate streams.
-
-`tests/helpers/noisy-mcp-server.js` is an external SDK MCP peer fixture with
-ordinary tool responses, logging notifications, a delayed reply, and noisy
-stdio. It does not replace or patch gateway internals.
+Process helpers use bounded readiness checks, ephemeral ports, and process-group
+cleanup. External wire/SDK peers exercise actual transport behavior; they do
+not replace gateway internals. See `MCDC_E2E_FINDINGS.md` for regression fixes.
 
 ## Re-run
 
@@ -65,46 +58,31 @@ npx --no-install tsc --noEmit
 TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
-The repository's existing ts-node typechecking-loader failure still requires
-`TS_NODE_TRANSPILE_ONLY=true`, even though a separate `tsc --noEmit` check passes.
-A plain `npm test` run was attempted and failed during loader startup in both
-old and new test files. No test-runner configuration was changed in this batch.
-Build, typecheck, and both full native/instrumented suites passed (32/32 each).
-The final native suite took about 17.3 seconds.
+The existing ts-node typechecking-loader failure requires
+`TS_NODE_TRANSPILE_ONLY=true` on this environment, although standalone
+`tsc --noEmit` passes. Plain `npm test` fails during loader startup in both old
+and new files. Test-runner configuration was not changed.
 
-## Remaining 40 MC/DC obligations, ranked by count
+## Remaining 15 MC/DC conditions
 
 | File                                             | Missing conditions |
 | ------------------------------------------------ | -----------------: |
-| `src/gateways/sseToStdio.ts`                     |                  9 |
-| `src/gateways/stdioToStatelessStreamableHttp.ts` |                  8 |
-| `src/gateways/streamableHttpToStdio.ts`          |                  8 |
-| `src/lib/sessionAccessCounter.ts`                |                  4 |
+| `src/gateways/stdioToStatelessStreamableHttp.ts` |                  5 |
 | `src/gateways/stdioToWs.ts`                      |                  3 |
-| `src/server/websocket.ts`                        |                  2 |
-| `src/gateways/stdioToSse.ts`                     |                  2 |
-| `src/gateways/stdioToStatefulStreamableHttp.ts`  |                  2 |
+| `src/gateways/sseToStdio.ts`                     |                  2 |
+| `src/gateways/streamableHttpToStdio.ts`          |                  1 |
+| `src/gateways/stdioToSse.ts`                     |                  1 |
+| `src/gateways/stdioToStatefulStreamableHttp.ts`  |                  1 |
+| `src/lib/sessionAccessCounter.ts`                |                  1 |
 | `src/index.ts`                                   |                  1 |
-| `src/lib/onSignals.ts`                           |                  1 |
 
-Header parsing, CORS parsing/serialization, and logger selection have no
-remaining MC/DC gaps. `getVersion.ts` has no MC/DC conditions; that does not
-mean all of its other coverage obligations are satisfied.
+Header parsing, CORS parsing/serialization, logger selection, shared error
+normalization, signal handling, and the public WebSocket transport have no
+remaining MC/DC gaps. This does not imply 100% of their other coverage metrics.
 
-## Next efficient batch
-
-1. Fix the independently reproduced fallback-initialization crash in both
-   reverse bridges, then promote the manual failing reproducer into the normal
-   end-to-end suite. See `MCDC_E2E_FINDINGS.md`.
-2. Correct the three header-presence log checks and assert their diagnostics
-   through the CLI. These checks currently use `Object(headers).length`.
-3. Investigate stateless request sequencing and remaining disconnect/error
-   paths at the HTTP boundary. Do not assume all eight gaps are reachable:
-   several checks are constrained by prior SDK validation.
-4. Review remaining defensive/unreachable conditions before selecting a small
-   number of public-API component tests. Do not mutate private state or invent
-   impossible SDK behavior merely to force 100%.
-
-The separate fallback reproducer fails in a normal CLI run and is not included
-in the passing-suite metric. No production fixes are included in this first
-test batch.
+The remaining conditions include redundant CLI checks, SDK-validated inputs,
+and defensive lifecycle guards. Some are provably unreachable through the
+current CLI; others still require reachability analysis. The next decision is
+whether to simplify proven-redundant production branches while preserving
+safety guards, or retain them with documented infeasible independence pairs.
+The current result is not 100% MC/DC.

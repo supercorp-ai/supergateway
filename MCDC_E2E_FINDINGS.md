@@ -4,6 +4,9 @@
 Previously attempted production fixes have been removed from the current PR
 diff. Ordinary passing behavior tests remain enabled.
 
+New finding GW-009 (deep-input HTTP hang) is recorded separately in
+`MCDC_E2E_FINDINGS_DEEP_INPUT.md`, with an opt-in reproduction command.
+
 ## Running pending regressions
 
 The default suite reports known-bug tests as TODO without executing their
@@ -228,22 +231,25 @@ private-state corruption are not representative tests of gateway behavior.
 The SSE server transport constructs its session ID with `randomUUID()`;
 `stdioToSse.ts:118` does not receive an absent ID from a normal client request.
 Both reverse-bridge request wrappers normally see the SDK-generated initialize
-request, including its method and protocol version. Falsifying those fields
-requires a different lifecycle or contract, not merely malformed JSON input.
-The wrapper checks are not classified as universally unreachable.
+request, including its method and protocol version. However, they also receive
+pipelined client requests during startup; SDK-generated field guarantees do
+not apply to every invocation of these temporary wrappers.
 
 Update: `tests/bridgePipeliningE2e.test.ts` now demonstrates non-initialize
 requests reaching the temporary wrappers during pipelined startup. Both the
 SSE method check and HTTP initialize-schema check now have independence pairs.
-Only the SSE wrapper's SDK-generated protocol-version field remains missing.
+Further update: pipelining an initialize request missing its protocol version
+also reaches the SSE wrapper's version-presence condition. Both bridges reject
+the malformed request while preserving the first handshake and subsequent
+tool requests. The previous SDK-only reachability assumption was too narrow.
 
 ### Remaining guards still under investigation
 
-The stateful timeout callback's missing-transport check, stateless
-`!res.headersSent` error guard, and defensive primitive/missing-message error
-normalization have no demonstrated ordinary CLI inputs for all alternatives.
+The stateful timeout callback's missing-transport check and defensive
+primitive/missing-message error normalization have no demonstrated ordinary
+CLI inputs for all alternatives.
 They remain unclassified rather than being labeled dead based on coverage alone.
 
-See `MCDC_REACHABILITY.md` for a complete inventory of the 27 remaining
+See `MCDC_REACHABILITY.md` for the current inventory of remaining
 conditions and what evidence would be required to cover them.
 No production simplifications or safety-guard removals are included.

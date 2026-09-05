@@ -1,11 +1,11 @@
 # MC/DC reachability audit
 
 2026-09-05. Production sources are unchanged from the PR base. The passing
-suite covers 102/129 conditions (79.07%); 27 remain. This inventory counts
+suite covers 104/129 conditions (80.62%); 25 remain. This inventory counts
 individual conditions, not decisions or lines. No exclusions or adjusted
 denominators are used.
 
-## Four previously missing conditions now reached
+## Four conditions reached in the earlier startup audit
 
 | Condition                                             | Real boundary and assertion                                                                                                           |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,7 +33,6 @@ locations count separately.
 
 | Location                                                                                                                     | Missing condition(s)                                 |  Count | Classification / reason                                                                                                                                                              |
 | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `gateways/sseToStdio.ts:130`                                                                                                 | `requestMessage.params?.protocolVersion`             |      1 | SDK contract: a generated initialize request has a nonempty version; a non-initialize request short-circuits before this operand.                                                    |
 | `gateways/sseToStdio.ts:160`                                                                                                 | `err`; `typeof err === 'object'`                     |      2 | No ordinary wire witness: observed network/SDK failures are error objects, not falsy or truthy primitive throws.                                                                     |
 | `gateways/sseToStdio.ts:164`                                                                                                 | `err`; `typeof err === 'object'`; `'message' in err` |      3 | Same boundary constraint, additionally requiring a thrown object without a message.                                                                                                  |
 | `gateways/streamableHttpToStdio.ts:161`                                                                                      | `err`; `typeof err === 'object'`                     |      2 | Same error-object constraint.                                                                                                                                                        |
@@ -44,14 +43,13 @@ locations count separately.
 | `gateways/stdioToStatelessStreamableHttp.ts:210`                                                                             | `!isInitialized`                                     |      1 | Current lifecycle: each POST owns fresh state, and SDK messages are delivered synchronously before child initialization responses arrive.                                            |
 | `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `isInitializeRequest(msg)`                           |      1 | Same lifecycle plus earlier return: while uninitialized, every non-initialize message returns before this check.                                                                     |
 | `gateways/stdioToStatelessStreamableHttp.ts:233`                                                                             | `msg.id !== undefined`                               |      1 | Wire/schema: after ID presence is true, JSON cannot supply undefined and SDK-validated request IDs are strings/numbers.                                                              |
-| `gateways/stdioToStatelessStreamableHttp.ts:256`                                                                             | `!res.headersSent`                                   |      1 | Partially reached through the public API; no demonstrated failure escaping the SDK after response headers are sent. Retain as an unresolved safety guard.                            |
 | `gateways/stdioToWs.ts:101`                                                                                                  | `child?.killed`                                      |      1 | Current CLI lifecycle: cleanup kills the child and exits synchronously; no health request runs between those operations.                                                             |
 | `gateways/stdioToWs.ts:105`                                                                                                  | `!isReady`                                           |      1 | Current lifecycle: readiness is set before listening and is never reset.                                                                                                             |
 | `gateways/stdioToSse.ts:118`                                                                                                 | `sessionId`                                          |      1 | SDK contract: SSEServerTransport constructs the ID with randomUUID before exposing it.                                                                                               |
 | `gateways/stdioToStatefulStreamableHttp.ts:102`                                                                              | `transport`                                          |      1 | No demonstrated missing-transport timeout callback. Close/error paths clear counter timers before deleting the transport. Keep the defensive check; not claimed globally impossible. |
 | `index.ts:259`                                                                                                               | `hasStreamableHttp`                                  |      1 | Proven redundant after exactly-one-input validation and the preceding two false transport alternatives.                                                                              |
 | `lib/sessionAccessCounter.ts:68`                                                                                             | `session.accessCount <= 0`                           |      1 | Non-reentrant public API invariant: reaching zero replaces the active entry with a timer entry. Duplicate decrements take the timer guard first.                                     |
-| **Total**                                                                                                                    |                                                      | **27** |                                                                                                                                                                                      |
+| **Total**                                                                                                                    |                                                      | **25** |                                                                                                                                                                                      |
 
 ## What that means for further test-only gains
 
@@ -60,12 +58,11 @@ locations count separately.
 - **10 concern arbitrary thrown values:** a focused fault-injection test could
   reach them, but no ordinary network input has been found. Artificial logger
   throws or replaced SDK methods are not included just to make the metric green.
-- **10 are constrained by the current control flow, wire representation, SDK
+- **9 are constrained by the current control flow, wire representation, SDK
   construction, or non-reentrant state invariants.** This is scoped reasoning,
   not a promise that future dependency or lifecycle changes cannot reach them.
-- **2 safety guards remain without full witness pairs:** response headers already
-  sent during an escaping stateless failure, and missing transport during a
-  stateful timeout. They are investigation targets, not proven dead code.
+- **1 safety guard remains without a full witness pair:** missing transport
+  during a stateful timeout. It is an investigation target, not proven dead code.
 
 There is no demonstrated path to literal 100% under the current test-only,
 no-artificial-state constraints. Continue testing meaningful external failure
@@ -95,3 +92,26 @@ late HTTP reply failures reject asynchronously outside the response-header
 catch block. The latter is now an ordinary-disconnect reproduction of GW-004
 for both HTTP modes, retained as two TODOs. These are concrete experiment
 results, not a proof that every conceivable error/lifecycle path is impossible.
+
+## Latest follow-up: two more conditions reached
+
+Three new passing E2E cases add two independent-condition witnesses:
+
+- Both reverse bridges reject a pipelined initialize request missing its
+  protocol version, preserve the first handshake, and handle later tool calls.
+  The SSE wrapper observes `[true, true, false]` as well as `[true, true, true]`.
+  The earlier assumption that this operand only sees SDK-generated input was
+  too restrictive: a client request can reach it during startup.
+- A deeply nested malformed HTTP notification completes without taking down
+  the stateless gateway, and a later tool call succeeds. An error escapes after
+  the notification response has ended, reaching `!res.headersSent === false`.
+  The existing empty-command public-API test supplies the true witness.
+
+These cases are in `bridgePipeliningE2e.test.ts` and
+`httpDeepInputE2e.test.ts`. Run `run_067c733636cd5017` confirms both witness
+pairs in the passing suite, without exclusions or failed-run merging.
+
+The request-shaped deep-input companion hangs rather than completing. It is
+GW-009, documented in `MCDC_E2E_FINDINGS_DEEP_INPUT.md` and retained as a TODO.
+The passing notification test asserts failure containment, not support for
+unlimited nesting or successful delivery of a malformed notification.

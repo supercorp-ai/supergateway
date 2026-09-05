@@ -4,18 +4,18 @@
 
 ## Current result
 
-The default suite has **57 passing tests and 19 TODOs**, with zero failures.
+The default suite has **60 passing tests and 20 TODOs**, with zero failures.
 There are no production source changes relative to the PR base. Previously
 attempted bug fixes have been removed; the old 87.60% result does not describe
 the current branch.
 
 | Metric   | Original 8 tests | Current default suite |
 | -------- | ---------------- | --------------------- |
-| MC/DC    | 17/129 (13.18%)  | 102/129 (79.07%)      |
+| MC/DC    | 17/129 (13.18%)  | 104/129 (80.62%)      |
 | Lines    | 498/818 (60.88%) | 795/818 (97.19%)      |
-| Branches | 138/368 (37.50%) | 320/368 (86.96%)      |
+| Branches | 138/368 (37.50%) | 321/368 (87.23%)      |
 
-Current measured run: `run_371f39d55a328d64`, with zero measurement limitations.
+Current measured run: `run_067c733636cd5017`, with zero measurement limitations.
 The original source denominator of 129 is restored. Default TODO bodies do not
 execute and contribute no coverage. Opt-in failing reproductions are not merged
 into this result. Coverage is execution evidence, not proof of assertion quality.
@@ -36,12 +36,14 @@ Process helpers provide bounded readiness checks and process-group cleanup.
 
 `MCDC_E2E_FINDINGS.md` records eight identified issues, distinguishing observed
 failures from code-level findings and missing independent reproductions.
+`MCDC_E2E_FINDINGS_DEEP_INPUT.md` records the ninth, a hung deep-input request.
 
 - Seventeen TODOs retain opt-in CLI/network reproduction bodies: four fallback,
   two successful-result preservation, two stateless sequencing/batch, one
   stateful stale-response case, three header-diagnostic cases, and three
   inherited-property session-ID cases, plus two ordinary-disconnect/late-reply
   cases (one per HTTP mode).
+- One further executable TODO retains the deep-input request regression.
 - Two error-normalization TODOs are specifications only. They do not import a
   nonexistent proposed helper and do not claim executable reproduction.
 - Ordinary passing tests remain enabled, including actual header delivery.
@@ -62,7 +64,7 @@ TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
 Build and standalone TypeScript checking pass. Native and measured full-suite
-runs both report 57 passed, 19 TODO, zero failed.
+runs both report 60 passed, 20 TODO, zero failed.
 
 The existing ts-node typechecking-loader issue requires
 `TS_NODE_TRANSPILE_ONLY=true` in this environment despite standalone TypeScript
@@ -70,7 +72,7 @@ checking passing. Runner configuration remains unchanged.
 
 ## Remaining work
 
-27 MC/DC conditions remain. These include documented bugs, defensive lifecycle
+25 MC/DC conditions remain. These include documented bugs, defensive lifecycle
 paths, and conditions constrained by earlier CLI/SDK validation. Continue
 adding high-level tests and recording bugs, without fixing production code or
 removing safety checks until explicitly requested. This is not 100% MC/DC.
@@ -101,16 +103,16 @@ notification handling, and empty child-command configuration through the
 exported WebSocket/stateless gateway APIs. They add four independent-condition
 witnesses without changing source or injecting faults into SDK methods.
 
-`MCDC_REACHABILITY.md` inventories all 27 remaining conditions. Five are tied to
-known bugs, ten need arbitrary thrown values with no demonstrated ordinary wire
-input, ten are constrained by current flow/schema/state, and two safety guards
-remain without full witness pairs. None are excluded from the reported metric.
+At that stage, 27 conditions remained. Five were tied to known bugs, ten needed
+arbitrary thrown values with no demonstrated ordinary wire input, ten were
+constrained by current flow/schema/state, and two safety guards lacked full
+witness pairs. None were excluded from the reported metric.
 
 The audit also reproduced GW-008: an inherited-property session ID crashes
 stateful HTTP through POST, GET, and DELETE. Three new TODOs preserve those
 failures. Passing-suite coverage does not include the opt-in failing runs.
 
-## Latest test-only increment: focused lifecycle follow-up
+## Previous test-only increment: focused lifecycle follow-up
 
 Five tests in `tests/httpLifecycleE2e.test.ts` exercise child death during pending
 requests in both HTTP modes and WebSocket, active work surviving the idle
@@ -132,10 +134,29 @@ late-reply failure is an asynchronous send rejection outside the HTTP handler
 catch. This is additional lifecycle evidence, not a claim of a higher MC/DC
 ceiling or of bug fixes.
 
-The passing measurement remains at 102/129 MC/DC (79.07%). Line coverage
-increases from 788/818 (96.33%) to 795/818 (97.19%), and branch coverage from
-319/368 (86.68%) to 320/368 (86.96%). The 27-condition inventory is unchanged.
+That passing measurement remained at 102/129 MC/DC (79.07%). Line coverage
+increased from 788/818 (96.33%) to 795/818 (97.19%), and branch coverage from
+319/368 (86.68%) to 320/368 (86.96%). The 27-condition inventory was unchanged.
 
 An earlier measured attempt had two port-in-use startup failures while another
 test command overlapped it. That failed run is diagnostic only and is not
 merged into the passing-suite coverage; full verification is run serially.
+
+## Latest test-only increment: malformed startup and deep input
+
+Two passing pipelined-startup tests reject an initialize request without a
+protocol version while preserving the valid handshake and later tool replies.
+One passing deep-notification test verifies HTTP completion, gateway health,
+and a subsequent tool call. These reach the SSE wrapper's version-presence
+condition and the stateless response-header guard's missing side.
+
+MC/DC increases from 102/129 (79.07%) to 104/129 (80.62%). Branch coverage
+increases to 321/368 (87.23%); lines remain 795/818 (97.19%). The remaining
+25-condition inventory comprises five tied to known bugs, ten arbitrary-throw
+conditions without ordinary wire witnesses, nine current flow/schema/state
+constraints, and one unresolved timeout guard.
+
+The deeply nested request companion reproduces GW-009: the HTTP exchange
+hangs after a header error while the health endpoint still returns 200. It is
+kept as a TODO and documented in a new findings file. Native and measured
+default suites pass serially; the opt-in reproduction is not merged into them.

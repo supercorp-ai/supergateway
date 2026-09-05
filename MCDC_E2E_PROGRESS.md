@@ -4,18 +4,18 @@
 
 ## Current result
 
-The default suite has **47 passing tests and 14 TODOs**, with zero failures.
+The default suite has **52 passing tests and 17 TODOs**, with zero failures.
 There are no production source changes relative to the PR base. Previously
 attempted bug fixes have been removed; the old 87.60% result does not describe
 the current branch.
 
 | Metric   | Original 8 tests | Current default suite |
 | -------- | ---------------- | --------------------- |
-| MC/DC    | 17/129 (13.18%)  | 98/129 (75.97%)       |
-| Lines    | 498/818 (60.88%) | 785/818 (95.97%)      |
-| Branches | 138/368 (37.50%) | 315/368 (85.60%)      |
+| MC/DC    | 17/129 (13.18%)  | 102/129 (79.07%)      |
+| Lines    | 498/818 (60.88%) | 788/818 (96.33%)      |
+| Branches | 138/368 (37.50%) | 319/368 (86.68%)      |
 
-Current measured run: `run_1a72e3cd3bae8eda`, with zero measurement limitations.
+Current measured run: `run_26c62358324bd0cf`, with zero measurement limitations.
 The original source denominator of 129 is restored. Default TODO bodies do not
 execute and contribute no coverage. Opt-in failing reproductions are not merged
 into this result. Coverage is execution evidence, not proof of assertion quality.
@@ -34,12 +34,13 @@ Process helpers provide bounded readiness checks and process-group cleanup.
 
 ## Known bugs stay pending
 
-`MCDC_E2E_FINDINGS.md` records seven identified issues, distinguishing observed
+`MCDC_E2E_FINDINGS.md` records eight identified issues, distinguishing observed
 failures from code-level findings and missing independent reproductions.
 
-- Twelve TODOs retain opt-in CLI/network reproduction bodies: four fallback,
+- Fifteen TODOs retain opt-in CLI/network reproduction bodies: four fallback,
   two successful-result preservation, two stateless sequencing/batch, one
-  stateful stale-response case, and three header-diagnostic cases.
+  stateful stale-response case, three header-diagnostic cases, and three
+  inherited-property session-ID cases.
 - Two error-normalization TODOs are specifications only. They do not import a
   nonexistent proposed helper and do not claim executable reproduction.
 - Ordinary passing tests remain enabled, including actual header delivery.
@@ -60,7 +61,7 @@ TS_NODE_TRANSPILE_ONLY=true npm test
 ```
 
 Build and standalone TypeScript checking pass. Native and measured full-suite
-runs both report 47 passed, 14 TODO, zero failed.
+runs both report 52 passed, 17 TODO, zero failed.
 
 The existing ts-node typechecking-loader issue requires
 `TS_NODE_TRANSPILE_ONLY=true` in this environment despite standalone TypeScript
@@ -68,12 +69,12 @@ checking passing. Runner configuration remains unchanged.
 
 ## Remaining work
 
-31 MC/DC conditions remain. These include documented bugs, defensive lifecycle
+27 MC/DC conditions remain. These include documented bugs, defensive lifecycle
 paths, and conditions constrained by earlier CLI/SDK validation. Continue
 adding high-level tests and recording bugs, without fixing production code or
 removing safety checks until explicitly requested. This is not 100% MC/DC.
 
-## Latest test-only increment
+## Previous test-only increment: initialization rejection
 
 Five tests in `tests/initializationLifecycleE2e.test.ts` cover both reverse
 bridges terminating with a nonzero status when the upstream rejects explicit
@@ -91,3 +92,19 @@ The findings document now has seven separately labeled dead-code/lifecycle
 analyses (DC-001 through DC-007), distinguishing proofs from SDK constraints
 and unclassified guards. It also records a freshly reproduced stateful variant
 of the unchecked transport-send crash (GW-004), retained as an opt-in TODO.
+
+## Latest test-only increment: reachability audit
+
+Five additional tests cover pipelined startup on both reverse bridges, stateless
+notification handling, and empty child-command configuration through the
+exported WebSocket/stateless gateway APIs. They add four independent-condition
+witnesses without changing source or injecting faults into SDK methods.
+
+`MCDC_REACHABILITY.md` inventories all 27 remaining conditions. Five are tied to
+known bugs, ten need arbitrary thrown values with no demonstrated ordinary wire
+input, ten are constrained by current flow/schema/state, and two safety guards
+remain without full witness pairs. None are excluded from the reported metric.
+
+The audit also reproduced GW-008: an inherited-property session ID crashes
+stateful HTTP through POST, GET, and DELETE. Three new TODOs preserve those
+failures. Passing-suite coverage does not include the opt-in failing runs.

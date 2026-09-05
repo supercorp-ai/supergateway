@@ -12,7 +12,7 @@ bodies. Run the existing CLI/network reproducers as ordinary tests with:
 ```sh
 nvm use 24
 npm run build
-RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/statefulStaleReplyE2e.test.ts tests/headerDiagnosticsE2e.test.ts
+RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/statefulStaleReplyE2e.test.ts tests/headerDiagnosticsE2e.test.ts tests/sessionLookupRegressionE2e.test.ts
 ```
 
 This opt-in command is expected to fail until the bugs are fixed. Default TODOs
@@ -116,6 +116,25 @@ matching/mismatched protocol prefixes, and no input mutation.
 The proposed helper and implementation-dependent tests were removed.
 Executable regressions need a justified public boundary.
 
+## GW-008: inherited-property session IDs crash stateful HTTP
+
+Affected: `stdioToStatefulStreamableHttp.ts`, POST and shared GET/DELETE handlers.
+
+The session registry is an ordinary object. Looking up the unissued session ID
+`constructor` returns an inherited function instead of an absent entry. The
+handler accepts it as a transport and calls its nonexistent `handleRequest`.
+
+Three opt-in TODOs in `tests/sessionLookupRegressionE2e.test.ts` reproduce a
+process crash and dropped connection for POST, GET, and DELETE, even before
+creating any session. Native stderr reports
+`TypeError: transport.handleRequest is not a function`. Expected: reject the
+unknown session with 400 and keep the health endpoint available.
+
+No prototype mutation or private-state access is involved: the input is an
+ordinary HTTP header sent to the actual CLI. Other inherited names are a
+related audit target; only `constructor` is claimed as reproduced here.
+No production fix is included.
+
 ## Dead code and constrained coverage paths (not automatically bugs)
 
 The following observations describe the current code and installed SDK. They
@@ -160,6 +179,10 @@ Do not generalize this to the preceding ID-presence check: the SDK's
 `isInitializeRequest` validates method/params, not the JSON-RPC ID itself.
 Initialization-shaped notifications need separate analysis.
 
+Update: `tests/statelessNotificationsE2e.test.ts` now covers that ID-absent
+notification case. It verifies an empty 202 response and subsequent successful
+requests, not that the notification is a valid MCP initialization handshake.
+
 ### DC-005: WebSocket health/cleanup — CLI reachability constraints
 
 `stdioToWs.ts` sets readiness true before starting its HTTP listener and never
@@ -167,8 +190,10 @@ resets it. The not-ready health branch at line 105 is not available through a
 listening CLI. `child.killed` is set during cleanup, followed synchronously by
 process exit, so a normal health request cannot observe that state.
 The child-absent cleanup branch at line 45 could matter if spawning throws
-synchronously through the public function; invalid NUL command strings cannot
-be passed as CLI arguments. Keep these distinctions instead of deleting guards.
+synchronously through the public function. An empty command is a realistic
+configuration error that the CLI rejects before entering the gateway.
+`tests/libraryConfiguration.test.ts` now covers this public-API startup failure
+without accessing private state. The two health predicates remain constrained.
 
 ### DC-006: session-counter guard — non-reentrant public API invariant
 
@@ -187,6 +212,11 @@ request, including its method and protocol version. Falsifying those fields
 requires a different lifecycle or contract, not merely malformed JSON input.
 The wrapper checks are not classified as universally unreachable.
 
+Update: `tests/bridgePipeliningE2e.test.ts` now demonstrates non-initialize
+requests reaching the temporary wrappers during pipelined startup. Both the
+SSE method check and HTTP initialize-schema check now have independence pairs.
+Only the SSE wrapper's SDK-generated protocol-version field remains missing.
+
 ### Remaining guards still under investigation
 
 The stateful timeout callback's missing-transport check, stateless
@@ -194,4 +224,6 @@ The stateful timeout callback's missing-transport check, stateless
 normalization have no demonstrated ordinary CLI inputs for all alternatives.
 They remain unclassified rather than being labeled dead based on coverage alone.
 
+See `MCDC_REACHABILITY.md` for a complete inventory of the 27 remaining
+conditions and what evidence would be required to cover them.
 No production simplifications or safety-guard removals are included.

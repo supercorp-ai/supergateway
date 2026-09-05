@@ -12,7 +12,7 @@ bodies. Run the existing CLI/network reproducers as ordinary tests with:
 ```sh
 nvm use 24
 npm run build
-RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/statefulStaleReplyE2e.test.ts tests/headerDiagnosticsE2e.test.ts tests/sessionLookupRegressionE2e.test.ts
+RUN_KNOWN_BUG_TESTS=1 TS_NODE_TRANSPILE_ONLY=true node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/bridgeFallbackE2e.test.ts tests/bridgeResultE2e.test.ts tests/statelessBatchE2e.test.ts tests/statefulStaleReplyE2e.test.ts tests/httpDisconnectRegressionE2e.test.ts tests/headerDiagnosticsE2e.test.ts tests/sessionLookupRegressionE2e.test.ts
 ```
 
 This opt-in command is expected to fail until the bugs are fixed. Default TODOs
@@ -74,6 +74,26 @@ peer emitting an unsolicited reply before the requested tools-list response.
 The opt-in run reproduced process termination with
 `No connection established for request ID: stale-peer-request`; the HTTP request
 failed with a connection reset. No production fix is included.
+
+### Ordinary disconnects reproduce the same crash
+
+`tests/httpDisconnectRegressionE2e.test.ts` adds two opt-in TODOs, one per HTTP
+mode. A real SDK tool starts work; the HTTP client aborts; a successful health
+roundtrip confirms the gateway is still serving; then the tool completes with
+a normal response carrying the original request ID. Both processes terminate
+with `No connection established for request ID: 2`, and the next request fails
+because the gateway is gone. Neither malformed traffic nor unsolicited IDs are
+needed to trigger this variant.
+
+The external peer waits on a separate local HTTP control connection, letting
+the test observe work in flight and release the reply after disconnect. No SDK
+method or gateway state is replaced. The stateful case also waits for the
+gateway's response-close diagnostic before releasing the reply.
+
+The rejection occurs asynchronously in `transport.send`, outside the outer
+HTTP handler's catch block. Consequently this reproducer does not provide a
+false-side witness for the stateless `!res.headersSent` guard. Production code
+remains unchanged.
 
 ## GW-005: initialization ID zero is not recognized
 

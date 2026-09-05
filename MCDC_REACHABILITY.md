@@ -71,3 +71,27 @@ There is no demonstrated path to literal 100% under the current test-only,
 no-artificial-state constraints. Continue testing meaningful external failure
 and lifecycle behavior, but do not count failing TODOs, change intended
 assertions to bless bugs, or silently remove conditions from the denominator.
+
+## Focused disconnect/child-exit/timeout follow-up
+
+Five passing tests in `tests/httpLifecycleE2e.test.ts` check:
+
+- Pending HTTP requests settle after the MCP child exits, in both stateful and
+  stateless modes; the gateway remains healthy and accepts a fresh client.
+- A WebSocket gateway propagates the child's failure exit status while a tool
+  request is pending and closes the client's connection.
+- An active stateful request survives longer than the configured idle timeout;
+  after its client disconnects, the session expires and its child terminates.
+- A child exit cancels a pending idle-cleanup timer; waiting beyond its deadline
+  does not produce a stale timeout callback, and a fresh session still works.
+
+These tests exercise real sockets, SDK peers, subprocess exit, and actual
+timers. A separate local HTTP control connection releases pending tool work;
+there are no private-state edits or replaced SDK methods.
+
+The two previously unresolved MC/DC guards were not reached on their missing
+sides: the timer is canceled before a missing-transport callback can run, and
+late HTTP reply failures reject asynchronously outside the response-header
+catch block. The latter is now an ordinary-disconnect reproduction of GW-004
+for both HTTP modes, retained as two TODOs. These are concrete experiment
+results, not a proof that every conceivable error/lifecycle path is impossible.

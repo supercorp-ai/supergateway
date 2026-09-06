@@ -68,3 +68,51 @@ test('stdioToStatefulStreamableHttp listTools and callTool', async () => {
   await client.close()
   transport.close()
 })
+
+test('stdioToStatefulStreamableHttp session-id status codes', async () => {
+  const JSON_HEADERS = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+  }
+  const toolsList = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/list',
+    params: {},
+  })
+  const UNKNOWN_SESSION = '00000000-0000-4000-8000-000000000000'
+
+  // A session id the gateway does not hold must be 404, not 400. Per the MCP
+  // Streamable HTTP spec a client MUST re-initialize on 404, and that is the
+  // only signal it gets; a 400 leaves it replaying a dead id forever.
+  const postUnknown = await fetch(MCP_URL, {
+    method: 'POST',
+    headers: { ...JSON_HEADERS, 'mcp-session-id': UNKNOWN_SESSION },
+    body: toolsList,
+  })
+  assert.strictEqual(postUnknown.status, 404, 'POST with unknown session id')
+
+  const getUnknown = await fetch(MCP_URL, {
+    method: 'GET',
+    headers: { Accept: 'text/event-stream', 'mcp-session-id': UNKNOWN_SESSION },
+  })
+  assert.strictEqual(getUnknown.status, 404, 'GET with unknown session id')
+  await getUnknown.body?.cancel()
+
+  // The other direction: a genuinely absent header is still a 400. Without
+  // this case the change above could be satisfied by returning 404 for
+  // everything, which would be a different spec violation.
+  const postMissing = await fetch(MCP_URL, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: toolsList,
+  })
+  assert.strictEqual(postMissing.status, 400, 'POST with no session id')
+
+  const getMissing = await fetch(MCP_URL, {
+    method: 'GET',
+    headers: { Accept: 'text/event-stream' },
+  })
+  assert.strictEqual(getMissing.status, 400, 'GET with no session id')
+  await getMissing.body?.cancel()
+})

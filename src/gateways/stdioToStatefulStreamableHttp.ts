@@ -198,8 +198,30 @@ export async function stdioToStatefulStreamableHttp(
         }
         child.kill()
       }
+    } else if (sessionId) {
+      // The client sent a session id we no longer hold: the session was
+      // terminated, reaped by --sessionTimeout, or lost across a restart.
+      // The MCP spec requires 404 here, and that 404 is the signal that makes
+      // a compliant client start a new session:
+      //
+      //   "The server MAY terminate the session at any time, after which it
+      //    MUST respond to requests containing that session ID with HTTP 404
+      //    Not Found. When a client receives HTTP 404 in response to a request
+      //    containing an Mcp-Session-Id, it MUST start a new session by
+      //    sending a new InitializeRequest without a session ID attached."
+      //
+      // Answering 400 instead leaves the client stuck replaying a dead id.
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Session not found',
+        },
+        id: null,
+      })
+      return
     } else {
-      // Invalid request
+      // Invalid request: no session id, and not an initialize request.
       res.status(400).json({
         jsonrpc: '2.0',
         error: {
@@ -234,8 +256,14 @@ export async function stdioToStatefulStreamableHttp(
     res: express.Response,
   ) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined
-    if (!sessionId || !transports[sessionId]) {
+    if (!sessionId) {
       res.status(400).send('Invalid or missing session ID')
+      return
+    }
+    if (!transports[sessionId]) {
+      // Unknown session id -> 404, so the client re-initializes rather than
+      // retrying a dead id. See the POST handler above for the spec citation.
+      res.status(404).send('Session not found')
       return
     }
 

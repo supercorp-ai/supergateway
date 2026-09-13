@@ -179,3 +179,118 @@ provide passing-suite coverage or authorize production fixes.
 
 Run `run_601743121289961b` confirms 104/129 MC/DC with 65 passing tests,
 25 unexecuted TODOs, zero failures, and zero measurement limitations.
+
+## Branch-outcome follow-up (not MC/DC conditions)
+
+The inventory above tracks MC/DC conditions. A separate sweep of plain branch
+outcomes found ten that no test had taken and that no entry above explains.
+Five passing tests now reach twelve of them, taking branch coverage from
+335/368 to 347/368 and value selections from 28/36 to 32/36. No production file
+was touched and no known-bug TODO was converted into an assertion of broken
+behavior.
+
+| Reached                                                                                                                                | Test                                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server/websocket.ts:56,62,66,94,103` — every optional `onerror`/`ondisconnection` notification with no handler registered             | `websocketOptionalCallbacks.test.ts`: a transport built without those callbacks still parses frames, absorbs a malformed one, and removes clients dropped by a targeted send, a broadcast and a close. Each socket is made ready again afterwards, so continued silence proves removal rather than skipping. |
+| `sseToStdio.ts:106,112`, `streamableHttpToStdio.ts:104,110` — the `\|\| '2.0'` default and the left side of the request classification | `bridgeInputShapes.test.ts`: a request omitting `jsonrpc` is answered with the default version under its own id, and a frame carrying no method is relayed byte-identical instead of being re-wrapped.                                                                                                       |
+| `stdioToSse.ts:181` — the zero-session fan-out                                                                                         | `sseEarlyChildOutput.test.ts`: child output produced before any client connects is parsed and logged with no session to receive it, and a client connecting afterwards gets only later messages, so nothing is buffered and replayed.                                                                        |
+| `sseToStdio.ts:74` — the `init = {}` default                                                                                           | `sseFetchHeaders.test.ts`: the configured event-source fetch merges headers over a supplied init and still applies them when called with the URL alone.                                                                                                                                                      |
+| `sseToStdio.ts:132` — the nullish short-circuit on `requestMessage.params`                                                             | `bridgePipelinedInitialize.test.ts`: a second initialize pipelined while the upstream connection is pending reaches the temporary wrapper with no params; it is forwarded unchanged and answered under its own id.                                                                                           |
+
+### Newly classified as unreachable
+
+These were examined in the same sweep and are **not** bugs, TODOs, or candidates
+for a test. They are recorded so a later reader does not re-derive them.
+
+| Location                                                                                                                | Outcome                                                | Reason                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stdioToSse.ts:175`, `stdioToWs.ts:73`, `stdioToStatelessStreamableHttp.ts:145`, `stdioToStatefulStreamableHttp.ts:150` | right side of `lines.pop() ?? ''`                      | `String.prototype.split` always yields at least one element, so `pop()` on its result is never `undefined`. The coalesce can never select its right side for any input.                                                                                                                                                   |
+| `lib/getLogger.ts:9,20`                                                                                                 | `formatArgs = defaultFormatArgs` destructuring default | `log`/`logStderr` are module-private and are only ever called with no argument — which supplies the whole-object default that already contains `formatArgs` — or with an explicit `formatArgs`. Reaching the destructuring default needs `log({})`, which no caller can express. It is redundant with the object default. |
+| `stdioToWs.ts:80`                                                                                                       | nullish short-circuit on `wsTransport?.send`           | The child stdout listener is installed and `wsTransport` is assigned in the same synchronous stretch of `stdioToWs`, with no await between them, so no child `data` event can be delivered while the transport is still null.                                                                                             |
+
+## Mutation audit, hand-picked pass (2026-09-13)
+
+Coverage says which code ran and which decisions were taken. It does not say
+whether a change to that code would fail a test. Forty hand-picked mutations
+were applied one at a time in a disposable copy, each rebuilt and run against
+the whole suite. Five were rejected by the compiler before any test ran and
+were re-expressed type-valid; the remaining thirty-five are the measured set.
+
+**33 of 35 killed.** The two survivors are the same defect in each bridge.
+
+Killed mutants span every source file: CORS parsing and regex extraction,
+header parsing and bearer precedence, logger routing and TTY colorization,
+version reporting, signal handling and stdin cleanup, all five session-counter
+transitions, WebSocket client correlation, id parsing, open-socket checks and
+every prune path, SSE session registration and rejection codes, request
+classification and relay in both bridges, stateful session reuse, and the
+stateless auto-initialization gate.
+
+Both survivors are `jsonrpc: req.jsonrpc || '2.0'` in `sseToStdio.ts:106` and
+`streamableHttpToStdio.ts:104`. Replacing the expression with the constant
+`'2.0'` passes the entire suite. This is recorded as GW-013: the only input
+that distinguishes the two forms is a request declaring a non-2.0 version, and
+the current code answers it with that same non-conformant version, so killing
+the mutant with a test would mean asserting a response that JSON-RPC 2.0
+forbids. It is a specification TODO, not a coverage gap.
+
+The lesson for this suite is that the branch in question is covered, its
+statement is asserted, and a flow explains it — and none of that detects the
+change. Coverage bounds where a defect can hide; it does not establish that one
+would be caught.
+
+## Mutation audit, exhaustive pass (2026-09-13)
+
+The pass above was hand-picked, which biases upward: points chosen as
+meaningful are points a test is likely to cover. This one enumerates candidates
+mechanically over a fixed operator set and runs **every** one, so there is no
+selection effect and no sampling error.
+
+Operators: `===`/`!==` both ways, `&&`/`||` both ways, `??`->`||`, `true`/`false`
+both ways, `+ 1`->`- 1`, `++`->`--`, across all 16 source files. Relational
+operators were excluded after inspection: all 45 candidates were TypeScript
+generics, never comparisons. Population: **94 mutations, all run.**
+
+| Outcome                               | Count |
+| ------------------------------------- | ----- |
+| Killed                                | 50    |
+| Rejected by `tsc` before any test ran | 28    |
+| Survived                              | 16    |
+| Raw kill rate on the 66 measurable    | 75.8% |
+
+That 28 is worth stating separately: **30% of mechanical mutations do not
+compile.** The type system is a real part of this project's safety net, and a
+raw mutation score hides it.
+
+All 16 survivors were triaged:
+
+- **7 provably equivalent.** `lines.pop() ?? ''` in three gateways (`pop()`
+  returns `string | undefined`, and `''` behaves identically under `??` and
+  `||`); `let isReady = false` (DC-005: set true before `listen`, so the
+  initializer is never read); `isInitialized = true` (DC-002: the only read
+  happens before the child's response can arrive); and both `isAutoInitializing`
+  assignments, which are dead stores overwritten before their only read.
+- **7 near-equivalent.** `??`->`||` where the left side cannot be falsy without
+  being nullish: capability objects, `clientId?.split(':')` (always an array),
+  and `clientInfo?.name` / `clientInfo?.version`, distinguishable only by a
+  client sending an empty string.
+- **2 genuine detection gaps**, now closed. See below.
+
+### The gap this found: a clean child exit
+
+`process.exit(code ?? 1)` in `stdioToSse.ts:72` and `stdioToWs.ts:60`. Zero is
+the single exit code where `code ?? 1` and `code || 1` disagree, and every
+existing child-exit test used 17, 19, 23 or a null code for the signal case. So
+nothing verified that a child finishing cleanly leaves the gateway exiting 0
+rather than 1 - which is what a supervisor, container runtime or CI step reads.
+
+`tests/childExitCodeZero.test.ts` covers both gateways and was confirmed to fail
+against the mutant (`actual [1], expected [0]`).
+
+### Scope of the claim
+
+Zero genuine survivors is scoped to the operator set above. It is not a claim
+that no bug can escape. The hand-picked pass used operators this one does not -
+statement deletion, constant substitution, argument changes - and that is how
+GW-013 was found. Neither method subsumes the other, and neither is exhaustive
+over the space of real defects.

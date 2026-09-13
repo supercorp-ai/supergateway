@@ -162,6 +162,25 @@ ordinary HTTP header sent to the actual CLI. Other inherited names are a
 related audit target; only `constructor` is claimed as reproduced here.
 No production fix is included.
 
+## GW-013: reply envelopes echo a non-conformant protocol version
+
+Affected: both upstream-to-stdio bridges.
+
+`wrapResponse` builds its envelope with `req.jsonrpc || '2.0'`, so a request
+declaring any other version is answered with that version. JSON-RPC 2.0
+requires every response to carry `"2.0"`. Confirmed directly: a request with
+`jsonrpc: '1.0'` is answered `{"jsonrpc":"1.0","id":2,...}`.
+
+Two specification TODOs in `tests/bridgeEnvelopeVersion.test.ts` state the
+expected conformant envelope. They are not enabled, because asserting today's
+reply would bless the non-conformant one.
+
+This was found by mutation audit, not by coverage. Replacing the whole
+expression with the constant `'2.0'` passes the entire suite: every other test
+sends a conformant request, for which both forms produce the same envelope, so
+the fallback is executed and claimed but never actually pinned. The branch is
+covered and the statement is asserted; neither fact detects the change.
+
 ## Dead code and constrained coverage paths (not automatically bugs)
 
 The following observations describe the current code and installed SDK. They

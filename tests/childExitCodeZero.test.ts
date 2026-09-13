@@ -38,7 +38,7 @@ test('SSE gateway exits 0 when its child exits 0', async (t) => {
   assert.deepEqual(
     codes,
     [0],
-    'a child exit code of zero is passed through as zero, not replaced by the failure default',
+    'the SSE gateway passes a child exit code of zero through as zero, not replaced by the failure default',
   )
   // map: sse-clean-child-exit-diagnostic
   assert.deepEqual(b.errors.at(-1), ['Child exited: code=0, signal=null'])
@@ -109,7 +109,7 @@ test('WebSocket gateway exits 0 when its child exits 0', async (t) => {
   assert.deepEqual(
     codes,
     [0],
-    'a child exit code of zero is passed through as zero, not replaced by the failure default',
+    'the WebSocket gateway passes a child exit code of zero through as zero, not replaced by the failure default',
   )
   // map: ws-clean-child-exit-diagnostic
   assert.equal(errors.at(-1), 'Child exited: code=0, signal=null')

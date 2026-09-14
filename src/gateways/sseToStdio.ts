@@ -156,10 +156,23 @@ export async function sseToStdio(args: SseToStdioArgs) {
         }
       } catch (err) {
         logger.error('Request error:', err)
-        const errorCode =
+        const rawCode =
           err && typeof err === 'object' && 'code' in err
             ? (err as any).code
-            : -32000
+            : undefined
+        // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
+        // the SDK's McpError uses falls inside it. A transport error carries
+        // something else entirely: from SDK 1.24 a failed POST throws
+        // StreamableHTTPError whose `code` is the HTTP status, and forwarding
+        // that verbatim put `code: 503` on the wire, which no JSON-RPC client
+        // can interpret. Such a status belongs in the message, where it is
+        // diagnostic rather than protocol.
+        const isProtocolCode =
+          typeof rawCode === 'number' &&
+          Number.isInteger(rawCode) &&
+          rawCode >= -32768 &&
+          rawCode <= -32000
+        const errorCode = isProtocolCode ? rawCode : -32000
         let errorMsg =
           err && typeof err === 'object' && 'message' in err
             ? (err as any).message
@@ -167,6 +180,15 @@ export async function sseToStdio(args: SseToStdioArgs) {
         const prefix = `MCP error ${errorCode}:`
         if (errorMsg.startsWith(prefix)) {
           errorMsg = errorMsg.slice(prefix.length).trim()
+        }
+        // Older SDKs spelled the status into the message themselves; newer ones
+        // only carry it in the code we just discarded, so keep it either way.
+        if (
+          !isProtocolCode &&
+          typeof rawCode === 'number' &&
+          !errorMsg.includes(`HTTP ${rawCode}`)
+        ) {
+          errorMsg = `HTTP ${rawCode}: ${errorMsg}`
         }
         const errorResp = wrapResponse(req, {
           error: {

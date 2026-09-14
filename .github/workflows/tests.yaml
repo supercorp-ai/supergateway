@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, format and test on Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      # `pretest` compiles first: over half the suite spawns dist/index.js, so a
+      # stale build would let the compiled CLI tests pass against old code.
+      - name: Run tests
+        run: npm test
+        env:
+          # The ts-node typechecking loader aborts every file on Node 24.
+          TS_NODE_TRANSPILE_ONLY: 'true'

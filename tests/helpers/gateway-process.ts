@@ -6,11 +6,16 @@ import { watchGateway, forgetGateway } from './leak-check.js'
 
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
-export function launchGateway(t: TestContext, args: string[]) {
+export function launchGateway(
+  t: TestContext,
+  args: string[],
+  env?: Record<string, string>,
+) {
   const grouped = process.platform !== 'win32'
   const child = spawn(process.execPath, ['dist/index.js', ...args], {
     stdio: 'pipe',
     detached: grouped,
+    env: env ? { ...process.env, ...env } : process.env,
   })
   let output = ''
   let errors = ''
@@ -48,6 +53,14 @@ export function launchGateway(t: TestContext, args: string[]) {
     signal('SIGKILL')
     await exited
   })
+  // Property tests launch a gateway per generated case and must not leave them
+  // all running until the test ends. `t.after` still fires afterwards and
+  // tolerates an already-dead group.
+  const dispose = async () => {
+    forgetGateway(child.pid)
+    signal('SIGKILL')
+    await exited.catch(() => {})
+  }
   const waitFor = async (predicate: () => boolean, description: string) => {
     const deadline = Date.now() + 8000
     while (!predicate()) {
@@ -65,6 +78,7 @@ export function launchGateway(t: TestContext, args: string[]) {
     child,
     exited,
     signal,
+    dispose,
     waitFor,
     output: () => output,
     errors: () => errors,

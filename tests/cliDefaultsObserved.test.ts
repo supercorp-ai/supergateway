@@ -6,27 +6,38 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
+const prefix = '[supergateway] '
+const banner =
+  'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai'
+
+// Each case names the announcement family it cares about (`select`) and the
+// complete line that family must contain (`expect`). Selecting the family and
+// comparing the whole list keeps a second, contradictory announcement from
+// passing the way a substring search would.
 const cases = [
   {
     name: 'stdio default',
     input: ['--stdio', peerCommand],
     output: 'sse',
     extra: [],
-    diagnostic: 'SSE endpoint:',
+    select: 'SSE endpoint:',
+    expect: (port: number) => `SSE endpoint: http://localhost:${port}/sse`,
   },
   {
     name: 'SSE default',
     input: ['--sse', 'http://127.0.0.1:54321/events'],
     output: 'stdio',
     extra: [],
-    diagnostic: 'Connecting to SSE...',
+    select: 'Connecting to SSE',
+    expect: () => 'Connecting to SSE...',
   },
   {
     name: 'HTTP default',
     input: ['--streamableHttp', 'http://127.0.0.1:54321/mcp'],
     output: 'stdio',
     extra: [],
-    diagnostic: 'Connecting to Streamable HTTP...',
+    select: 'Connecting to Streamable HTTP',
+    expect: () => 'Connecting to Streamable HTTP...',
   },
   {
     name: 'stateful timeout',
@@ -39,21 +50,24 @@ const cases = [
       '--sessionTimeout',
       '250',
     ],
-    diagnostic: '  - Session timeout: 250ms',
+    select: '  - Session timeout:',
+    expect: () => '  - Session timeout: 250ms',
   },
   {
     name: 'stateful without timeout',
     input: ['--stdio', peerCommand],
     output: 'streamableHttp',
     extra: ['--outputTransport', 'streamableHttp', '--stateful'],
-    diagnostic: '  - Session timeout: disabled',
+    select: '  - Session timeout:',
+    expect: () => '  - Session timeout: disabled',
   },
   {
     name: 'stateless explicit',
     input: ['--stdio', peerCommand],
     output: 'streamableHttp',
     extra: ['--outputTransport', 'streamableHttp'],
-    diagnostic: 'Running stateless server',
+    select: 'Running stateless',
+    expect: () => 'Running stateless server',
   },
 ]
 for (const item of cases) {
@@ -61,11 +75,12 @@ for (const item of cases) {
     `CLI ${item.name} selects and announces the expected transport`,
     { timeout: 15000 },
     async (t) => {
+      const port = await unusedPort()
       const gateway = launchGateway(t, [
         ...item.input,
         ...item.extra,
         '--port',
-        String(await unusedPort()),
+        String(port),
       ])
       await gateway.ready()
       if (item.name === 'stdio default') {
@@ -76,19 +91,28 @@ for (const item of cases) {
           'finish announcing the SSE listener',
         )
       }
-      const output = gateway.output() + gateway.errors()
+      const lines = [gateway.output(), gateway.errors()]
+        .join('\n')
+        .split('\n')
+        .filter((line) => line.startsWith(prefix))
+        .map((line) => line.slice(prefix.length))
       // map: selected-transport
-      assert.ok(
-        output.includes(`[supergateway]   - outputTransport: ${item.output}\n`),
+      assert.deepEqual(
+        lines.filter((line) => line.startsWith('  - outputTransport:')),
+        [`  - outputTransport: ${item.output}`],
+        'the resolved output transport is announced exactly once, and nothing announces a competing one',
       )
       // map: selected-gateway
-      assert.ok(output.includes(item.diagnostic))
+      assert.deepEqual(
+        lines.filter((line) => line.startsWith(item.select)),
+        [item.expect(port)],
+        'the selected gateway announces itself exactly once, with its full configured detail',
+      )
       // map: banner
-      assert.ok(
-        output.includes('[supergateway] Starting...\n') &&
-          output.includes(
-            'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai',
-          ),
+      assert.deepEqual(
+        lines.filter((line) => line === 'Starting...' || line === banner),
+        ['Starting...', banner],
+        'startup emits the banner once, with the attribution following the start line',
       )
     },
   )

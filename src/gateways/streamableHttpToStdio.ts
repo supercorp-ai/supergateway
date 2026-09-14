@@ -131,9 +131,23 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
                   .success &&
                 message.params?.protocolVersion
               ) {
-                // respect the protocol version from the stdio client's init request
-                possibleInitRequestMessage.params!.protocolVersion =
-                  message.params.protocolVersion
+                // Respect the protocol version from the stdio client's init
+                // request. From SDK 1.22 `params` is a union of every request
+                // shape and only the initialize member carries protocolVersion,
+                // so this stopped type-checking; the safeParse above already
+                // established both that this is an initialize request and, since
+                // that schema requires params, that they are present. The cast
+                // records what the guard proved, and types the field `unknown`
+                // because the source is `{}` on SDK 1.18 and `string` on 1.30.
+                //
+                // Kept as a plain assignment rather than the SSE bridge's
+                // read-then-overwrite: this bridge sets the version whether or
+                // not the request carried one, and matching that spelling here
+                // would change behaviour.
+                const params = possibleInitRequestMessage.params as {
+                  protocolVersion?: unknown
+                }
+                params.protocolVersion = message.params.protocolVersion
               }
               result = await originalRequest.apply(this, [
                 possibleInitRequestMessage,

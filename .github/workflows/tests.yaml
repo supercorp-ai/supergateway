@@ -44,6 +44,7 @@ jobs:
       # `pretest` compiles first: over half the suite spawns dist/index.js, so a
       # stale build would let the compiled CLI tests pass against old code.
       - name: Run tests
+        timeout-minutes: 6
         run: npm test
         env:
           # The ts-node typechecking loader aborts every file on Node 24.
@@ -70,6 +71,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Lint
+        timeout-minutes: 3
         run: npm run lint
 
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
@@ -113,6 +115,7 @@ jobs:
       - name: Install the SDK under test
         run: npm install --no-save @modelcontextprotocol/sdk@${{ matrix.sdk }}
       - name: Run tests
+        timeout-minutes: 6
         run: npm test
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
@@ -146,6 +149,7 @@ jobs:
         run: npm ci
 
       - name: Run the version-portable suite
+        timeout-minutes: 6
         run: npm run test:compat
 
   # The libc the shipped image actually uses. The compat job covers glibc and
@@ -179,6 +183,7 @@ jobs:
           npm run build
 
       - name: Start the gateway and serve a request
+        timeout-minutes: 4
         run: |
           docker run --rm -v "$PWD":/app:ro -w /app \
             node:${{ matrix.node }}-alpine sh -eu -c '

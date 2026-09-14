@@ -1,3 +1,4 @@
+import { expectedUpstreamFailure, sdkBetween } from './helpers/upstream.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
@@ -16,7 +17,15 @@ import {
 
 const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 
-test(
+// The SDK's stateful transport answers 200 to a malformed envelope it should
+// reject with 400, in 1.25.3 and 1.26.0 only: 1.24.3 rejects it and 1.27.1
+// rejects it again. Encoding the wrong answer for those two releases would put
+// someone else's regression in our suite permanently, and skipping the check
+// would lose it on every version. This keeps the check running everywhere and
+// fails loudly if the band ever stops being the explanation.
+expectedUpstreamFailure(
+  sdkBetween('1.25.0', '1.27.0'),
+  'SDK 1.25-1.26 accept malformed envelopes',
   'stateful HTTP rejects malformed envelopes before and after initialization',
   { timeout: 20000 },
   async (t) => {

@@ -131,9 +131,23 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
                   .success &&
                 message.params?.protocolVersion
               ) {
-                // respect the protocol version from the stdio client's init request
-                possibleInitRequestMessage.params!.protocolVersion =
-                  message.params.protocolVersion
+                // Respect the protocol version from the stdio client's init
+                // request. From SDK 1.22 `params` is a union of every request
+                // shape and only the initialize member carries protocolVersion,
+                // so this stopped type-checking; the safeParse above already
+                // established both that this is an initialize request and, since
+                // that schema requires params, that they are present. The cast
+                // records what the guard proved, and types the field `unknown`
+                // because the source is `{}` on SDK 1.18 and `string` on 1.30.
+                //
+                // Kept as a plain assignment rather than the SSE bridge's
+                // read-then-overwrite: this bridge sets the version whether or
+                // not the request carried one, and matching that spelling here
+                // would change behaviour.
+                const params = possibleInitRequestMessage.params as {
+                  protocolVersion?: unknown
+                }
+                params.protocolVersion = message.params.protocolVersion
               }
               result = await originalRequest.apply(this, [
                 possibleInitRequestMessage,
@@ -157,10 +171,23 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         }
       } catch (err) {
         logger.error('Request error:', err)
-        const errorCode =
+        const rawCode =
           err && typeof err === 'object' && 'code' in err
             ? (err as any).code
-            : -32000
+            : undefined
+        // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
+        // the SDK's McpError uses falls inside it. A transport error carries
+        // something else entirely: from SDK 1.24 a failed POST throws
+        // StreamableHTTPError whose `code` is the HTTP status, and forwarding
+        // that verbatim put `code: 503` on the wire, which no JSON-RPC client
+        // can interpret. Such a status belongs in the message, where it is
+        // diagnostic rather than protocol.
+        const isProtocolCode =
+          typeof rawCode === 'number' &&
+          Number.isInteger(rawCode) &&
+          rawCode >= -32768 &&
+          rawCode <= -32000
+        const errorCode = isProtocolCode ? rawCode : -32000
         let errorMsg =
           err && typeof err === 'object' && 'message' in err
             ? (err as any).message
@@ -168,6 +195,15 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         const prefix = `MCP error ${errorCode}:`
         if (errorMsg.startsWith(prefix)) {
           errorMsg = errorMsg.slice(prefix.length).trim()
+        }
+        // Older SDKs spelled the status into the message themselves; newer ones
+        // only carry it in the code we just discarded, so keep it either way.
+        if (
+          !isProtocolCode &&
+          typeof rawCode === 'number' &&
+          !errorMsg.includes(`HTTP ${rawCode}`)
+        ) {
+          errorMsg = `HTTP ${rawCode}: ${errorMsg}`
         }
         const errorResp = wrapResponse(req, {
           error: {

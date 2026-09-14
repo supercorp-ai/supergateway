@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { initialize } from './helpers/gateway-process.js'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 
 // Keep the real gateway and session counter. Control only HTTP/SDK/process
 // boundaries so both response events and the idle deadline are deterministic.
@@ -108,7 +109,7 @@ test('stateful response completion releases once and cleanup cancels session tim
   const decrement = t.mock.method(SessionAccessCounter.prototype, 'dec')
   const clear = t.mock.method(SessionAccessCounter.prototype, 'clear')
   const logs: string[] = []
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+  enableFakeTimers(t)
   await stdioToStatefulStreamableHttp({
     stdioCmd: 'controlled-peer',
     port: 0,

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SessionAccessCounter } from '../src/lib/sessionAccessCounter.js'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 
 test('session counter diagnostics identify transitions, duplicate releases and expiration', (t) => {
   const info: string[] = [],
@@ -10,7 +11,7 @@ test('session counter diagnostics identify transitions, duplicate releases and e
     info: (message) => info.push(String(message)),
     error: (message) => errors.push(String(message)),
   })
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+  enableFakeTimers(t)
   counter.dec('missing', 'probe')
   counter.inc('s1', 'first')
   counter.inc('s1', 'second')

@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SessionAccessCounter } from '../src/lib/sessionAccessCounter.js'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 
 test('session counter keeps active work alive, cancels idle cleanup and expires once', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+  enableFakeTimers(t)
   const cleaned: string[] = [],
     errors: string[] = []
   const counter = new SessionAccessCounter(30, (id) => cleaned.push(id), {

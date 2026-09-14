@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { observeGateway } from './helpers/observed-gateway.js'
 import { initialize } from './helpers/gateway-process.js'
 import { getVersion } from '../src/lib/getVersion.js'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   test(`${mode} gateway ignores empty frames and preserves boundary metadata`, async (t) => {
@@ -21,7 +22,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       sessionTimeout: 25,
       protocolVersion: '2024-11-05',
     }
-    t.mock.timers.enable({ apis: ['setTimeout'] })
+    enableFakeTimers(t)
     if (mode === 'sse') {
       const { stdioToSse } = await import('../src/gateways/stdioToSse.js')
       await stdioToSse(args)

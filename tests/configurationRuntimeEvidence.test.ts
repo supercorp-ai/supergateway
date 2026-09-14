@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 
 // Load the public modules inside this test so module initialization and the
 // observed calls have the same test attribution. Existing tests load them
@@ -79,7 +80,7 @@ test('public configuration modules preserve formatting, parsed values and idle c
     }),
     { 'X-Audit': 'left:right', Authorization: 'Bearer new' },
   )
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+  enableFakeTimers(t)
   const cleaned: string[] = []
   const counter = new SessionAccessCounter(25, (id) => cleaned.push(id), {
     info() {},

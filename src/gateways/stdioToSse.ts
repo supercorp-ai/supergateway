@@ -180,7 +180,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
         logger.info('Child → SSE:', jsonMsg)
         for (const [sid, session] of Object.entries(sessions)) {
           try {
-            session.transport.send(jsonMsg)
+            session.transport.send(jsonMsg).catch((err) => {
+              logger.error(`Failed to send to session ${sid} (async):`, err)
+              delete sessions[sid]
+            })
           } catch (err) {
             logger.error(`Failed to send to session ${sid}:`, err)
             delete sessions[sid]

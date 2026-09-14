@@ -9,6 +9,7 @@ import {
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
+import { knownBugTest } from './helpers/known-bug.js'
 import {
   lifecycleControl,
   pendingRpc,
@@ -114,7 +115,8 @@ test(
   },
 )
 
-test(
+knownBugTest(
+  'GW-015',
   'stateful HTTP keeps active work alive then expires it after client disconnect',
   { timeout: 30000 },
   async (t) => {

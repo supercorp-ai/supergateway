@@ -1,0 +1,125 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  launchGateway,
+  peerCommand,
+  unusedPort,
+} from './helpers/gateway-process.js'
+import { knownBugTest } from './helpers/known-bug.js'
+
+/**
+ * The WebSocket gateway is the one bridge in this repository that already
+ * routes a reply to the client that asked for it, and it is worth understanding
+ * before GW-017 is fixed elsewhere: it is a working reference for the
+ * "route by request id" option, implemented in `src/server/websocket.ts`.
+ *
+ * On the way in, the transport rewrites the JSON-RPC id to
+ * `<clientId>:<originalId>`. The child echoes that composite back, and the send
+ * path splits it, restores the original id and delivers to that one client.
+ * Client identity is tunnelled through the id field.
+ *
+ * Neat, and it has a sharp edge — see GW-018 below.
+ */
+async function connect(port: number, t: { after: (fn: () => void) => void }) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/message`)
+  const received: string[] = []
+  socket.addEventListener('message', (event) => {
+    received.push(String(event.data))
+  })
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener('open', () => resolve())
+    socket.addEventListener('error', () => reject(Error('socket failed')))
+  })
+  t.after(() => socket.close())
+  return {
+    socket,
+    received,
+    ids: () => received.map((raw) => JSON.parse(raw).id),
+  }
+}
+
+const launch = async (t: Parameters<typeof launchGateway>[0]) => {
+  const port = await unusedPort()
+  const gateway = launchGateway(t, [
+    '--stdio',
+    peerCommand,
+    '--outputTransport',
+    'ws',
+    '--port',
+    String(port),
+  ])
+  await gateway.ready()
+  return { port, gateway }
+}
+
+// The property GW-017 breaks for SSE. It holds here, and it must keep holding:
+// whatever fixes SSE should not regress the transport that already gets it
+// right.
+test(
+  'a WebSocket client does not receive another client’s replies',
+  { timeout: 30000 },
+  async (t) => {
+    const { port, gateway } = await launch(t)
+    const asking = await connect(port, t)
+    const bystander = await connect(port, t)
+
+    asking.socket.send(
+      JSON.stringify({ jsonrpc: '2.0', id: 4242, method: 'tools/list' }),
+    )
+    await gateway.waitFor(
+      () => asking.ids().includes(4242),
+      'deliver the reply to the client that asked',
+    )
+
+    assert.deepEqual(
+      asking.ids(),
+      [4242],
+      'the asking client receives its own reply, with its own id',
+    )
+    assert.deepEqual(
+      bystander.received,
+      [],
+      'a client that sent nothing receives nothing',
+    )
+  },
+)
+
+/**
+ * GW-018: a string JSON-RPC id comes back as null.
+ *
+ * The composite id is taken apart with `parseInt(rawId, 10)`, which assumes the
+ * original id was a number. JSON-RPC 2.0 allows a string, and so does MCP.
+ * `parseInt('req-abc', 10)` is NaN, and `JSON.stringify` writes NaN as null, so
+ * the client is sent `"id": null` for a request it labelled `"req-abc"` and can
+ * never match the reply to it. Measured:
+ *
+ *   client A sent id: "req-abc"
+ *   A received id: null  (type object)
+ *
+ * Numeric ids are unaffected, which is why nothing caught this: the SDK's own
+ * client numbers its requests. A client using string or UUID ids gets replies
+ * it cannot correlate, and every request appears to hang.
+ */
+knownBugTest(
+  'GW-018',
+  'a WebSocket client’s string request id survives the round trip',
+  { timeout: 30000 },
+  async (t) => {
+    const { port, gateway } = await launch(t)
+    const client = await connect(port, t)
+
+    client.socket.send(
+      JSON.stringify({ jsonrpc: '2.0', id: 'req-abc', method: 'tools/list' }),
+    )
+    await gateway.waitFor(
+      () => client.received.length > 0,
+      'answer the request at all',
+    )
+
+    assert.equal(
+      client.ids()[0],
+      'req-abc',
+      'the reply carries the id the client sent, not null',
+    )
+  },
+)

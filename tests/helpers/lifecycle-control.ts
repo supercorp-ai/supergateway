@@ -1,6 +1,24 @@
 import { createServer, type ServerResponse } from 'node:http'
 import type { TestContext } from 'node:test'
 
+/**
+ * Wait for `promise`, but fail with a named step instead of stalling until the
+ * runner's own timeout, which reports only that the test as a whole hung.
+ */
+export function within<T>(promise: Promise<T>, step: string, ms = 10000) {
+  const raced = Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(Error(`Timed out after ${ms}ms waiting to ${step}.`)),
+        ms,
+      ).unref(),
+    ),
+  ])
+  raced.catch(() => {})
+  return raced
+}
+
 export async function lifecycleControl(t: TestContext) {
   let arrive!: (response: ServerResponse) => void
   const arrived = new Promise<ServerResponse>((resolve) => {

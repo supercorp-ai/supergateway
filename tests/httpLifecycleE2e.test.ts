@@ -9,7 +9,11 @@ import {
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { lifecycleControl, pendingRpc } from './helpers/lifecycle-control.js'
+import {
+  lifecycleControl,
+  pendingRpc,
+  within,
+} from './helpers/lifecycle-control.js'
 
 const tool = (id: number, name: string) => ({
   jsonrpc: '2.0',
@@ -112,7 +116,7 @@ test(
 
 test(
   'stateful HTTP keeps active work alive then expires it after client disconnect',
-  { timeout: 15000 },
+  { timeout: 30000 },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()
@@ -123,7 +127,7 @@ test(
       'streamableHttp',
       '--stateful',
       '--sessionTimeout',
-      '1000',
+      '300',
       '--port',
       String(port),
     ])
@@ -135,7 +139,7 @@ test(
     const pending = pendingRpc(t, url, tool(2, 'hold'), session)
     const held = await control.started
     const peerDisconnected = once(held, 'close')
-    await delay(2000) // Deliberately exceed the configured idle timeout.
+    await delay(600) // Deliberately exceed the configured idle timeout.
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),
@@ -152,14 +156,22 @@ test(
       () => gateway.output().includes(`Session ${session} timed out`),
       'expire the disconnected session',
     )
-    await peerDisconnected
+    await within(peerDisconnected, 'see the expired session release its child')
     assert.equal(
       held.writableEnded,
       false,
       'the child exited without being released by the test',
     )
-    assert.equal((await rpc(url, initialize(4), session)).response.status, 400)
-    const fresh = await rpc(url, initialize(5))
+    assert.equal(
+      (
+        await within(
+          rpc(url, initialize(4), session),
+          'reject the dead session',
+        )
+      ).response.status,
+      400,
+    )
+    const fresh = await within(rpc(url, initialize(5)), 'open a fresh session')
     assert.equal(fresh.response.status, 200)
     assert.notEqual(fresh.response.headers.get('mcp-session-id'), session)
   },
@@ -178,7 +190,7 @@ test(
       'streamableHttp',
       '--stateful',
       '--sessionTimeout',
-      '1000',
+      '300',
       '--port',
       String(port),
     ])
@@ -198,7 +210,7 @@ test(
       () => gateway.errors().includes('Child exited: code=17'),
       'observe child exit before idle cleanup',
     )
-    await delay(2000)
+    await delay(600)
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),

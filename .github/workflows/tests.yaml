@@ -49,11 +49,40 @@ jobs:
           # The ts-node typechecking loader aborts every file on Node 24.
           TS_NODE_TRANSPILE_ONLY: 'true'
 
-  # What the published package and Docker image are actually run on. The suite
-  # cannot run below Node 20 at all - `--experimental-test-module-mocks` is not
-  # recognised on 18 - so the compiled gateway is exercised directly instead:
-  # it must start, announce its listener and serve the SSE endpoint. Alpine
-  # matches the shipped image, which is built from node:20-alpine.
+  # Every Node version the package is actually run on, with real tests rather
+  # than a smoke check. Only the files needing the runner's module mocking are
+  # left out: that API is experimental and behaves differently on 18, 20 and 22,
+  # for reasons that have nothing to do with this gateway. Everything else runs,
+  # including every end-to-end test that spawns the compiled CLI - which is the
+  # part that catches platform differences, as GW-015 showed.
+  compat:
+    name: Compatible suite on Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [18, 20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the version-portable suite
+        run: npm run test:compat
+
+  # The libc the shipped image actually uses. The compat job covers glibc and
+  # darwin; this covers musl, and checks that the compiled gateway starts,
+  # announces its listener and serves a request there.
   smoke:
     name: Built gateway starts on Node ${{ matrix.node }} (alpine)
     runs-on: ubuntu-latest

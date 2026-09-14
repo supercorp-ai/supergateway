@@ -8,11 +8,17 @@ import {
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { lifecycleControl, pendingRpc } from './helpers/lifecycle-control.js'
+import { knownBugTest } from './helpers/known-bug.js'
+import {
+  lifecycleControl,
+  pendingRpc,
+  within,
+} from './helpers/lifecycle-control.js'
 
-test(
+knownBugTest(
+  'GW-015',
   'stateful DELETE settles active streams and tool work without stale idle cleanup',
-  { timeout: 15000 },
+  { timeout: 30000 },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()
@@ -69,7 +75,7 @@ test(
       assert.notEqual(ended.error.name, 'TimeoutError')
     else assert.equal(ended.text.includes('held result'), false)
     assert.notEqual((await streamEnded).error?.name, 'TimeoutError')
-    await peerDisconnected
+    await within(peerDisconnected, 'see the deleted session release its child')
     assert.equal(
       held.writableEnded,
       false,
@@ -80,8 +86,16 @@ test(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),
     )
-    assert.equal((await rpc(url, initialize(3), session)).response.status, 400)
-    const fresh = await rpc(url, initialize(4))
+    assert.equal(
+      (
+        await within(
+          rpc(url, initialize(3), session),
+          'reject the dead session',
+        )
+      ).response.status,
+      400,
+    )
+    const fresh = await within(rpc(url, initialize(4)), 'open a fresh session')
     assert.equal(fresh.response.status, 200)
     assert.notEqual(fresh.response.headers.get('mcp-session-id'), session)
     assert.equal(

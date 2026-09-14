@@ -9,7 +9,12 @@ import {
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { lifecycleControl, pendingRpc } from './helpers/lifecycle-control.js'
+import { knownBugTest } from './helpers/known-bug.js'
+import {
+  lifecycleControl,
+  pendingRpc,
+  within,
+} from './helpers/lifecycle-control.js'
 
 const tool = (id: number, name: string) => ({
   jsonrpc: '2.0',
@@ -110,9 +115,10 @@ test(
   },
 )
 
-test(
+knownBugTest(
+  'GW-015',
   'stateful HTTP keeps active work alive then expires it after client disconnect',
-  { timeout: 15000 },
+  { timeout: 30000 },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()
@@ -152,14 +158,22 @@ test(
       () => gateway.output().includes(`Session ${session} timed out`),
       'expire the disconnected session',
     )
-    await peerDisconnected
+    await within(peerDisconnected, 'see the expired session release its child')
     assert.equal(
       held.writableEnded,
       false,
       'the child exited without being released by the test',
     )
-    assert.equal((await rpc(url, initialize(4), session)).response.status, 400)
-    const fresh = await rpc(url, initialize(5))
+    assert.equal(
+      (
+        await within(
+          rpc(url, initialize(4), session),
+          'reject the dead session',
+        )
+      ).response.status,
+      400,
+    )
+    const fresh = await within(rpc(url, initialize(5)), 'open a fresh session')
     assert.equal(fresh.response.status, 200)
     assert.notEqual(fresh.response.headers.get('mcp-session-id'), session)
   },

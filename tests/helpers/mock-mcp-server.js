@@ -5,9 +5,28 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
+import { spawn as spawnChild } from 'node:child_process'
 
 const mode = process.argv[2]
 const port = Number(process.env.PORT || 3000)
+
+// Opt-in for the process-lifecycle repro test (issue #141). Spawn a descendant
+// that stays in the same process group but is NOT the gateway's direct kill
+// target, and have it record its own PID. A single-process child.kill() (pre-
+// fix) never reaches this grandchild, so it orphans; a process-group kill
+// (post-fix) reaps it. Shell-independent — does not rely on any signal-
+// forwarding or exec-optimization behaviour of the intermediate shell.
+// No effect unless LEAK_PID_FILE is set.
+if (process.env.LEAK_PID_FILE) {
+  spawnChild(
+    process.execPath,
+    [
+      '-e',
+      "require('fs').writeFileSync(process.env.LEAK_PID_FILE, String(process.pid)); setInterval(() => {}, 1 << 30)",
+    ],
+    { stdio: 'ignore', env: process.env },
+  )
+}
 
 const server = new McpServer({ name: 'mock-server', version: '1.0.0' })
 

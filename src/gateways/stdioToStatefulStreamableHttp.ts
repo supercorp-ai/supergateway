@@ -122,6 +122,13 @@ export async function stdioToStatefulStreamableHttp(
     } else if (!sessionId && isInitializeRequest(req.body)) {
       // New initialization request
 
+      // Bind the session identity and cleanup state in this closure at
+      // spawn/session-creation time. The transport can report
+      // transport.sessionId === undefined at close time (see issue #141 logs),
+      // so session cleanup must NOT be gated on transport.sessionId being set.
+      let boundSessionId: string | undefined
+      let cleanedUp = false
+
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
         { capabilities: {} },
@@ -130,16 +137,69 @@ export async function stdioToStatefulStreamableHttp(
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
-          // Store the transport by session ID
+          // Bind and store the transport by session ID
+          boundSessionId = sessionId
           transports[sessionId] = transport
           // Initialize session access count
           sessionCounter?.inc(sessionId, 'session initialization')
         },
       })
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+
+      // Spawn the stdio child in its OWN process group (detached: true) while
+      // keeping shell: true for command compatibility. This is the crux of the
+      // #141 fix: with shell: true the spawned child is a `sh -c` wrapper, so a
+      // plain child.kill() only SIGTERMs that wrapper. On dash/ash
+      // (node:*-slim, alpine) the wrapper exits WITHOUT forwarding the signal,
+      // orphaning the real MCP process while logging a clean-looking
+      // `Child exited: signal=SIGTERM`. Signalling the whole process group
+      // (negative PID) reaps the entire tree regardless of the shell's
+      // signal-forwarding behaviour.
+      const child = spawn(stdioCmd, { shell: true, detached: true })
+
+      const killChildGroup = () => {
+        if (child.pid === undefined) return
+        // Signal the child's WHOLE process group (negative PID). We do this even
+        // when the tracked child (the `sh -c` wrapper) has already exited: on
+        // shells that don't forward signals and exit first — e.g. busybox ash
+        // (alpine) — the real MCP process and anything it spawned are still
+        // alive in the group and would otherwise orphan (issue #141). A process
+        // group remains signalable while any member is alive.
+        try {
+          process.kill(-child.pid, 'SIGTERM')
+        } catch {
+          // Whole group already gone (ESRCH) or the platform rejected the group
+          // signal; fall back to a direct kill and ignore if it too is gone.
+          try {
+            child.kill('SIGTERM')
+          } catch {
+            /* already dead — nothing to do */
+          }
+        }
+      }
+
+      // Single idempotent cleanup path. Transport close, transport error,
+      // session timeout and the child's own exit handler can all fire for one
+      // session; the guard ensures we never double-signal a dead group or
+      // double-delete the transport entry.
+      const cleanupSession = (reason: string) => {
+        if (cleanedUp) return
+        cleanedUp = true
+
+        if (boundSessionId) {
+          sessionCounter?.clear(boundSessionId, false, reason)
+          delete transports[boundSessionId]
+        }
+
+        logger.info(
+          `Killing child process group for session ${boundSessionId ?? '(uninitialized)'}: ${reason}`,
+        )
+        killChildGroup()
+      }
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
+        cleanupSession('child process exited')
         transport.close()
       })
 
@@ -174,29 +234,18 @@ export async function stdioToStatefulStreamableHttp(
       }
 
       transport.onclose = () => {
-        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
-        if (transport.sessionId) {
-          sessionCounter?.clear(
-            transport.sessionId,
-            false,
-            'transport being closed',
-          )
-          delete transports[transport.sessionId]
-        }
-        child.kill()
+        logger.info(
+          `StreamableHttp connection closed (session ${boundSessionId ?? '(uninitialized)'})`,
+        )
+        cleanupSession('transport being closed')
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
-        if (transport.sessionId) {
-          sessionCounter?.clear(
-            transport.sessionId,
-            false,
-            'transport emitting error',
-          )
-          delete transports[transport.sessionId]
-        }
-        child.kill()
+        logger.error(
+          `StreamableHttp error (session ${boundSessionId ?? '(uninitialized)'}):`,
+          err,
+        )
+        cleanupSession('transport emitting error')
       }
     } else {
       // Invalid request

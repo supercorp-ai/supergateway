@@ -1,4 +1,3 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
@@ -7,6 +6,7 @@ import {
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
+import { knownBugTest } from './helpers/known-bug.js'
 
 // Nothing else in the suite connects two clients to one gateway, which is how
 // #112, #138 and #153 stayed open: every existing test exercises each gateway
@@ -14,7 +14,21 @@ import {
 // no matter how well the first one is covered. `server` is constructed once per
 // process in stdioToSse.ts and `server.connect()` is called per connection, so
 // the second connection is the whole question.
-test(
+//
+// It asks the wrong one, though, which is why it is held rather than enforced.
+// Two clients both reaching the upstream server is not the property that
+// matters; both reaching it *without seeing each other's traffic* is. On SDKs
+// up to 1.25.3 this test passed — and it passed because those versions do not
+// guard the shared-instance reuse that GHSA-345p-7cg4-v4c7 describes, so the
+// second client was served by leaking. A green here certified the vulnerable
+// configuration as working. From 1.26.0 the SDK refuses the second connect and
+// this fails, which is the same defect seen from the other side.
+//
+// `sseClientIsolation.test.ts` asserts the property this one should have, and
+// is the spec for the fix. This stays as the reachability half of GW-017: when
+// the fix lands, both are enabled together and both must pass.
+knownBugTest(
+  'GW-017',
   'SSE gateway serves a second client on the same process',
   { timeout: 30000 },
   async (t) => {

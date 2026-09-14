@@ -19,7 +19,7 @@ jobs:
   test:
     name: Suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +57,7 @@ jobs:
   lint:
     name: Lint (advisory until cluster A lands)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     continue-on-error: true
     steps:
       - name: Checkout
@@ -81,7 +81,7 @@ jobs:
   sdk:
     name: SDK ${{ matrix.sdk }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 8
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -126,7 +126,7 @@ jobs:
   compat:
     name: Compatible suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
@@ -154,7 +154,7 @@ jobs:
   smoke:
     name: Built gateway starts on Node ${{ matrix.node }} (alpine)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:

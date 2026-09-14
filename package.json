@@ -25,9 +25,9 @@
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
     "lint": "eslint src",
     "pretest": "npm run build",
-    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks --import ./tests/helpers/leak-check.ts tests/**/*.test.ts",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
     "pretest:compat": "npm run build",
-    "test:compat": "node --import tsx --test --test-concurrency=1 --import ./tests/helpers/leak-check.ts $(grep -L 'mock\\.module\\|observed-gateway' tests/*.test.ts)",
+    "test:compat": "node --import tsx --test --test-concurrency=1 $(grep -L 'mock\\.module\\|observed-gateway' tests/*.test.ts)",
     "prepare": "husky"
   },
   "lint-staged": {

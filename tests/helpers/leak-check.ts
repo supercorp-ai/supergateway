@@ -4,10 +4,14 @@ import { descendantsOf } from './process-tree.js'
 /**
  * A process-accumulation check that every test gets for free.
  *
- * Loaded through `--import`, so its `afterEach` is registered on the root
- * context and runs after every test in the process — and, importantly, *before*
- * each test's own `t.after` cleanup, so the gateway is still alive and its
- * descendants can still be counted.
+ * Registered as a side effect of importing the gateway harness, so every test
+ * file that launches a gateway gets it and no runner flag is involved. An
+ * earlier version used `--import`, which broke tsx's own registration on Node 18
+ * and made every file fail with ERR_UNKNOWN_FILE_EXTENSION.
+ *
+ * `afterEach` here lands on the root context, so it runs after every test in the
+ * process and — importantly — *before* that test's own `t.after` cleanup, so the
+ * gateway is still alive and its descendants can still be counted.
  *
  * What it catches: children accumulating within one gateway's lifetime. That is
  * the shape of #108 (a child per POST, never reaped, until the container is

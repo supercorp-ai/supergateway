@@ -11,10 +11,20 @@ permissions:
   contents: read
 
 jobs:
+  # The full suite needs Node 24: it relies on the test runner's module mocking,
+  # which behaves differently on 20 and 22 (see the smoke job for what older
+  # versions are actually checked for). macOS is here because the suite ran only
+  # on a developer's Mac until GW-015 showed what a single untested platform
+  # hides — this keeps both directions covered.
   test:
-    name: Build, format and test on Node 24
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Suite on Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [24]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,7 +32,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install dependencies
@@ -38,3 +48,61 @@ jobs:
         env:
           # The ts-node typechecking loader aborts every file on Node 24.
           TS_NODE_TRANSPILE_ONLY: 'true'
+
+  # What the published package and Docker image are actually run on. The suite
+  # cannot run below Node 20 at all - `--experimental-test-module-mocks` is not
+  # recognised on 18 - so the compiled gateway is exercised directly instead:
+  # it must start, announce its listener and serve the SSE endpoint. Alpine
+  # matches the shipped image, which is built from node:20-alpine.
+  smoke:
+    name: Built gateway starts on Node ${{ matrix.node }} (alpine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, 24]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Built once with a toolchain known to work, then run under each target.
+      # The runtime dependencies are all pure JavaScript, so the same tree runs
+      # unchanged on musl. Docker is used rather than a job `container:` because
+      # actions/checkout needs a glibc runtime that Alpine does not provide.
+      - name: Install dependencies and build
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Start the gateway and serve a request
+        run: |
+          docker run --rm -v "$PWD":/app:ro -w /app \
+            node:${{ matrix.node }}-alpine sh -eu -c '
+              node --version
+              node dist/index.js \
+                --stdio "node tests/helpers/mock-mcp-server.js stdio" \
+                --port 8123 > /tmp/gateway.log 2>&1 &
+              for _ in $(seq 1 30); do
+                grep -q "Listening on port" /tmp/gateway.log && break
+                sleep 1
+              done
+              if ! grep -q "Listening on port" /tmp/gateway.log; then
+                echo "The gateway never announced its listener:"
+                cat /tmp/gateway.log
+                exit 1
+              fi
+              if ! timeout 5 wget -q -S -O /dev/null http://127.0.0.1:8123/sse 2>&1 |
+                  grep -q "200 OK"; then
+                echo "The SSE endpoint did not answer 200:"
+                cat /tmp/gateway.log
+                exit 1
+              fi
+              echo "started and served the SSE endpoint"
+            '

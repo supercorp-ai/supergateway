@@ -1,10 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  launchGateway,
-  peerCommand,
-  unusedPort,
-} from './helpers/gateway-process.js'
+import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+
+const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 
 /**
  * A client that vanishes must not be able to take the gateway down with it.
@@ -13,14 +11,23 @@ import {
  * awaiting the send and without a rejection handler. `SSEServerTransport.send`
  * is async, so a delivery to a transport whose response is gone rejects rather
  * than throwing, and nothing in `src/` installs an `unhandledRejection`
- * handler — Node terminates the process by default. The only reason that does
- * not happen today is ordering: the `close` handler on the SSE response removes
- * the session before the next fan-out can reach it.
+ * handler — Node terminates the process. The only reason that never fires is
+ * ordering: the `close` handler on the SSE response removes the session before
+ * the reply arrives to be fanned out.
  *
- * That ordering is load-bearing and invisible. This test pins it, because the
- * fix for GW-017 rewrites exactly this code — how replies are routed to
- * sessions — and a regression here is not a failed request but a dead gateway
- * taking every unrelated client with it.
+ * The window is opened deliberately here rather than waited for. The `delayed`
+ * tool holds the reply for 100ms, so the socket is aborted while the request is
+ * still in flight and the fan-out is guaranteed to happen after the disconnect.
+ *
+ * One client at a time, on purpose: two concurrent SSE clients is GW-017, which
+ * newer SDKs refuse outright, while this property holds on every supported
+ * version. Reconnecting afterwards is deliberately left to
+ * `sseReconnect.test.ts` — on SDK 1.26 and up that is a *second* defect and it
+ * kills the process, which would mask this one.
+ *
+ * Verified load-bearing by mutation — remove the session cleanup from the
+ * compiled gateway and this fails because the process is gone, not because a
+ * request failed.
  */
 test(
   'an abruptly dropped SSE client does not take the gateway down',
@@ -29,7 +36,7 @@ test(
     const port = await unusedPort()
     const gateway = launchGateway(t, [
       '--stdio',
-      peerCommand,
+      noisyPeerCommand,
       '--port',
       String(port),
     ])
@@ -64,27 +71,58 @@ test(
     }
 
     const doomed = new AbortController()
-    await connect(doomed.signal)
-    const survivor = await connect()
+    const client = await connect(doomed.signal)
 
-    // Drop the first client's socket mid-stream, the way a killed client or a
-    // dead network does — no close frame, no graceful shutdown.
+    // Ask for something slow, so the reply is still in flight below.
+    await fetch(`http://127.0.0.1:${port}${client.endpoint}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 91,
+        method: 'tools/call',
+        params: { name: 'delayed', arguments: {} },
+      }),
+    })
+
+    // Drop the socket mid-request, the way a killed client or a dead network
+    // does — no close frame, no graceful shutdown.
     doomed.abort()
     await gateway.waitFor(
       () => /SSE connection closed/.test(gateway.output()),
       'notice the dropped connection',
     )
 
-    // Now make the gateway fan a message out. Every session in its map is
-    // written to, so if the dropped one is still there this is where it fails.
-    await fetch(`http://127.0.0.1:${port}${survivor.endpoint}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 91, method: 'tools/list' }),
-    })
+    // The reply now arrives with nobody to give it to, and the fan-out writes
+    // to every session still in the map. This is the moment under test.
     await gateway.waitFor(
-      () => survivor.frames.some((frame) => frame.includes('"id":91')),
-      'still answer the client that stayed',
+      () => /Child → SSE[\s\S]*id: 91/.test(gateway.output()),
+      'fan out the reply that arrived after the client left',
+    )
+
+    // The fan-out is logged before the send is attempted, so asserting
+    // liveness immediately would race a process that is about to die. Ask the
+    // HTTP server something harmless instead: a reply proves it is still
+    // serving, and getting one costs exactly the round trip the rejection
+    // needs to surface. Deliberately not a second /sse connection — on SDK
+    // 1.26 and up that is GW-017 and would kill the gateway by itself.
+    const stillServing = await fetch(
+      `http://127.0.0.1:${port}/message?sessionId=not-a-session`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 92, method: 'tools/list' }),
+      },
+    ).catch((error: Error) => error)
+    assert.ok(
+      !(stillServing instanceof Error),
+      'the gateway must still answer HTTP after a client disappears, but the ' +
+        `connection failed: ${(stillServing as Error).message}. A dropped ` +
+        'client took the whole process down.',
+    )
+    assert.ok(
+      stillServing.status >= 400,
+      'an unknown session is rejected rather than served',
     )
 
     assert.equal(
@@ -96,13 +134,6 @@ test(
       gateway.child.signalCode,
       null,
       'and must not have been killed',
-    )
-
-    // And it must still be able to take new work, not merely be alive.
-    const latecomer = await connect()
-    assert.ok(
-      latecomer.endpoint.startsWith('/message'),
-      'a client arriving after the disconnect is served normally',
     )
   },
 )

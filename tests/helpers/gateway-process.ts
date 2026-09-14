@@ -31,7 +31,12 @@ export function launchGateway(t: TestContext, args: string[]) {
       if (grouped && child.pid) process.kill(-child.pid, name)
       else child.kill(name)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      // ESRCH: the group is already gone. EPERM: it is gone and the pid has been
+      // recycled into a group we do not own — which is likely precisely when the
+      // gateway under test was supposed to exit on its own. Neither means this
+      // test failed, and treating EPERM as fatal made cleanup racy.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ESRCH' && code !== 'EPERM') throw error
     }
   }
   watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`)
@@ -71,17 +76,30 @@ export function launchGateway(t: TestContext, args: string[]) {
   }
 }
 
+// Binding port 0 and closing leaves a window in which the OS can hand the same
+// port to someone else, and with 55 files churning the ephemeral range it will.
+// Remembering what this process has already issued removes the self-collision,
+// which is the common case: a gateway that lost the race never binds, and the
+// test fails eight seconds later saying only that it "did not become ready".
+const issued = new Set<number>()
+
 export async function unusedPort() {
-  const server = createServer()
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const port = (server.address() as { port: number }).port
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  )
-  return port
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const server = createServer()
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const port = (server.address() as { port: number }).port
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    )
+    if (!issued.has(port)) {
+      issued.add(port)
+      return port
+    }
+  }
+  throw Error('Could not find a port this run has not already handed out')
 }
 
 export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'

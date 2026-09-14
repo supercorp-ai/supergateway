@@ -188,11 +188,9 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            transport.send(jsonMsg).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { knownBugTest } from './helpers/known-bug.js'
+import test from 'node:test'
 import {
   initialize,
   launchGateway,
@@ -7,9 +7,8 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
-knownBugTest(
-  'GW-004',
-  'stateful HTTP survives an unsolicited response and serves the valid request',
+test(
+  'GW-004: stateful HTTP survives an unsolicited response and serves the valid request',
   { timeout: 15000 },
   async (t) => {
     const port = await unusedPort()

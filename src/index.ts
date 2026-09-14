@@ -282,4 +282,9 @@ async function main() {
   }
 }
 
-main()
+// `main` exits the process on any error it can see, but a rejection escaping it
+// would otherwise be unhandled — which on Node is a silent, immediate death.
+main().catch((err) => {
+  console.error('Fatal error:', err)
+  process.exit(1)
+})

@@ -100,7 +100,15 @@ export async function stdioToStatefulStreamableHttp(
           logger.info(`Session ${sessionId} timed out, cleaning up`)
           const transport = transports[sessionId]
           if (transport) {
-            transport.close()
+            // Async, and this runs from a timer with nothing above it to catch
+            // a rejection. Cleanup paths are the worst place to crash: they run
+            // when something has already gone wrong.
+            transport.close().catch((err) => {
+              logger.error(
+                `Failed to close timed-out session ${sessionId}`,
+                err,
+              )
+            })
           }
           delete transports[sessionId]
         },
@@ -140,7 +148,11 @@ export async function stdioToStatefulStreamableHttp(
       const child = spawn(stdioCmd, { shell: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
-        transport.close()
+        // The child is already gone; a rejection here must not take the
+        // gateway with it.
+        transport.close().catch((err) => {
+          logger.error(`Failed to close transport after child exit`, err)
+        })
       })
 
       let buffer = ''
@@ -153,11 +165,9 @@ export async function stdioToStatefulStreamableHttp(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            transport.send(jsonMsg).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

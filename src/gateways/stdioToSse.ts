@@ -172,7 +172,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
   child.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString('utf8')
     const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
+    // `split` always returns at least one element, so `pop()` is never
+    // undefined here — the fallback it replaced could not be taken.
+    buffer = lines.pop()!
     lines.forEach((line) => {
       if (!line.trim()) return
       try {

@@ -153,11 +153,9 @@ export async function stdioToStatefulStreamableHttp(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            transport.send(jsonMsg).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

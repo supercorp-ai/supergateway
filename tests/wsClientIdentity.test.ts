@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+// The `ws` client, not the global one: `WebSocket` is undefined on Node 18 and
+// 20, which the compat job still covers.
+import { WebSocket } from 'ws'
 import {
   launchGateway,
   peerCommand,
@@ -23,12 +26,12 @@ import { knownBugTest } from './helpers/known-bug.js'
 async function connect(port: number, t: { after: (fn: () => void) => void }) {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/message`)
   const received: string[] = []
-  socket.addEventListener('message', (event) => {
-    received.push(String(event.data))
+  socket.on('message', (data: Buffer) => {
+    received.push(data.toString('utf8'))
   })
   await new Promise<void>((resolve, reject) => {
-    socket.addEventListener('open', () => resolve())
-    socket.addEventListener('error', () => reject(Error('socket failed')))
+    socket.once('open', () => resolve())
+    socket.once('error', (error: Error) => reject(error))
   })
   t.after(() => socket.close())
   return {

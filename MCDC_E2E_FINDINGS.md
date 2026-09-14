@@ -181,6 +181,45 @@ sends a conformant request, for which both forms produce the same envelope, so
 the fallback is executed and claimed but never actually pinned. The branch is
 covered and the statement is asserted; neither fact detects the change.
 
+## GW-014: SSE fan-out send failures are unhandled, and their guard is unreachable
+
+Affected: `stdioToSse.ts`.
+
+The same defect GW-004 records, in the gateway GW-004 does not list.
+`session.transport.send(jsonMsg)` at line 183 is called without `await` and
+without a rejection handler, inside a synchronous `try`/`catch`. The installed
+SDK declares `SSEServerTransport.send` as `async`, so it never throws
+synchronously; on failure it returns a rejected promise, including for the
+`Not connected` case it raises when its response is gone.
+
+Two consequences follow:
+
+- A failed delivery to one subscriber becomes an unhandled rejection instead of
+  the intended per-session cleanup.
+- The catch body at lines 184-186, `logger.error(...)` followed by
+  `delete sessions[sid]`, cannot execute through an SDK transport. The dead
+  session is never removed, so the fan-out keeps iterating a subscriber it can
+  no longer reach.
+
+`stdioToWs.ts:80` shows the pattern the others are missing:
+`wsTransport?.send(jsonMsg, jsonMsg.id).catch((err) => ...)` attaches a
+rejection handler, so a failed send is reported and the peer pruned rather than
+escaping. The two gateways GW-004 already covers share the unguarded shape at
+`stdioToStatelessStreamableHttp.ts:192` and
+`stdioToStatefulStreamableHttp.ts:157`; `StreamableHTTPServerTransport.send` is
+`async` as well.
+
+No test is added. A reproducer would have to supply a transport whose `send`
+throws synchronously, which none of the SDK transports can do, and that would
+manufacture reachability for a guard production never takes. Coverage therefore
+reports `stdioToSse.ts:185-186` as never executed, together with the
+corresponding lines in the two HTTP gateways. That is the correct result for the
+current code, not a coverage gap to close: the lines become reachable only once
+the rejection is actually handled.
+
+Expected: await the send, or attach a rejection handler as `stdioToWs.ts` does,
+so a failed delivery is logged and its session pruned.
+
 ## Dead code and constrained coverage paths (not automatically bugs)
 
 The following observations describe the current code and installed SDK. They

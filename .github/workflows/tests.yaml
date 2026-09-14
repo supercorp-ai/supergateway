@@ -49,6 +49,74 @@ jobs:
           # The ts-node typechecking loader aborts every file on Node 24.
           TS_NODE_TRANSPILE_ONLY: 'true'
 
+  # Ten seconds, and it found seven real defects the suite never did — three
+  # `transport.close()` calls nobody had noticed, and the async handlers that
+  # turn a thrown TypeError into an unhandled rejection. Not required yet: it
+  # reports ten known findings that belong to the bug clusters, and it becomes
+  # blocking with the fix that clears them.
+  lint:
+    name: Lint (advisory until cluster A lands)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+
+  # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
+  # version while `^1.18.2` lets consumers resolve anything up to the latest.
+  # Cluster C exists only above our pin, so no test written against the lockfile
+  # could ever have found it. One job per minor line means a failure also says
+  # which release introduced it. Advisory: it is expected to be red across part
+  # of the range until those bugs are fixed — that map is the point.
+  sdk:
+    name: SDK ${{ matrix.sdk }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk:
+          - '1.18.2'
+          - '1.19.1'
+          - '1.20.2'
+          - '1.21.2'
+          - '1.22.0'
+          - '1.23.1'
+          - '1.24.3'
+          - '1.25.3'
+          - '1.26.0'
+          - '1.27.1'
+          - '1.28.0'
+          - '1.29.0'
+          - '1.30.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install the SDK under test
+        run: npm install --no-save @modelcontextprotocol/sdk@${{ matrix.sdk }}
+      - name: Run tests
+        run: npm test
+        env:
+          TS_NODE_TRANSPILE_ONLY: 'true'
+
   # Every Node version the package is actually run on, with real tests rather
   # than a smoke check. Only the files needing the runner's module mocking are
   # left out: that API is experimental and behaves differently on 18, 20 and 22,

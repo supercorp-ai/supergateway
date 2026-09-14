@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
+import { watchGateway, forgetGateway } from './leak-check.js'
 
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
@@ -33,7 +34,9 @@ export function launchGateway(t: TestContext, args: string[]) {
       if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
     }
   }
+  watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`)
   t.after(async () => {
+    forgetGateway(child.pid)
     signal('SIGTERM')
     await Promise.race([exited, delay(1000)])
     // The CLI may already have exited, leaving its stdio child behind.

@@ -179,12 +179,14 @@ export async function stdioToSse(args: StdioToSseArgs) {
         const jsonMsg = JSON.parse(line)
         logger.info('Child → SSE:', jsonMsg)
         for (const [sid, session] of Object.entries(sessions)) {
-          try {
-            session.transport.send(jsonMsg)
-          } catch (err) {
+          // `send` is async: it reports failure by rejecting, so a synchronous
+          // try/catch around it never ran and the rejection escaped to kill the
+          // process. Attaching the handler here is also what makes the pruning
+          // below reachable for the first time.
+          session.transport.send(jsonMsg).catch((err) => {
             logger.error(`Failed to send to session ${sid}:`, err)
             delete sessions[sid]
-          }
+          })
         }
       } catch {
         logger.error(`Child non-JSON: ${line}`)

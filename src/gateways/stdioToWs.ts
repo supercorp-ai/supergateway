@@ -110,6 +110,13 @@ export async function stdioToWs(args: StdioToWsArgs) {
       })
     }
 
+    // @types/express declares RequestHandler as returning `void | Promise<void>`,
+    // and Application extends it, so the rule sees a possibly-async handler.
+    // Express 4's app is not one: it is `function (req, res, next) {
+    // app.handle(req, res, next) }` — arity 3, returns undefined. Passing it to
+    // http.createServer is the documented pattern, so this is a declaration
+    // artifact rather than a floating promise.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     const httpServer = createServer(app)
 
     wsTransport = new WebSocketServerTransport({

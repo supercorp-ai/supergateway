@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { knownBugTest } from './helpers/known-bug.js'
+import test from 'node:test'
 import {
   initialize,
   launchGateway,
@@ -9,9 +9,8 @@ import {
 import { lifecycleControl, pendingRpc } from './helpers/lifecycle-control.js'
 
 for (const stateful of [false, true]) {
-  knownBugTest(
-    'GW-004',
-    `${stateful ? 'stateful' : 'stateless'} HTTP survives a legitimate reply after its client disconnects`,
+  test(
+    `GW-004: ${stateful ? 'stateful' : 'stateless'} HTTP survives a legitimate reply after its client disconnects`,
     { timeout: 15000 },
     async (t) => {
       const control = await lifecycleControl(t)

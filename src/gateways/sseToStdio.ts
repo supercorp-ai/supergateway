@@ -108,7 +108,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
     ...payload,
   })
 
-  stdioServer.transport!.onmessage = async (message: JSONRPCMessage) => {
+  const handleStdioMessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
       logger.info('Stdio → SSE:', message)
@@ -212,6 +212,26 @@ export async function sseToStdio(args: SseToStdioArgs) {
       process.stdout.write(JSON.stringify(message) + '\n')
     }
   }
+
+  // The SDK calls `onmessage` synchronously and drops whatever it returns, so
+  // an async handler assigned straight to it had nothing holding its promise:
+  // any throw became an unhandled rejection, which Node turns into an immediate
+  // exit. The tail of the handler is outside its own try/catch and dereferences
+  // `result`, which is never assigned on the fallback path — so this was
+  // reachable by a client whose first request is not `initialize`.
+  //
+  // This stops that being fatal. It does not make the request succeed: the
+  // client still gets no reply, which is GW-001's separate defect.
+  // The promise is deliberately returned rather than dropped: tests drive this
+  // handler directly and await it, and the SDK ignoring the value costs
+  // nothing. `no-misused-promises` exists to stop a rejection escaping a void
+  // slot, and the `.catch` below is exactly that guarantee — it handles every
+  // rejection and cannot itself throw — so the rule's concern does not apply.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  stdioServer.transport!.onmessage = (message: JSONRPCMessage) =>
+    handleStdioMessage(message).catch((err) => {
+      logger.error('Unhandled error while handling a stdio message:', err)
+    })
 
   logger.info('Stdio server listening')
 }

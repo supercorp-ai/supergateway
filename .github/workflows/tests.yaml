@@ -50,16 +50,23 @@ jobs:
           # The ts-node typechecking loader aborts every file on Node 24.
           TS_NODE_TRANSPILE_ONLY: 'true'
 
-  # Ten seconds, and it found seven real defects the suite never did — three
-  # `transport.close()` calls nobody had noticed, and the async handlers that
-  # turn a thrown TypeError into an unhandled rejection. Not required yet: it
-  # reports ten known findings that belong to the bug clusters, and it becomes
-  # blocking with the fix that clears them.
+  # Ten seconds, and it found nine real defects the suite never did — the three
+  # `transport.send()` crashes users reported, three `transport.close()` calls
+  # nobody had noticed in the cleanup paths, the two async handlers that turn a
+  # thrown TypeError into an unhandled rejection, and a floating `main()`.
+  #
+  # Blocking as of cluster A, which cleared all nine. The tenth finding is a
+  # declaration artifact and carries an inline disable explaining why: Express 4
+  # types its Application as returning `void | Promise<void>`, while the runtime
+  # app is a plain three-argument synchronous function.
+  #
+  # Every rule here catches the same class of defect — an async call in a
+  # synchronous context, with nothing holding the rejection — which on Node is
+  # not an error but an immediate process exit.
   lint:
-    name: Lint (advisory until cluster A lands)
+    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

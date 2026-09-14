@@ -129,7 +129,11 @@ export async function stdioToStatelessStreamableHttp(
       const child = spawn(stdioCmd, { shell: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
-        transport.close()
+        // The child is already gone; a rejection here must not take the
+        // gateway with it.
+        transport.close().catch((err) => {
+          logger.error(`Failed to close transport after child exit`, err)
+        })
       })
 
       // State tracking for initialization flow
@@ -188,11 +192,9 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            transport.send(jsonMsg).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

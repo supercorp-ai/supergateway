@@ -1,6 +1,7 @@
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { spawn } from 'child_process'
+import { readdirSync, readFileSync } from 'node:fs'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -11,6 +12,63 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+
+/** Per-request reap grace before the SIGKILL sweep (env-tunable, ms). */
+const reapGraceMs = (): number => {
+  const g = Number(process.env.SUPERGATEWAY_REAP_GRACE_MS)
+  return Number.isFinite(g) && g >= 0 ? g : 2000
+}
+
+/**
+ * Force-kill only the processes that still belong to THIS request's own
+ * session — the stateless child plus the workers it spawned to serve the
+ * request. Any process that deliberately detached — called setsid (new
+ * session), was re-parented to init (ppid 1) via a double-fork, or was handed
+ * off to a supervisor such as `systemd-run` — is spared, so intentionally
+ * long-lived work survives the per-request reap instead of being killed as
+ * collateral. Linux-only (reads /proc); other platforms fall back to a
+ * process-group signal. (#108)
+ */
+const reapRequestSession = (pgid: number, signal: NodeJS.Signals): void => {
+  if (process.platform !== 'linux') {
+    try {
+      process.kill(-pgid, signal)
+    } catch {}
+    return
+  }
+  const targets: number[] = []
+  try {
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue
+      let stat: string
+      try {
+        stat = readFileSync(`/proc/${name}/stat`, 'utf8')
+      } catch {
+        continue // process exited between readdir and read
+      }
+      // stat = "pid (comm) state ppid pgrp session ..." — comm may contain
+      // spaces or parens, so start parsing past the final ')'.
+      const f = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      const ppid = Number(f[1])
+      const pgrp = Number(f[2])
+      const sid = Number(f[3])
+      // In this request's group AND session, and not re-parented to init.
+      if (pgrp === pgid && sid === pgid && ppid !== 1)
+        targets.push(Number(name))
+    }
+  } catch {
+    // /proc unreadable — fall back to the group signal rather than leak.
+    try {
+      process.kill(-pgid, signal)
+    } catch {}
+    return
+  }
+  for (const pid of targets) {
+    try {
+      process.kill(pid, signal)
+    } catch {}
+  }
+}
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -126,9 +184,51 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, { shell: true, detached: true })
+
+      // #108: reap the request's process tree when the HTTP response ends. In
+      // stateless mode the child serves exactly one request; transport.onclose
+      // does not reliably fire, so hook the response lifecycle. We SIGTERM the
+      // whole request group first (graceful), then after a grace window SIGKILL
+      // only the processes still in this request's OWN session — anything that
+      // detached (setsid / systemd-run / reparented to init) is spared so
+      // intentionally long-lived work is not killed as collateral. The grace
+      // window doubles as the chance for a job to detach itself and survive.
+      let reaped = false
+      const reapChild = () => {
+        if (reaped) return
+        reaped = true
+        const pgid = child.pid
+        if (typeof pgid !== 'number') return
+        try {
+          process.kill(-pgid, 'SIGTERM')
+        } catch {}
+        const t = setTimeout(
+          () => reapRequestSession(pgid, 'SIGKILL'),
+          reapGraceMs(),
+        )
+        t.unref?.()
+      }
+      res.on('close', reapChild)
+      res.on('finish', reapChild)
+
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
+        reaped = true
+        // #139: a child that dies before producing a response must not leave the
+        // HTTP client hanging until its timeout — surface a JSON-RPC error.
+        if (!res.headersSent) {
+          try {
+            res.status(502).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32000,
+                message: `MCP child exited before response (code=${code}, signal=${signal})`,
+              },
+              id: null,
+            })
+          } catch {}
+        }
         transport.close()
       })
 
@@ -188,11 +288,9 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            try {
-              transport.send(jsonMsg)
-            } catch (e) {
+            Promise.resolve(transport.send(jsonMsg)).catch((e) => {
               logger.error(`Failed to send to StreamableHttp`, e)
-            }
+            })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

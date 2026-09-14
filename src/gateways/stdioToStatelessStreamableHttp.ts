@@ -126,7 +126,7 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, { shell: true, detached: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
@@ -242,13 +242,25 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
+
+      // In stateless mode the underlying transport never receives a
+      // session-close signal because clients don't issue DELETE.
+      // Close the transport (and group-kill the child) as soon as the
+      // HTTP response finishes — otherwise long-running daemon MCPs
+      // (e.g. lightpanda, headless browsers) stay alive forever and
+      // leak processes per request.
+      const cleanup = () => {
+        try { transport.close() } catch (_) {}
+      }
+      res.on('finish', cleanup)
+      res.on('close', cleanup)
 
       await transport.handleRequest(req, res, req.body)
     } catch (error) {

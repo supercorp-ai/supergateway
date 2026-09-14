@@ -137,7 +137,7 @@ export async function stdioToStatefulStreamableHttp(
         },
       })
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, { shell: true, detached: true })
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         transport.close()
@@ -183,7 +183,7 @@ export async function stdioToStatefulStreamableHttp(
           )
           delete transports[transport.sessionId]
         }
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
 
       transport.onerror = (err) => {
@@ -196,7 +196,7 @@ export async function stdioToStatefulStreamableHttp(
           )
           delete transports[transport.sessionId]
         }
-        child.kill()
+        try { if (child.pid && !child.killed) process.kill(-child.pid, 'SIGTERM') } catch (e) { try { child.kill() } catch (_) {} }
       }
     } else {
       // Invalid request

@@ -295,6 +295,15 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@terafin](https://github.com/terafin)
+- [@ecdesigns2007](https://github.com/ecdesigns2007)
+- [@brendandebeasi](https://github.com/brendandebeasi)
+- [@waldman](https://github.com/waldman)
+- [@O7Furkan17](https://github.com/O7Furkan17)
+- [@HalmSascha](https://github.com/HalmSascha)
+- [@Paul-Kyle](https://github.com/Paul-Kyle)
+- [@janosborst](https://github.com/janosborst)
+- [@MartinZvelebil](https://github.com/MartinZvelebil)
 - [@longfin](https://github.com/longfin)
 - [@griffinqiu](https://github.com/griffinqiu)
 - [@folkvir](https://github.com/folkvir)
@@ -321,15 +330,6 @@ Supergateway emphasizes modularity:
 - [@Areo-Joe](https://github.com/Areo-Joe)
 - [@Joffref](https://github.com/Joffref)
 - [@michaeljguarino](https://github.com/michaeljguarino)
-- [@terafin](https://github.com/terafin)
-- [@ecdesigns2007](https://github.com/ecdesigns2007)
-- [@brendandebeasi](https://github.com/brendandebeasi)
-- [@waldman](https://github.com/waldman)
-- [@O7Furkan17](https://github.com/O7Furkan17)
-- [@HalmSascha](https://github.com/HalmSascha)
-- [@Paul-Kyle](https://github.com/Paul-Kyle)
-- [@janosborst](https://github.com/janosborst)
-- [@MartinZvelebil](https://github.com/MartinZvelebil)
 
 ## Contributing
 

@@ -23,7 +23,7 @@ test(
       'streamableHttp',
       '--stateful',
       '--sessionTimeout',
-      '300',
+      '1000',
       '--port',
       String(port),
     ])
@@ -75,7 +75,7 @@ test(
       false,
       'deletion stops work without test release',
     )
-    await delay(600)
+    await delay(2000)
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),

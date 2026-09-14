@@ -123,7 +123,7 @@ test(
       'streamableHttp',
       '--stateful',
       '--sessionTimeout',
-      '300',
+      '1000',
       '--port',
       String(port),
     ])
@@ -135,7 +135,7 @@ test(
     const pending = pendingRpc(t, url, tool(2, 'hold'), session)
     const held = await control.started
     const peerDisconnected = once(held, 'close')
-    await delay(600) // Deliberately exceed the configured idle timeout.
+    await delay(2000) // Deliberately exceed the configured idle timeout.
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),
@@ -178,7 +178,7 @@ test(
       'streamableHttp',
       '--stateful',
       '--sessionTimeout',
-      '300',
+      '1000',
       '--port',
       String(port),
     ])
@@ -198,7 +198,7 @@ test(
       () => gateway.errors().includes('Child exited: code=17'),
       'observe child exit before idle cleanup',
     )
-    await delay(600)
+    await delay(2000)
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),

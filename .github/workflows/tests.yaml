@@ -78,8 +78,24 @@ jobs:
   # version while `^1.18.2` lets consumers resolve anything up to the latest.
   # Cluster C exists only above our pin, so no test written against the lockfile
   # could ever have found it. One job per minor line means a failure also says
-  # which release introduced it. Advisory: it is expected to be red across part
-  # of the range until those bugs are fixed — that map is the point.
+  # which release introduced it.
+  #
+  # The range spans two purposes, and a green column does not mean the same thing
+  # at both ends.
+  #
+  #   >= 1.26  the versions worth depending on. Everything below carries three
+  #            high-severity advisories, including a cross-client data leak via
+  #            shared server/transport reuse (GHSA-345p-7cg4-v4c7), which is the
+  #            pattern stdioToSse.ts uses. These columns must go green, and this
+  #            job becomes blocking when they do.
+  #   <  1.26  kept deliberately, as a regression record. Testing a version is
+  #            not endorsing it: these columns are the only thing that will say
+  #            whether a fix written for 1.26 broke behaviour that worked before,
+  #            and the fixes ahead touch code every version exercises. A green
+  #            column here means "this still works", not "this is safe to run".
+  #
+  # Advisory for now: expected red across part of the range until those bugs are
+  # fixed — that map is the point. See SDK-SECURITY.md in supergateway-company.
   sdk:
     name: SDK ${{ matrix.sdk }}
     runs-on: ubuntu-latest

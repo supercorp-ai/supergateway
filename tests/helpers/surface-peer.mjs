@@ -6,7 +6,13 @@ import { z } from 'zod'
 
 const mcp = new McpServer(
   { name: 'surface-peer', version: '1.0.0' },
-  { capabilities: { resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} } },
+  {
+    capabilities: {
+      resources: { subscribe: true, listChanged: true },
+      prompts: { listChanged: true },
+      logging: {},
+    },
+  },
 )
 
 mcp.resource('note', 'note://alpha', async (uri) => ({

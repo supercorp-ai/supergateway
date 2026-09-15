@@ -4,24 +4,20 @@ import { Logger } from '../types.js'
 const defaultFormatArgs = (args: any[]) => args
 
 const log =
-  (
-    {
-      formatArgs = defaultFormatArgs,
-    }: {
-      formatArgs?: typeof defaultFormatArgs
-    } = { formatArgs: defaultFormatArgs },
-  ) =>
+  ({
+    formatArgs = defaultFormatArgs,
+  }: {
+    formatArgs?: typeof defaultFormatArgs
+  } = {}) =>
   (...args: any[]) =>
     console.log('[supergateway]', ...formatArgs(args))
 
 const logStderr =
-  (
-    {
-      formatArgs = defaultFormatArgs,
-    }: {
-      formatArgs?: typeof defaultFormatArgs
-    } = { formatArgs: defaultFormatArgs },
-  ) =>
+  ({
+    formatArgs = defaultFormatArgs,
+  }: {
+    formatArgs?: typeof defaultFormatArgs
+  } = {}) =>
   (...args: any[]) =>
     console.error('[supergateway]', ...formatArgs(args))
 

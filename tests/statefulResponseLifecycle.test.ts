@@ -41,7 +41,7 @@ test('stateful response completion releases once and cleanup cancels session tim
   class Child extends EventEmitter {
     stdout = new EventEmitter()
     stderr = new EventEmitter()
-    stdin = { write() {} }
+    stdin = Object.assign(new EventEmitter(), { write() {} })
     kills = 0
     kill() {
       this.kills++

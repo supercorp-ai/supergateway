@@ -7,6 +7,12 @@ export class Response extends EventEmitter {
   code = 200
   body: any
   headersSent = false
+  destroyed = false
+  destroy() {
+    this.destroyed = true
+    this.emit('close')
+    return this
+  }
   headers: Record<string, string> = {}
   setHeader(key: string, value: string) {
     this.headers[key] = value
@@ -71,12 +77,12 @@ export function observeGateway(t: TestContext) {
     stdout = new EventEmitter()
     stderr = new EventEmitter()
     writes: string[] = []
-    stdin = {
+    stdin = Object.assign(new EventEmitter(), {
       write: (line: string) => {
         this.writes.push(line)
         return true
       },
-    }
+    })
     kills = 0
     kill() {
       this.kills++

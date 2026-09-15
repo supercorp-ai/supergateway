@@ -1,5 +1,4 @@
 import { test } from 'node:test'
-import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import { faultControl } from './helpers/fault-control.js'
 import {
@@ -9,6 +8,8 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
+// #177/GW-032: failures must terminate only the affected child transport.
+// Native ENOENT and OS pipe closure keep the error path independent of mocks.
 const peer = 'exec node tests/helpers/fault-peer.mjs'
 const call = (name: string) => ({
   jsonrpc: '2.0',
@@ -19,8 +20,7 @@ const call = (name: string) => ({
 
 for (const stateful of [true, false]) {
   for (const fault of [false, true]) {
-    const check = fault ? knownBugTest.bind(null, '#177') : test
-    check(
+    test(
       `${stateful ? 'stateful' : 'stateless'} HTTP isolates ${fault ? 'a native spawn failure' : 'successful child spawns'}`,
       { timeout: 15000 },
       async (t) => {
@@ -55,6 +55,12 @@ for (const stateful of [true, false]) {
           assert.match(gateway.errors(), /AUDIT: native spawn failure selected/)
           if (second instanceof Error)
             assert.notEqual(second.name, 'TimeoutError')
+          else
+            assert.equal(
+              second.messages.some((message: any) => 'result' in message),
+              false,
+              'failed spawn cannot produce a successful initialization',
+            )
         } else {
           assert.ok(!(second instanceof Error))
           assert.equal(second.response.status, 200)
@@ -81,8 +87,7 @@ for (const stateful of [true, false]) {
 
 for (const stateful of [true, false]) {
   for (const fault of [false, true]) {
-    const check = fault ? knownBugTest.bind(null, 'GW-032') : test
-    check(
+    test(
       `${stateful ? 'stateful' : 'stateless'} HTTP isolates ${fault ? 'a child closing stdin' : 'an ordinary child input stream'}`,
       { timeout: 15000 },
       async (t) => {
@@ -107,9 +112,14 @@ for (const stateful of [true, false]) {
         await gateway.ready()
         const url = `http://127.0.0.1:${port}/mcp`
         const healthy = await rpc(url, initialize())
+        let healthyCalls = 0
         const healthySession =
           healthy.response.headers.get('mcp-session-id') ?? undefined
         if (stateful) {
+          const before = await rpc(url, call('identity'), healthySession)
+          healthyCalls = JSON.parse(
+            before.messages[0].result.content[0].text,
+          ).calls
           const sick = await rpc(url, initialize(2))
           const session = sick.response.headers.get('mcp-session-id')!
           const prepared = await rpc(
@@ -132,6 +142,19 @@ for (const stateful of [true, false]) {
               'TimeoutError',
               'closed stdin must settle the affected request',
             )
+          if (fault) {
+            if (!(affected instanceof Error))
+              assert.equal(
+                affected.messages.some((message: any) => 'result' in message),
+                false,
+              )
+            const rejected = await rpc(url, call('identity'), session)
+            assert.equal(
+              rejected.response.status,
+              400,
+              'failed session cannot be reused',
+            )
+          }
         } else {
           const affected = await rpc(url, call('identity')).catch(
             (error: Error) => error,
@@ -156,6 +179,18 @@ for (const stateful of [true, false]) {
           `healthy client lost the gateway: ${gateway.errors()}`,
         )
         assert.equal(result.response.status, 200)
+        if (stateful) {
+          const identity = JSON.parse(result.messages[0].result.content[0].text)
+          assert.equal(
+            identity.pid,
+            Number(healthy.messages[0].result.serverInfo.version),
+          )
+          assert.equal(
+            identity.calls,
+            healthyCalls + 1,
+            'healthy session retains its state',
+          )
+        }
         assert.equal(gateway.child.exitCode, null)
         assert.equal(gateway.child.signalCode, null)
       },

@@ -1,5 +1,31 @@
 import { Logger } from '../types.js'
 
+/**
+ * The invariant `dec()` relies on: a session held in the counting shape always
+ * has a positive count.
+ *
+ * No ordering of the public operations can break it — `inc` stores 1 or n+1,
+ * `dec` returns early on the pending-cleanup shape and replaces the entry once
+ * it reaches zero, and `clear` only deletes — which is why the check never
+ * fires in practice and a property test asserts as much.
+ *
+ * It is a function rather than an inline branch so that the guarantee is
+ * testable on its own terms. "Throws when handed a non-positive count" is this
+ * function's contract, and a unit test can exercise it directly; inline, the
+ * only way to reach the throw would be to manufacture a state the class cannot
+ * produce.
+ */
+export function assertPositiveAccessCount(
+  accessCount: number,
+  sessionId: string,
+) {
+  if (accessCount <= 0) {
+    throw new Error(
+      `Invalid access count ${accessCount} for session ${sessionId}`,
+    )
+  }
+}
+
 export class SessionAccessCounter {
   private sessions: Map<
     string,
@@ -65,11 +91,7 @@ export class SessionAccessCounter {
       return
     }
 
-    if (session.accessCount <= 0) {
-      throw new Error(
-        `Invalid access count ${session.accessCount} for session ${sessionId}`,
-      )
-    }
+    assertPositiveAccessCount(session.accessCount, sessionId)
 
     session.accessCount--
     this.logger.info(

@@ -31,6 +31,8 @@ import { getLogger } from './lib/getLogger.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 
+type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
+
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .option('stdio', {
@@ -132,30 +134,33 @@ async function main() {
     .help()
     .parseSync()
 
-  const hasStdio = Boolean(argv.stdio)
-  const hasSse = Boolean(argv.sse)
-  const hasStreamableHttp = Boolean(argv.streamableHttp)
-
-  const activeCount = [hasStdio, hasSse, hasStreamableHttp].filter(
-    Boolean,
-  ).length
+  // One value rather than three booleans, so the compiler knows the cases are
+  // mutually exclusive and can check that every one is handled. Three
+  // independent flags cannot express that, which is why the old dispatch needed
+  // a runtime `else` nothing could ever reach.
+  const inputTransports: InputTransport[] = []
+  if (argv.stdio) inputTransports.push('stdio')
+  if (argv.sse) inputTransports.push('sse')
+  if (argv.streamableHttp) inputTransports.push('streamableHttp')
 
   const logger = getLogger({
     logLevel: argv.logLevel,
     outputTransport: argv.outputTransport as string,
   })
 
-  if (activeCount === 0) {
+  if (inputTransports.length === 0) {
     logger.error(
       'Error: You must specify one of --stdio, --sse, or --streamableHttp',
     )
     process.exit(1)
-  } else if (activeCount > 1) {
+  } else if (inputTransports.length > 1) {
     logger.error(
       'Error: Specify only one of --stdio, --sse, or --streamableHttp, not multiple',
     )
     process.exit(1)
   }
+
+  const inputTransport = inputTransports[0]
 
   logger.info('Starting...')
   logger.info(
@@ -163,8 +168,8 @@ async function main() {
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
-  try {
-    if (hasStdio) {
+  const start: Record<InputTransport, () => Promise<void>> = {
+    stdio: async () => {
       if (argv.outputTransport === 'sse') {
         await stdioToSse({
           stdioCmd: argv.stdio!,
@@ -242,7 +247,8 @@ async function main() {
         logger.error(`Error: stdio→${argv.outputTransport} not supported`)
         process.exit(1)
       }
-    } else if (hasSse) {
+    },
+    sse: async () => {
       if (argv.outputTransport === 'stdio') {
         await sseToStdio({
           sseUrl: argv.sse!,
@@ -256,7 +262,8 @@ async function main() {
         logger.error(`Error: sse→${argv.outputTransport} not supported`)
         process.exit(1)
       }
-    } else if (hasStreamableHttp) {
+    },
+    streamableHttp: async () => {
       if (argv.outputTransport === 'stdio') {
         await streamableHttpToStdio({
           streamableHttpUrl: argv.streamableHttp!,
@@ -272,10 +279,11 @@ async function main() {
         )
         process.exit(1)
       }
-    } else {
-      logger.error('Error: Invalid input transport')
-      process.exit(1)
-    }
+    },
+  }
+
+  try {
+    await start[inputTransport]()
   } catch (err) {
     logger.error('Fatal error:', err)
     process.exit(1)

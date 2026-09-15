@@ -1,7 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  launchGateway,
+  peerCommand,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * What `--header` and `--oauth2Bearer` actually do, measured against an upstream
@@ -124,32 +128,66 @@ test(
  * The header *names* are worth logging — failing to do that is GW-006. The
  * values of credential headers are not.
  */
-test(
-  'the bearer token is not written to the log',
-  { timeout: 30000 },
-  async (t) => {
-    const { gateway } = await bridgeWithCredentials(t)
-    const log = gateway.output() + gateway.errors()
-    assert.equal(
-      log.includes(TOKEN),
-      false,
-      `the token appears in the gateway's own log:\n${log
-        .split('\n')
-        .filter((line) => line.includes(TOKEN))
-        .join('\n')}`,
-    )
-    assert.match(
-      log,
-      /"x-user-id":"123"/,
-      'an ordinary header keeps its value — only credentials are redacted',
-    )
-    assert.match(
-      log,
-      /"Authorization":"<redacted>"/,
-      'the credential header is still named, so the configuration is auditable',
-    )
-  },
-)
+for (const mode of [
+  'sse-to-stdio',
+  'http-to-stdio',
+  'stdio-to-sse',
+  'stateful-http',
+  'stateless-http',
+] as const) {
+  test(
+    `${mode} startup redacts credentials and preserves ordinary headers`,
+    {
+      timeout: 15000,
+    },
+    async (t) => {
+      const port = await unusedPort()
+      // Reverse bridges do not connect upstream until the first MCP request.
+      // These cases inspect startup; the separate forwarding test above connects.
+      const args =
+        mode === 'sse-to-stdio'
+          ? ['--sse', `http://127.0.0.1:${port}/sse`]
+          : mode === 'http-to-stdio'
+            ? ['--streamableHttp', `http://127.0.0.1:${port}/mcp`]
+            : [
+                '--stdio',
+                peerCommand,
+                '--outputTransport',
+                mode === 'stdio-to-sse' ? 'sse' : 'streamableHttp',
+                '--port',
+                String(port),
+                ...(mode === 'stateful-http' ? ['--stateful'] : []),
+              ]
+      const gateway = launchGateway(t, [
+        ...args,
+        '--header',
+        'x-user-id: 123',
+        '--oauth2Bearer',
+        TOKEN,
+      ])
+      await gateway.ready()
+      const log = gateway.output() + gateway.errors()
+      assert.equal(
+        log.includes(TOKEN),
+        false,
+        `the token appears in the gateway's own log:\n${log
+          .split('\n')
+          .filter((line) => line.includes(TOKEN))
+          .join('\n')}`,
+      )
+      assert.match(
+        log,
+        /"x-user-id":"123"/,
+        'an ordinary header keeps its value — only credentials are redacted',
+      )
+      assert.match(
+        log,
+        /"Authorization":"<redacted>"/,
+        'the credential header is still named, so the configuration is auditable',
+      )
+    },
+  )
+}
 
 /**
  * The second route to the same disclosure. `--header "Authorization Bearer abc"`

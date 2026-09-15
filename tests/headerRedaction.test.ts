@@ -34,6 +34,28 @@ test('credential values are redacted, and their names are not', () => {
   )
 })
 
+// Each name contains only one sensitive segment. A compound such as
+// x-session-token would still pass if recognition of session regressed.
+for (const name of [
+  'X-ApiKey',
+  'X-Auth',
+  'X-Credential',
+  'X-Credentials',
+  'X-Passwd',
+  'X-Password',
+  'X-Session',
+]) {
+  test(`${name} is independently recognized and redacted`, () => {
+    assert.equal(isSensitiveHeader(name), true)
+    assert.deepEqual(
+      JSON.parse(
+        describeHeaders({ [name]: 'sensitive-value', 'X-Audit': 'configured' }),
+      ),
+      { [name]: '<redacted>', 'X-Audit': 'configured' },
+    )
+  })
+}
+
 test('sensitivity is decided per whole segment, not by substring', () => {
   // Matched: the segment is exactly a sensitive word.
   for (const name of [
@@ -54,8 +76,7 @@ test('sensitivity is decided per whole segment, not by substring', () => {
 
   // Not matched: a sensitive word appears only *inside* a segment. Substring
   // matching would redact all of these, which is why the segment split exists.
-  // The word list is deliberately singular — a credential header names one
-  // credential — so these stay readable in the log.
+  // Similar-looking words stay readable when no whole segment matches.
   for (const name of [
     'x-monkey',
     'x-keying',

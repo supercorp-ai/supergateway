@@ -9,6 +9,10 @@ const mcp = new McpServer(
 )
 const server = mcp.server
 
+// Set by the tests that want the notifications spaced out rather than emitted
+// back to back, to separate relay fidelity from a delivery race.
+const SPACED = process.env.PROGRESS_SPACING === '1'
+
 mcp.tool('log', {}, async () => {
   for (const level of ['info', 'warning', 'error']) {
     await server.sendLoggingMessage({ level, data: `log-${level}` })
@@ -23,6 +27,7 @@ mcp.tool('progress', {}, async (_args, extra) => {
       method: 'notifications/progress',
       params: { progressToken: token, progress: n, total: 3 },
     })
+    if (SPACED) await new Promise((resolve) => setTimeout(resolve, 150))
   }
   return { content: [{ type: 'text', text: `progress-done token=${String(token)}` }] }
 })

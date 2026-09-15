@@ -27,10 +27,10 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
  *
  * `reverse-peer.mjs` exercises all six from the server side.
  *
- * Result: stateful HTTP relays all six correctly. SSE relays five and loses
- * progress notifications after the first (GW-027). Stateless HTTP relays none
- * of them, and its two halves fail differently (GW-026) — notifications are
- * dropped, server-initiated requests hang.
+ * Result: stateful HTTP and SSE relay all six correctly. Stateless HTTP relays
+ * none of them, and its two halves fail differently (GW-026) — notifications
+ * are dropped, server-initiated requests hang. A fourth finding (GW-027) turned
+ * out to be an upstream SDK defect; see below.
  */
 const MODES = [
   {
@@ -68,15 +68,20 @@ interface Observed {
 async function connect(
   t: TestContext,
   mode: (typeof MODES)[number],
+  spacing = '1',
 ): Promise<Observed> {
   const port = await unusedPort()
-  const gateway = launchGateway(t, [
-    '--stdio',
-    'node tests/helpers/reverse-peer.mjs',
-    '--port',
-    String(port),
-    ...mode.args,
-  ])
+  const gateway = launchGateway(
+    t,
+    [
+      '--stdio',
+      'node tests/helpers/reverse-peer.mjs',
+      '--port',
+      String(port),
+      ...mode.args,
+    ],
+    { PROGRESS_SPACING: spacing },
+  )
   await gateway.ready()
   const url = new URL(`http://127.0.0.1:${port}${mode.path}`)
 
@@ -187,46 +192,59 @@ for (const mode of MODES.filter((m) => m.works)) {
   )
 }
 
-test(
-  'stateful HTTP: every progress notification reaches the caller',
-  { timeout: 90000 },
-  async (t) => {
-    const seen = await progressSeenBy(await connect(t, MODES[0]))
-    assert.deepEqual(seen, [1, 2, 3])
-  },
-)
+for (const mode of MODES.filter((m) => m.works)) {
+  test(
+    `${mode.label}: every progress notification reaches the caller`,
+    { timeout: 90000 },
+    async (t) => {
+      assert.deepEqual(await progressSeenBy(await connect(t, mode)), [1, 2, 3])
+    },
+  )
+}
 
 /**
- * GW-027. Under SSE the peer emits three progress notifications for one call
- * and the caller's `onprogress` fires **once**. Measured, repeatedly, against
- * the same peer and the same client code that gets all three over stateful
- * HTTP:
+ * GW-027, and it is not ours.
  *
- *     stateful  onprogress [1,2,3]   result progress-done token=1
- *     sse       onprogress [1]       result progress-done token=1
+ * Emit three progress notifications back to back and the caller's `onprogress`
+ * fires once. Space them 150ms apart and all three arrive. Measured:
  *
- * I do not yet know where 2 and 3 are lost, and I am not going to guess: a
- * client that installs its own `notifications/progress` handler — which
- * replaces the SDK's internal one, so `onprogress` never fires at all — does
- * see all three arrive over SSE, which says the notifications reach the client
- * process. That narrows it without settling it, since that same override
- * changes the dispatch path being measured.
+ *     spacing 0ms    stateful [1,2,3]   sse [1]
+ *     spacing 150ms  stateful [1,2,3]   sse [1,2,3]
  *
- * What is certain is the user-visible effect: a long-running tool reports
- * progress once and then appears to stall, on the transport most likely to be
- * used for long-running tools.
+ * The mechanism, established rather than guessed — my first theory was that the
+ * gateway's fire-and-forget `transport.send` reordered messages, and serialising
+ * those sends changed nothing, which is what sent me looking further:
+ *
+ *  1. The raw SSE stream carries all three notifications, correctly framed,
+ *     ahead of the result.
+ *  2. A client that installs its own `notifications/progress` handler receives
+ *     all three.
+ *  3. When several events share one TCP chunk, the SDK dispatches them in one
+ *     synchronous pass. `Protocol._onnotification` defers its handler through
+ *     `Promise.resolve().then(...)`, while `Protocol._onresponse` deletes
+ *     `_progressHandlers` **synchronously**. The result is in that same batch,
+ *     so by the time the deferred progress handlers run, the handler they need
+ *     is gone.
+ *
+ * So it is an upstream defect in the MCP TypeScript SDK, verified present in
+ * both 1.18.2 (our lockfile) and 1.30.0 (the latest), and supergateway merely
+ * exposes it: SSE reliably batches, streamable HTTP batches under load — the
+ * stateful case failed this way once during an instrumented full-suite run.
+ *
+ * Kept here because it is our users who see it, and because if a future SDK
+ * fixes the ordering this test says so immediately. Worth reporting upstream.
  */
+const stateless = MODES.find((m) => !m.works)!
+
 knownBugTest(
   'GW-027',
-  'SSE: every progress notification reaches the caller',
+  'SSE: progress notifications batched with the result are not lost',
   { timeout: 90000 },
   async (t) => {
-    const seen = await progressSeenBy(await connect(t, MODES[1]))
-    assert.deepEqual(seen, [1, 2, 3])
+    const o = await connect(t, MODES[1], '0')
+    assert.deepEqual(await progressSeenBy(o), [1, 2, 3])
   },
 )
-
-const stateless = MODES.find((m) => !m.works)!
 
 /**
  * GW-026, first half: notifications a server emits *while handling a request*

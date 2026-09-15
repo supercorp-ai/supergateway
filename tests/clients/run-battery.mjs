@@ -12,6 +12,7 @@
 // startup cannot mask one.
 import { spawn } from 'node:child_process'
 import net from 'node:net'
+import { setTimeout as delay } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
 
 const DRIVER = process.argv[2]
@@ -45,10 +46,17 @@ async function launch(args) {
     gw.stdout.setEncoding('utf8').on('data', (c) => (out += c))
     gw.stderr.setEncoding('utf8').on('data', (c) => (out += c))
     const alive = () => gw.exitCode === null && gw.signalCode === null
-    const stop = () => {
-      try {
-        process.kill(-gw.pid, 'SIGKILL')
-      } catch {}
+    const closed = new Promise((resolve) => gw.once('close', resolve))
+    const stop = async () => {
+      // Stdio children own separate groups; allow the gateway to drain them.
+      if (alive()) gw.kill('SIGTERM')
+      await Promise.race([closed, delay(6500, undefined, { ref: false })])
+      if (alive()) {
+        try {
+          process.kill(-gw.pid, 'SIGKILL')
+        } catch {}
+        await closed
+      }
     }
     const deadline = Date.now() + 15000
     while (Date.now() < deadline && alive() && !/listening/i.test(out))
@@ -57,7 +65,7 @@ async function launch(args) {
       await new Promise((r) => setTimeout(r, 300))
       return { port, stop, out: () => out }
     }
-    stop()
+    await stop()
   }
   throw new Error('gateway never started')
 }
@@ -112,7 +120,7 @@ for (const mode of MODES) {
     `${DRIVER} / ${mode}: ${rows.length - bad.length}/${rows.length} scenarios passed`,
   )
   for (const r of bad) console.log(`  FAIL ${r.name}: ${r.detail}`)
-  gateway.stop()
+  await gateway.stop()
 }
 
 if (failures > 0) {

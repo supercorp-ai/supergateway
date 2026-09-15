@@ -1,5 +1,4 @@
 import { test } from 'node:test'
-import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -19,8 +18,7 @@ function alive(pid: number) {
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   for (const wrapped of [false, true]) {
-    const check = wrapped ? knownBugTest.bind(null, 'GW-015') : test
-    check(
+    test(
       `${mode} parent-only SIGTERM stops ${wrapped ? 'a wrapped background MCP peer' : 'a cooperative direct peer'}`,
       { timeout: 15000 },
       async (t) => {
@@ -37,6 +35,19 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           true,
           'the actual peer is alive before shutdown',
         )
+        const group = Number(
+          execFileSync('ps', ['-o', 'pgid=', '-p', String(b.pid)], {
+            encoding: 'utf8',
+          }).trim(),
+        )
+        t.after(() => {
+          // Separate safety net for the newly detached child group, after the assertion.
+          try {
+            process.kill(-group, 'SIGKILL')
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+          }
+        })
         b.gateway.child.kill('SIGTERM') // Never signal the whole group for the assertion.
         const exit = await b.gateway.exited
         assert.equal(exit.code, 0)

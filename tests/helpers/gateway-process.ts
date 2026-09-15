@@ -48,7 +48,7 @@ export function launchGateway(
   t.after(async () => {
     forgetGateway(child.pid)
     signal('SIGTERM')
-    await Promise.race([exited, delay(1000)])
+    await Promise.race([exited, delay(6500, undefined, { ref: false })])
     // The CLI may already have exited, leaving its stdio child behind.
     signal('SIGKILL')
     await exited
@@ -58,6 +58,8 @@ export function launchGateway(
   // tolerates an already-dead group.
   const dispose = async () => {
     forgetGateway(child.pid)
+    signal('SIGTERM')
+    await Promise.race([exited, delay(6500, undefined, { ref: false })])
     signal('SIGKILL')
     await exited.catch(() => {})
   }

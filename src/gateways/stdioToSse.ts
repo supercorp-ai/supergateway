@@ -1,13 +1,14 @@
+import { spawn } from 'child_process'
 import express from 'express'
 import bodyParser from 'body-parser'
 import cors, { type CorsOptions } from 'cors'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
+import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 
@@ -63,12 +64,14 @@ export async function stdioToSse(args: StdioToSseArgs) {
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
 
-  onSignals({ logger })
+  const children = new OwnedChildProcesses(logger)
+  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
-  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
+  const child = spawn(stdioCmd, children.spawnOptions)
+  children.own(child)
   child.on('exit', (code, signal) => {
     logger.error(`Child exited: code=${code}, signal=${signal}`)
-    process.exit(code ?? 1)
+    void children.close().then(() => process.exit(code ?? 1))
   })
 
   // One `Server` per session, not one per process.

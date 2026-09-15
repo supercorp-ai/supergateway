@@ -115,6 +115,12 @@ npx -y supergateway \
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 
+## Child process shutdown
+
+On POSIX systems (including Linux and macOS), stdio commands run in their own process groups. When their owner ends—a stateful session closes, the wrapper exits, or the gateway shuts down—the gateway sends SIGTERM to the group and allows up to five seconds before sending SIGKILL. Shutdown signals and stdin EOF wait for this cleanup. Completing a stateful HTTP response does not end its session.
+
+Windows retains direct-child termination. Processes that deliberately create a separate process group or session are outside this cleanup scope. An uncatchable gateway SIGKILL also cannot run cleanup.
+
 ## Example with MCP Inspector (stdio → SSE mode)
 
 1. **Run Supergateway**:
@@ -295,6 +301,9 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@BishopMartin](https://github.com/BishopMartin)
+- [@gkinter](https://github.com/gkinter)
+- [@JoeLuker](https://github.com/JoeLuker)
 - [@agerit-programator2](https://github.com/agerit-programator2)
 - [@sfasching](https://github.com/sfasching)
 - [@RussellZager](https://github.com/RussellZager)

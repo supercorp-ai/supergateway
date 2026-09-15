@@ -1,3 +1,4 @@
+import { observeChildSignals } from './child-signals.js'
 import { EventEmitter } from 'node:events'
 import type { TestContext } from 'node:test'
 
@@ -136,13 +137,14 @@ export function observeGateway(t: TestContext) {
       return 'cors-middleware'
     },
   })
+  const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
       spawn(...args: any[]) {
         spawns.push(args)
         const child = new Child()
         children.push(child)
-        return child
+        return trackChild(child)
       },
     },
   })

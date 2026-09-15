@@ -45,3 +45,53 @@ for (const cleanup of [true, false]) {
     )
   }
 }
+
+for (const result of ['resolve', 'reject']) {
+  test(
+    `shutdown waits for asynchronous cleanup to ${result} and ignores repeated signals`,
+    { timeout: 5000 },
+    async (t) => {
+      const owner = spawn(
+        process.execPath,
+        ['tests/helpers/signal-owner.mjs', result],
+        { stdio: 'pipe' },
+      )
+      t.after(() => {
+        if (owner.exitCode === null) owner.kill('SIGKILL')
+      })
+      let output = '',
+        errors = ''
+      owner.stderr.on('data', (chunk) => {
+        errors += String(chunk)
+      })
+      owner.stdout.on('data', (chunk) => {
+        output += String(chunk)
+      })
+      const wait = (marker: string) =>
+        new Promise<void>((resolve) => {
+          const observe = () => {
+            if (output.includes(marker)) {
+              owner.stdout.off('data', observe)
+              resolve()
+            }
+          }
+          owner.stdout.on('data', observe)
+        })
+      const closed = new Promise((resolve) => owner.once('close', resolve))
+      await wait('owner ready')
+      const cleaning = wait('owner cleanup')
+      owner.kill('SIGTERM')
+      await cleaning
+      owner.kill('SIGINT')
+      owner.kill('SIGHUP')
+      assert.equal(owner.exitCode, null, 'cleanup has not settled yet')
+      assert.equal(await closed, result === 'resolve' ? 0 : 1)
+      assert.match(output, /owner cleanup settled/)
+      assert.equal(
+        output.split('\n').filter((line) => line === 'owner cleanup').length,
+        1,
+      )
+      if (result === 'reject') assert.match(errors, /Shutdown cleanup failed/)
+    },
+  )
+}

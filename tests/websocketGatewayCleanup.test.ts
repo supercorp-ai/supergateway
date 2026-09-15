@@ -1,3 +1,4 @@
+import { observeChildSignals } from './helpers/child-signals.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -5,10 +6,10 @@ import { EventEmitter } from 'node:events'
 // Observe calls at process and transport boundaries. Do not emit real signals
 // or exit the test runner; the gateway's signal wiring and cleanup remain real.
 test('WebSocket gateway cleans up before exit on shutdown, child failure and startup failure', async (t) => {
+  t.mock.method(process.stdin, 'resume', () => process.stdin)
   const events: string[] = [],
     errors: string[] = []
   const handlers = new Map<string, () => void>()
-  const exit = new Error('observed process exit')
   let child: Child
   let fail: 'spawn' | 'connect' | 'close' | undefined
   class Child extends EventEmitter {
@@ -61,14 +62,15 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
   )
   t.mock.method(process, 'exit', (code?: number | string | null): never => {
     events.push(`exit:${code}`)
-    throw exit
+    return undefined as never
   })
+  const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
       spawn() {
         if (fail === 'spawn') throw new Error('spawn failed')
         child = new Child()
-        return child
+        return trackChild(child)
       },
     },
   })
@@ -104,10 +106,8 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'stdin.close']) {
     await stdioToWs(args)
     events.length = 0
-    assert.throws(
-      () => handlers.get(signal)!(),
-      (error) => error === exit,
-    )
+    handlers.get(signal)!()
+    await new Promise((resolve) => setImmediate(resolve))
     assert.deepEqual(
       events,
       ['transport.close', 'child.kill', 'exit:0'],
@@ -116,24 +116,20 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
   }
   await stdioToWs(args)
   events.length = 0
-  assert.throws(
-    () => child.emit('exit', 17, null),
-    (error) => error === exit,
-  )
-  assert.deepEqual(events, ['transport.close', 'child.kill', 'exit:17'])
+  child.emit('exit', 17, null)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(events, ['child.kill', 'transport.close', 'exit:17'])
 
   await stdioToWs(args)
   events.length = 0
-  assert.throws(
-    () => child.emit('exit', null, 'SIGKILL'),
-    (error) => error === exit,
-  )
-  assert.deepEqual(events, ['transport.close', 'child.kill', 'exit:1'])
+  child.emit('exit', null, 'SIGKILL')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(events, ['child.kill', 'transport.close', 'exit:1'])
 
   for (const failure of ['connect', 'spawn'] as const) {
     fail = failure
     events.length = 0
-    await assert.rejects(stdioToWs(args), (error) => error === exit)
+    await stdioToWs(args)
     assert.deepEqual(
       events,
       failure === 'connect'
@@ -146,10 +142,8 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
   await stdioToWs(args)
   fail = 'close'
   events.length = 0
-  assert.throws(
-    () => handlers.get('SIGTERM')!(),
-    (error) => error === exit,
-  )
+  handlers.get('SIGTERM')!()
+  await new Promise((resolve) => setImmediate(resolve))
   await Promise.resolve() // Drain the transport.close rejection handler.
   assert.deepEqual(events, ['transport.close', 'child.kill', 'exit:0'])
   assert.equal(errors.at(-1), 'Error stopping WebSocket server: close failed')

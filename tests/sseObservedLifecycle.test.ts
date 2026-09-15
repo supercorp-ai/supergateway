@@ -44,7 +44,12 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       servers: b.servers,
     },
     {
-      spawns: [['peer --sse-test', { shell: true }]],
+      spawns: [
+        [
+          'peer --sse-test',
+          { shell: true, detached: process.platform !== 'win32' },
+        ],
+      ],
       listens: [8127],
       cors: [{ origin: ['https://client.example', /trusted$/] }],
       routes: ['GET /health', 'GET /ready', 'GET /events', 'POST /messages'],
@@ -52,7 +57,10 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     },
   )
   // map: signals
-  assert.deepEqual(b.signals, [{ logger: b.logger }])
+  assert.deepEqual(
+    b.signals.map(({ logger, drainStdin }) => ({ logger, drainStdin })),
+    [{ logger: b.logger, drainStdin: true }],
+  )
   let next = 0
   b.middleware[1]({ path: '/messages' }, new Response(), () => next++)
   // map: raw-body
@@ -163,21 +171,18 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     ['Child non-JSON: broken-json'],
     ['Child stderr: peer diagnostic\n'],
   ])
-  const exited = new Error('exit observed')
   const codes: unknown[] = []
   t.mock.method(process, 'exit', (code?: any): never => {
     codes.push(code)
-    throw exited
+    return undefined as never
   })
   for (const [code, signal] of [
     [17, null],
     [null, 'SIGTERM'],
   ] as const) {
     // map: child-exit
-    assert.throws(
-      () => b.children[0].emit('exit', code, signal),
-      (error) => error === exited,
-    )
+    b.children[0].emit('exit', code, signal)
+    await new Promise((resolve) => setImmediate(resolve))
     // map: exit-diagnostic
     assert.deepEqual(b.errors.at(-1), [
       `Child exited: code=${code}, signal=${signal}`,

@@ -79,7 +79,11 @@ export async function stdioToWs(args: StdioToWsArgs) {
           const jsonMsg = JSON.parse(line)
           logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
           // Broadcast to all connected clients
-          wsTransport?.send(jsonMsg, jsonMsg.id).catch((err) => {
+          // `wsTransport` is assigned further down this same synchronous
+          // stretch — there is no await between registering this handler and
+          // that assignment — so Node cannot deliver a chunk while it is still
+          // null. The optional chain guarded a tick that cannot happen.
+          wsTransport!.send(jsonMsg, jsonMsg.id).catch((err) => {
             logger.error('Failed to broadcast message:', err)
           })
         } catch {
@@ -100,7 +104,9 @@ export async function stdioToWs(args: StdioToWsArgs) {
 
     for (const ep of healthEndpoints) {
       app.get(ep, (_req, res) => {
-        if (child?.killed) {
+        // The child is spawned before this route is registered, and the route
+        // cannot be reached before the server listens.
+        if (child!.killed) {
           res.status(500).send('Child process has been killed')
         }
 

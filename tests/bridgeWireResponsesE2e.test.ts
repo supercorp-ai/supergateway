@@ -10,7 +10,6 @@ import {
   shadowResult,
   wireUpstream,
 } from './helpers/wire-mcp-upstream.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 async function connect(t: TestContext, protocol: string) {
   const peer = await wireUpstream(t)
@@ -68,9 +67,8 @@ for (const protocol of ['sse', 'streamableHttp']) {
     },
   )
 
-  knownBugTest(
-    'GW-011',
-    `${protocol} preserves a successful result with a hasOwnProperty extension`,
+  test(
+    `GW-011: ${protocol} preserves a successful result with a hasOwnProperty extension`,
     { timeout: 15000 },
     async (t) => {
       const bridge = await connect(t, protocol)
@@ -94,9 +92,8 @@ for (const protocol of ['sse', 'streamableHttp']) {
     },
   )
 
-  knownBugTest(
-    'GW-012',
-    `${protocol} preserves upstream error details`,
+  test(
+    `GW-012: ${protocol} preserves upstream error details`,
     { timeout: 15000 },
     async (t) => {
       const bridge = await connect(t, protocol)

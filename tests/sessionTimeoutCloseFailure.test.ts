@@ -18,7 +18,7 @@ import { enableFakeTimers } from './helpers/fake-timers.js'
 class Child extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
-  stdin = { write() {} }
+  stdin = Object.assign(new EventEmitter(), { write() {} })
   kill() {
     return true
   }

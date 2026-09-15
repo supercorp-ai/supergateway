@@ -126,8 +126,54 @@ export async function stdioToStatelessStreamableHttp(
 
       await server.connect(transport)
       const child = spawn(stdioCmd, { shell: true })
+      const pendingRequests = new Set<string | number>()
+      let childStopped = false
+      const stopChild = () => {
+        if (childStopped) return
+        childStopped = true
+        child.kill()
+      }
+      let childFailed = false
+      const handleChildError = (err: Error) => {
+        // ChildProcess and stdin emit errors independently. Keep listeners on
+        // both after failure, but terminate this transport only once.
+        if (childFailed) return
+        childFailed = true
+        logger.error('Child I/O error:', err)
+        stopChild()
+        // Ending an SSE response alone leaves SDK clients waiting for their
+        // request timeout. Fail each outstanding call before closing streams.
+        const replies = [...pendingRequests].map((id) =>
+          transport
+            .send({
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32603, message: 'MCP server process failed' },
+            })
+            .catch((sendError) => {
+              logger.error('Failed to send child I/O error', sendError)
+            }),
+        )
+        pendingRequests.clear()
+        void Promise.all(replies)
+          .then(() => transport.close())
+          .catch((closeError) => {
+            logger.error(
+              'Failed to close transport after child I/O error',
+              closeError,
+            )
+          })
+          .finally(() => {
+            // A spawn failure can precede SDK response registration. Do not
+            // destroy a completed response: its error frame must flush first.
+            if (!res.writableEnded) res.destroy()
+          })
+      }
+      child.on('error', handleChildError)
+      child.stdin.on('error', handleChildError)
       child.on('exit', (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
+        if (childFailed) return
         // The child is already gone; a rejection here must not take the
         // gateway with it.
         transport.close().catch((err) => {
@@ -152,6 +198,9 @@ export async function stdioToStatelessStreamableHttp(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
+            if ('id' in jsonMsg && !('method' in jsonMsg)) {
+              pendingRequests.delete(jsonMsg.id)
+            }
 
             // Handle initialize response (both auto and client initiated)
             if (initializeRequestId && jsonMsg.id === initializeRequestId) {
@@ -205,6 +254,7 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
+        if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
 
         // Auto-initialize anything that is not itself an initialize request.
@@ -268,12 +318,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        child.kill()
+        stopChild()
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        child.kill()
+        stopChild()
       }
 
       await transport.handleRequest(req, res, req.body)

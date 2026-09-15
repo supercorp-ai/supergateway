@@ -3,25 +3,24 @@ import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
 import type { TestContext } from 'node:test'
 import { knownBugTest } from './helpers/known-bug.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
 
 /**
  * Which configurations actually reap the child a request spawned?
  *
- * Neither HTTP gateway ties child lifetime to the HTTP response ending: both
- * kill their child from `transport.onclose` and `transport.onerror` only, so the
- * child dies exactly when something *else* closes the transport. There are three
- * such somethings, and a configuration with none of them leaks:
+ * A stateless child belongs to one request; a stateful child belongs to a
+ * session spanning multiple HTTP requests. Response completion is therefore
+ * not a universal cleanup trigger. The expected lifetime depends on the mode:
  *
  *   explicit DELETE        stateless: no sessions      stateful: yes
  *   idle timer             stateless: none             stateful: only with --sessionTimeout
  *   res.on('finish'/'close')  stateless: absent        stateful: feeds the session counter,
  *                                                      which is null without --sessionTimeout
  *
- * So #108 (stateless children never cleaned up) and #141 (children only reaped
- * by --sessionTimeout, not by the close path) are the same defect in two
- * gateways, and the two passing cases below are the configurations that happen
- * to have a reaper.
+ * #108 is a completed-request leak. The former #141 TODO below incorrectly
+ * expected initialized stateful sessions with no timeout or DELETE to vanish.
+ * It did not reproduce an actual transport-close leak. Preserve those sessions
+ * and test the reported close-path issue separately before claiming it fixed.
  *
  * Children are counted by a marker passed to the peer's own argv, and the
  * gateway is excluded from the count because the peer command — marker and all
@@ -138,28 +137,40 @@ test(
 )
 
 /**
- * #141. Without `--sessionTimeout` the session counter is never constructed
- * (`sessionTimeout ? new SessionAccessCounter(...) : null`), so the close path
- * has nothing to drive and a client that simply goes away leaves its child
- * running. Measured: three requests, three children still alive three seconds
- * later, and they exit only when the gateway does.
+ * Correction to the former #141 reproducer: no session termination happened.
+ * Three children after three initializations are expected when idle expiry is
+ * disabled. Assert that the original children remain usable, not only alive.
+ * statefulSessionContinuityE2e additionally checks peer PID and retained state.
  */
-knownBugTest(
-  '#141',
-  'stateful HTTP reaps a child when the client leaves without DELETE',
+test(
+  'stateful HTTP preserves sessions between responses when idle expiry is disabled',
   { timeout: 30000 },
   async (t) => {
-    const { marker } = await openSessions(
+    const { marker, url, sessions } = await openSessions(
       t,
       ['--outputTransport', 'streamableHttp', '--stateful'],
       3,
     )
+    assert.equal(sessions.length, 3)
+    const original = liveChildren(marker)
+    assert.ok(original.length >= 3)
     await settle()
     assert.deepEqual(
       liveChildren(marker),
-      [],
-      'a session nobody closed still owns a process',
+      original,
+      'response completion must not destroy a live session’s child',
     )
+    for (const session of sessions) {
+      const listed = await rpc(
+        url,
+        { jsonrpc: '2.0', id: 10, method: 'tools/list' },
+        session,
+      )
+      assert.equal(listed.response.status, 200)
+      assert.equal(listed.messages.length, 1)
+      assert.equal(listed.messages[0].id, 10)
+      assert.ok(Array.isArray(listed.messages[0].result.tools))
+    }
   },
 )
 

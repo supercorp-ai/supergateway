@@ -137,7 +137,6 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       // State tracking for initialization flow
-      let isInitialized = false
       let initializeRequestId: string | number | null = null // Current initialize request ID
       let isAutoInitializing = false // Flag to indicate if we're auto-initializing
       let pendingOriginalMessage: JSONRPCMessage | null = null
@@ -158,7 +157,6 @@ export async function stdioToStatelessStreamableHttp(
             // Handle initialize response (both auto and client initiated)
             if (initializeRequestId && jsonMsg.id === initializeRequestId) {
               logger.info('Initialize response received')
-              isInitialized = true
 
               // If this was our auto-initialization, send initialized notification and pending message
               if (isAutoInitializing) {
@@ -171,16 +169,16 @@ export async function stdioToStatelessStreamableHttp(
                   JSON.stringify(initializedNotification) + '\n',
                 )
 
-                // Now send the original message
-                if (pendingOriginalMessage) {
-                  logger.info(
-                    `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
-                  )
-                  child.stdin.write(
-                    JSON.stringify(pendingOriginalMessage) + '\n',
-                  )
-                  pendingOriginalMessage = null
-                }
+                // Now send the original message. There is always one to
+                // send: `isAutoInitializing` is only ever set true alongside
+                // assigning it, and the only assignment back to null is the one
+                // below, immediately before the flag is cleared again. The
+                // guard that used to stand here could not be false.
+                logger.info(
+                  `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
+                )
+                child.stdin.write(JSON.stringify(pendingOriginalMessage) + '\n')
+                pendingOriginalMessage = null
 
                 // Reset auto-initialize tracking
                 isAutoInitializing = false
@@ -210,8 +208,16 @@ export async function stdioToStatelessStreamableHttp(
       transport.onmessage = (msg: JSONRPCMessage) => {
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
 
-        // Check if we need to auto-initialize first
-        if (!isInitialized && !isInitializeRequest(msg)) {
+        // Auto-initialize anything that is not itself an initialize request.
+        //
+        // This used to also test an `isInitialized` flag, which could never be
+        // true here. Stateless spawns a child per POST and declares its state
+        // inside the request handler, so nothing has handshaken when a message
+        // arrives; the flag was set from the child's stdout handler, which
+        // cannot run before this one returns, because the SDK dispatches a
+        // POST's messages in a synchronous `for` loop with no await between
+        // iterations. The condition was dead, and the flag write-only with it.
+        if (!isInitializeRequest(msg)) {
           // Store the original message and send initialize first
           pendingOriginalMessage = msg
           initializeRequestId = `init_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -233,8 +239,18 @@ export async function stdioToStatelessStreamableHttp(
           return
         }
 
-        // Track initialize request ID (both client and auto)
-        if (isInitializeRequest(msg) && 'id' in msg && msg.id !== undefined) {
+        // Only an initialize request reaches this line — everything else
+        // returned above — so the predicate that used to lead this condition is
+        // implied by control flow now.
+        //
+        // The id still has to be looked for: `isInitializeRequest` accepts a
+        // notification-shaped initialize, because the SDK's schema requires
+        // only `method` and `params`. Presence is the whole test. Every version
+        // in the support matrix (1.18.2 through 1.30.0) parses a request with a
+        // strict schema whose `id` is `union([string, number.int()])` and a
+        // notification with a strict schema carrying no `id` key, so a present
+        // `id` is never `undefined`.
+        if ('id' in msg) {
           initializeRequestId = msg.id
           isAutoInitializing = false // This is client-initiated
           logger.info(`Tracking initialize request ID: ${msg.id}`)

@@ -296,17 +296,7 @@ Supergateway emphasizes modularity:
 ## Contributors
 
 - [@GhimBoon](https://github.com/GhimBoon)
-- [@ArnaudBger](https://github.com/ArnaudBger)
-- [@alvaroalon2](https://github.com/alvaroalon2)
-- [@bbracha-evinced](https://github.com/bbracha-evinced)
-- [@homer6](https://github.com/homer6)
-- [@bossanyit](https://github.com/bossanyit)
-- [@iutx](https://github.com/iutx)
-- [@davidferlay](https://github.com/davidferlay)
 - [@akirilyuk](https://github.com/akirilyuk)
-- [@thedadams](https://github.com/thedadams)
-- [@gamedevsam](https://github.com/gamedevsam)
-- [@hxy91819](https://github.com/hxy91819)
 - [@ongeluk](https://github.com/ongeluk)
 - [@dparkmit24](https://github.com/dparkmit24)
 - [@glani](https://github.com/glani)

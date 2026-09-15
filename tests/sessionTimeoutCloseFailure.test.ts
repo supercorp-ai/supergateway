@@ -1,3 +1,4 @@
+import { observeChildSignals } from './helpers/child-signals.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -86,12 +87,13 @@ test('a failing transport close on session timeout is logged, not thrown', async
     }),
   })
   t.mock.module('cors', { defaultExport: () => () => {} })
+  const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
       spawn() {
         const child = new Child()
         children.push(child)
-        return child
+        return trackChild(child)
       },
     },
   })

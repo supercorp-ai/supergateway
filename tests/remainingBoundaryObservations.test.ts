@@ -151,17 +151,17 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       )
     }
     if (mode === 'ws') {
-      const sentinel = new Error('observed child exit')
-      t.mock.method(process, 'exit', (): never => {
-        throw sentinel
+      const codes: unknown[] = []
+      t.mock.method(process, 'exit', (code): never => {
+        codes.push(code)
+        return undefined as never
       })
       // Provide a close boundary only for this shutdown observation.
       Object.assign(b.connections[0], { close: async () => {} })
       // map: ws-child-exit
-      assert.throws(
-        () => b.children[0].emit('exit', 19, null),
-        (error) => error === sentinel,
-      )
+      b.children[0].emit('exit', 19, null)
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.deepEqual(codes, [19])
       // map: ws-child-diagnostic
       assert.deepEqual(b.errors.at(-1), ['Child exited: code=19, signal=null'])
     }

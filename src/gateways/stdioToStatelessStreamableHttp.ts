@@ -1,6 +1,6 @@
+import { spawn } from 'child_process'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
-import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -10,6 +10,7 @@ import {
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
+import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 
@@ -91,7 +92,8 @@ export async function stdioToStatelessStreamableHttp(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
 
-  onSignals({ logger })
+  const children = new OwnedChildProcesses(logger)
+  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
   const app = express()
   app.use(express.json())
@@ -111,6 +113,10 @@ export async function stdioToStatelessStreamableHttp(
   }
 
   app.post(streamableHttpPath, async (req, res) => {
+    if (children.closing) {
+      res.status(503).send('Gateway is shutting down')
+      return
+    }
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
@@ -125,14 +131,9 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, children.spawnOptions)
+      const stop = children.own(child)
       const pendingRequests = new Set<string | number>()
-      let childStopped = false
-      const stopChild = () => {
-        if (childStopped) return
-        childStopped = true
-        child.kill()
-      }
       let childFailed = false
       const handleChildError = (err: Error) => {
         // ChildProcess and stdin emit errors independently. Keep listeners on
@@ -140,7 +141,7 @@ export async function stdioToStatelessStreamableHttp(
         if (childFailed) return
         childFailed = true
         logger.error('Child I/O error:', err)
-        stopChild()
+        void stop()
         // Ending an SSE response alone leaves SDK clients waiting for their
         // request timeout. Fail each outstanding call before closing streams.
         const replies = [...pendingRequests].map((id) =>
@@ -318,12 +319,12 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onclose = () => {
         logger.info('StreamableHttp connection closed')
-        stopChild()
+        void stop()
       }
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error:`, err)
-        stopChild()
+        void stop()
       }
 
       await transport.handleRequest(req, res, req.body)

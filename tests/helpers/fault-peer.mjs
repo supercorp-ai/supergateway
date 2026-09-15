@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import { closeSync } from 'node:fs'
 
 const control = process.env.FAULT_CONTROL
+if (process.env.FAULT_IGNORE_TERM === '1') process.on('SIGTERM', () => {})
 let calls = 0
 setInterval(() => {}, 60000)
 const send = (id, result) =>

@@ -8,15 +8,13 @@ import {
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 import {
   lifecycleControl,
   pendingRpc,
   within,
 } from './helpers/lifecycle-control.js'
 
-knownBugTest(
-  'GW-015',
+test(
   'stateful DELETE settles active streams and tool work without stale idle cleanup',
   { timeout: 30000 },
   async (t) => {

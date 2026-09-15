@@ -48,7 +48,7 @@ for (const mode of ['stateful', 'stateless'] as const) {
         listens: b.listens,
         cors: b.corsOptions,
         routes: [...b.routes.keys()],
-        signals: b.signals,
+        signals: b.signals.map(({ logger }) => ({ logger })),
       },
       {
         listens: [8132],
@@ -92,7 +92,12 @@ for (const mode of ['stateful', 'stateless'] as const) {
         response: transport.handled[0].res === first.res,
       },
       {
-        spawns: [['peer --http-test', { shell: true }]],
+        spawns: [
+          [
+            'peer --http-test',
+            { shell: true, detached: process.platform !== 'win32' },
+          ],
+        ],
         servers: [
           [
             { name: 'supergateway', version: getVersion() },

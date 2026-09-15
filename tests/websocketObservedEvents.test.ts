@@ -62,7 +62,12 @@ test('WebSocket gateway reports connections, peer traffic and asynchronous send 
       connected: b.connections[0] === transport!,
     },
     {
-      spawns: [['peer --ws-test', { shell: true }]],
+      spawns: [
+        [
+          'peer --ws-test',
+          { shell: true, detached: process.platform !== 'win32' },
+        ],
+      ],
       listens: [8141],
       cors: [{ origin: '*' }],
       routes: ['GET /health'],

@@ -1,3 +1,4 @@
+import { observeChildSignals } from './helpers/child-signals.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -99,12 +100,13 @@ test('a failing SSE delivery is logged and drops only that session', async (t) =
     namedExports: { json: () => () => {} },
   })
   t.mock.module('cors', { defaultExport: () => () => {} })
+  const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
       spawn() {
         const child = new Child()
         children.push(child)
-        return child
+        return trackChild(child)
       },
     },
   })
@@ -198,12 +200,13 @@ for (const [label, moduleId, gatewayName, args] of [
       }),
     })
     t.mock.module('cors', { defaultExport: () => () => {} })
+    const trackChild = observeChildSignals(t)
     t.mock.module('child_process', {
       namedExports: {
         spawn() {
           const child = new Child()
           children.push(child)
-          return child
+          return trackChild(child)
         },
       },
     })

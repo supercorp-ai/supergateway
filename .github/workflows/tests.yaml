@@ -139,6 +139,52 @@ jobs:
           --min-lines 100 --min-statements 100 --min-functions 100
           --min-branches 100 --min-mcdc 100
 
+  # Every other test here speaks to the gateway through the Node SDK — the same
+  # implementation the gateway itself uses — which makes a whole class of defect
+  # invisible. The gateway can emit bytes that are perfectly valid by its own
+  # reader's rules and unreadable to somebody else's.
+  #
+  # Issue #91 is the example: a tool result carrying U+2028 is legal JSON and a
+  # legal SSE frame, since the stream is split on CR and LF only, but a consumer
+  # that splits by Unicode line-terminator semantics cuts the JSON mid-string.
+  # No Node client can tell us whether that happens.
+  #
+  # Calibrated against the fix proposed in PR #93: applying its
+  # `sanitizeJsonObject` at the send site makes this job fail with
+  # `received 'before\\u2028middle...'` — the client gets the escape as literal
+  # text. That is a real second implementation catching a real regression, which
+  # no unit test in this repository could have shown.
+  python-client:
+    name: Python client
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      # Pinned: this job exists to detect disagreement between implementations,
+      # so the other implementation must not drift underneath it silently.
+      - name: Install the Python MCP client
+        run: pip install 'mcp==2.2.0'
+      - name: Drive every gateway from Python
+        timeout-minutes: 6
+        run: |
+          for mode in stateful stateless sse; do
+            python tests/clients/python_client_check.py "$mode"
+          done
+
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.
   # Cluster C exists only above our pin, so no test written against the lockfile

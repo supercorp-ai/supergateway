@@ -250,8 +250,15 @@ export async function stdioToStatelessStreamableHttp(
         // strict schema whose `id` is `union([string, number.int()])` and a
         // notification with a strict schema carrying no `id` key, so a present
         // `id` is never `undefined`.
+        //
+        // The assertion is for the compiler, not the value. `msg` is the
+        // message union, and narrowing it with `in` leaves the
+        // notification-shaped member in the type with `id?: undefined` bolted
+        // on — from SDK 1.25.3 the declared type is therefore
+        // `string | number | undefined`, though the runtime check has already
+        // excluded exactly that member.
         if ('id' in msg) {
-          initializeRequestId = msg.id
+          initializeRequestId = msg.id!
           isAutoInitializing = false // This is client-initiated
           logger.info(`Tracking initialize request ID: ${msg.id}`)
         }

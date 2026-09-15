@@ -215,6 +215,21 @@ jobs:
       - name: Conformance battery — Go
         timeout-minutes: 6
         run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery"
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      # A community client rather than an official SDK, and the only driver here
+      # that is not one: it is what a Ruby user would actually reach for, and it
+      # makes its own parsing choices.
+      - name: Install the Ruby MCP client
+        run: gem install ruby-mcp-client -v 2.1.0
+      - name: Conformance battery — Ruby
+        timeout-minutes: 6
+        run: |
+          printf '#!/bin/sh\nexec ruby "%s/tests/clients/battery.rb" "$@"\n' "$PWD" > "$RUNNER_TEMP/rbbattery"
+          chmod +x "$RUNNER_TEMP/rbbattery"
+          node tests/clients/run-battery.mjs ruby "$RUNNER_TEMP/rbbattery"
 
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.
@@ -371,3 +386,31 @@ jobs:
               fi
               echo "started and served the SSE endpoint"
             '
+
+  # The three published images are a shipping surface nothing else checks. The
+  # publish workflow builds and pushes them without asserting anything about
+  # what came out, which is how `:deno` came to contain no Deno (GW-024).
+  #
+  # Not part of `npm test`: building three images takes minutes, and none of it
+  # depends on the working tree the way the suite does.
+  docker:
+    name: Published images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Check the images
+        timeout-minutes: 18
+        env:
+          RUN_DOCKER_TESTS: '1'
+        run: npx tsx --test tests/dockerImages.test.ts

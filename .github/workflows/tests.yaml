@@ -139,6 +139,102 @@ jobs:
           --min-lines 100 --min-statements 100 --min-functions 100
           --min-branches 100 --min-mcdc 100
 
+  # Every other test here speaks to the gateway through the Node SDK — the same
+  # implementation the gateway itself uses — which makes a whole class of defect
+  # invisible. The gateway can emit bytes that are perfectly valid by its own
+  # reader's rules and unreadable to somebody else's.
+  #
+  # Issue #91 is the example: a tool result carrying U+2028 is legal JSON and a
+  # legal SSE frame, since the stream is split on CR and LF only, but a consumer
+  # that splits by Unicode line-terminator semantics cuts the JSON mid-string.
+  # No Node client can tell us whether that happens.
+  #
+  # Calibrated against the fix proposed in PR #93: applying its
+  # `sanitizeJsonObject` at the send site makes this job fail with
+  # `received 'before\\u2028middle...'` — the client gets the escape as literal
+  # text. That is a real second implementation catching a real regression, which
+  # no unit test in this repository could have shown.
+  #
+  # Three drivers now run the same thirteen-scenario battery against all three
+  # output transports, so the result is a matrix: a cell that differs between
+  # languages is a disagreement between implementations rather than a gateway
+  # defect. Ruby and Rust drivers exist too and agree; they are left out of CI
+  # only to keep the toolchain list short.
+  #
+  # The battery deliberately runs below 1 MiB. At or above that a single SSE
+  # event is refused by the Python and Go clients, accepted by TypeScript, and
+  # capped at 16 MiB by Rust — four SDKs, four answers. That is GW-023, a
+  # specification gap rather than a regression, and not this job's business.
+  python-client:
+    name: Cross-client battery
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      # Pinned: this job exists to detect disagreement between implementations,
+      # so the other implementation must not drift underneath it silently.
+      - name: Install the Python MCP client
+        run: pip install 'mcp==2.2.0'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      # Built here rather than committed: pinning the SDK version on the command
+      # line is enough, and it keeps Go module files out of a TypeScript repo.
+      - name: Build the Go driver
+        run: |
+          mkdir -p "$RUNNER_TEMP/gobattery"
+          cp tests/clients/battery.go "$RUNNER_TEMP/gobattery/main.go"
+          cd "$RUNNER_TEMP/gobattery"
+          go mod init battery
+          go get github.com/modelcontextprotocol/go-sdk@v0.2.0
+          # `go get` records the module but not the checksums of what it
+          # imports, and the build refuses to proceed without them. `tidy` keeps
+          # the version pinned on the line above and only fills in the sums.
+          go mod tidy
+          go build -o "$RUNNER_TEMP/go-battery" .
+      - name: Conformance battery — Node
+        timeout-minutes: 6
+        run: node tests/clients/run-battery.mjs node
+      - name: Conformance battery — Python
+        timeout-minutes: 6
+        run: |
+          printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
+          chmod +x "$RUNNER_TEMP/pybattery"
+          node tests/clients/run-battery.mjs python "$RUNNER_TEMP/pybattery"
+      - name: Conformance battery — Go
+        timeout-minutes: 6
+        run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery"
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      # A community client rather than an official SDK, and the only driver here
+      # that is not one: it is what a Ruby user would actually reach for, and it
+      # makes its own parsing choices.
+      - name: Install the Ruby MCP client
+        run: gem install ruby-mcp-client -v 2.1.0
+      - name: Conformance battery — Ruby
+        timeout-minutes: 6
+        run: |
+          printf '#!/bin/sh\nexec ruby "%s/tests/clients/battery.rb" "$@"\n' "$PWD" > "$RUNNER_TEMP/rbbattery"
+          chmod +x "$RUNNER_TEMP/rbbattery"
+          node tests/clients/run-battery.mjs ruby "$RUNNER_TEMP/rbbattery"
+
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.
   # Cluster C exists only above our pin, so no test written against the lockfile
@@ -294,3 +390,31 @@ jobs:
               fi
               echo "started and served the SSE endpoint"
             '
+
+  # The three published images are a shipping surface nothing else checks. The
+  # publish workflow builds and pushes them without asserting anything about
+  # what came out, which is how `:deno` came to contain no Deno (GW-024).
+  #
+  # Not part of `npm test`: building three images takes minutes, and none of it
+  # depends on the working tree the way the suite does.
+  docker:
+    name: Published images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Check the images
+        timeout-minutes: 18
+        env:
+          RUN_DOCKER_TESTS: '1'
+        run: npx tsx --test tests/dockerImages.test.ts

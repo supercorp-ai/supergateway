@@ -295,6 +295,8 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@davidjitca](https://github.com/davidjitca)
+- [@sbatista-uc](https://github.com/sbatista-uc)
 - [@terafin](https://github.com/terafin)
 - [@ecdesigns2007](https://github.com/ecdesigns2007)
 - [@brendandebeasi](https://github.com/brendandebeasi)

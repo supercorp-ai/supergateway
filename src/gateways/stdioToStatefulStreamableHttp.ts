@@ -89,8 +89,13 @@ export async function stdioToStatefulStreamableHttp(
     })
   }
 
-  // Map to store transports by session ID
-  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
+  // A real Map, not an object. A plain object's keys are looked up through
+  // `Object.prototype`, so an unissued session id like `toString` or
+  // `constructor` resolves to an inherited function and is then used as a
+  // transport — every name on that prototype crashed the gateway, from an
+  // ordinary HTTP header, before any session existed. A Map has no such
+  // inheritance, which fixes the class rather than the names.
+  const transports = new Map<string, StreamableHTTPServerTransport>()
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -106,11 +111,11 @@ export async function stdioToStatefulStreamableHttp(
           // Still async, and still running from a timer with nothing above it,
           // so the rejection handler stays — a cleanup path is the worst place
           // to crash.
-          const transport = transports[sessionId]
+          const transport = transports.get(sessionId)!
           transport.close().catch((err) => {
             logger.error(`Failed to close timed-out session ${sessionId}`, err)
           })
-          delete transports[sessionId]
+          transports.delete(sessionId)
         },
         logger,
       )
@@ -122,9 +127,9 @@ export async function stdioToStatefulStreamableHttp(
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
 
-    if (sessionId && transports[sessionId]) {
+    if (sessionId && transports.has(sessionId)) {
       // Reuse existing transport
-      transport = transports[sessionId]
+      transport = transports.get(sessionId)!
       // Increment session access count
       sessionCounter?.inc(sessionId, 'POST request for existing session')
     } else if (!sessionId && isInitializeRequest(req.body)) {
@@ -139,7 +144,7 @@ export async function stdioToStatefulStreamableHttp(
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           // Store the transport by session ID
-          transports[sessionId] = transport
+          transports.set(sessionId, transport)
           // Initialize session access count
           sessionCounter?.inc(sessionId, 'session initialization')
         },
@@ -193,7 +198,7 @@ export async function stdioToStatefulStreamableHttp(
             false,
             'transport being closed',
           )
-          delete transports[transport.sessionId]
+          transports.delete(transport.sessionId)
         }
         child.kill()
       }
@@ -206,7 +211,7 @@ export async function stdioToStatefulStreamableHttp(
             false,
             'transport emitting error',
           )
-          delete transports[transport.sessionId]
+          transports.delete(transport.sessionId)
         }
         child.kill()
       }
@@ -246,7 +251,7 @@ export async function stdioToStatefulStreamableHttp(
     res: express.Response,
   ) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined
-    if (!sessionId || !transports[sessionId]) {
+    if (!sessionId || !transports.has(sessionId)) {
       res.status(400).send('Invalid or missing session ID')
       return
     }
@@ -267,7 +272,7 @@ export async function stdioToStatefulStreamableHttp(
     res.on('finish', () => handleResponseEnd('finished'))
     res.on('close', () => handleResponseEnd('closed'))
 
-    const transport = transports[sessionId]
+    const transport = transports.get(sessionId)!
     await transport.handleRequest(req, res)
   }
 

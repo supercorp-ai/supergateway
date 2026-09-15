@@ -114,10 +114,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     await server.connect(sseTransport)
 
+    // `SSEServerTransport.sessionId` is declared `string`, not `string |
+    // undefined`: the SDK assigns it in the constructor. The guard that used to
+    // wrap this could not be false, so it was an obligation no test could ever
+    // discharge rather than a defence against anything.
     const sessionId = sseTransport.sessionId
-    if (sessionId) {
-      sessions[sessionId] = { transport: sseTransport, response: res }
-    }
+    sessions[sessionId] = { transport: sseTransport, response: res }
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)

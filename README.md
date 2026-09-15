@@ -295,6 +295,20 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@sfasching](https://github.com/sfasching)
+- [@RussellZager](https://github.com/RussellZager)
+- [@Farzy](https://github.com/Farzy)
+- [@body-cmd](https://github.com/body-cmd)
+- [@cosmic-fire-eng](https://github.com/cosmic-fire-eng)
+- [@0xbrainkid](https://github.com/0xbrainkid)
+- [@dangdinhquan](https://github.com/dangdinhquan)
+- [@iandol](https://github.com/iandol)
+- [@micci184](https://github.com/micci184)
+- [@manmao](https://github.com/manmao)
+- [@sibelius](https://github.com/sibelius)
+- [@NathanNeves](https://github.com/NathanNeves)
+- [@Avi-Robusta](https://github.com/Avi-Robusta)
+- [@yakovyarmo](https://github.com/yakovyarmo)
 - [@GhimBoon](https://github.com/GhimBoon)
 - [@akirilyuk](https://github.com/akirilyuk)
 - [@ongeluk](https://github.com/ongeluk)

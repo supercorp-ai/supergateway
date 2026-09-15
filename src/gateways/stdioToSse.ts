@@ -71,14 +71,25 @@ export async function stdioToSse(args: StdioToSseArgs) {
     process.exit(code ?? 1)
   })
 
-  const server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-
+  // One `Server` per session, not one per process.
+  //
+  // `Protocol.connect` assigns `this._transport`, and from SDK 1.26 it throws
+  // `Already connected to a transport` when that field is already set. A single
+  // shared `Server` therefore served exactly one connection per process
+  // lifetime: the second client crashed it, and so did the same client
+  // reconnecting after a dropped stream — the throw lands in an async Express
+  // handler with nothing to catch it, and the unhandled rejection takes the
+  // process down. Reconnecting is ordinary, not an edge case, which is what
+  // made this the most reported crash in the tracker (#112, #138, #153).
+  //
+  // The shape is taken from @sfasching's #113.
   const sessions: Record<
     string,
-    { transport: SSEServerTransport; response: express.Response }
+    {
+      server: Server
+      transport: SSEServerTransport
+      response: express.Response
+    }
   > = {}
 
   const app = express()
@@ -111,34 +122,60 @@ export async function stdioToSse(args: StdioToSseArgs) {
     })
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
-    await server.connect(sseTransport)
+    const sessionServer = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
+    await sessionServer.connect(sseTransport)
 
     // `SSEServerTransport.sessionId` is declared `string`, not `string |
     // undefined`: the SDK assigns it in the constructor. The guard that used to
     // wrap this could not be false, so it was an obligation no test could ever
     // discharge rather than a defence against anything.
     const sessionId = sseTransport.sessionId
-    sessions[sessionId] = { transport: sseTransport, response: res }
+    sessions[sessionId] = {
+      server: sessionServer,
+      transport: sseTransport,
+      response: res,
+    }
 
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
 
-    sseTransport.onclose = () => {
-      logger.info(`SSE connection closed (session ${sessionId})`)
+    // Closing the session's own `Server` is what releases its transport. Without
+    // it the object stays connected and the next `connect` on it would throw
+    // again — the same failure one indirection further along.
+    //
+    // The order matters. `server.close()` closes its transport, and closing an
+    // `SSEServerTransport` fires `onclose`, which arrives back here. Removing
+    // the session *before* closing is what stops that round trip becoming
+    // unbounded recursion — the hazard @RussellZager identified on #113 — and
+    // it is also why the ending that started it is the only one logged.
+    const endSession = (report: () => void) => {
+      if (!sessions[sessionId]) return
+      report()
+      const { server } = sessions[sessionId]
       delete sessions[sessionId]
+      server.close().catch((err) => {
+        logger.error(`Failed to close session ${sessionId}:`, err)
+      })
     }
 
-    sseTransport.onerror = (err) => {
-      logger.error(`SSE error (session ${sessionId}):`, err)
-      delete sessions[sessionId]
-    }
+    sseTransport.onclose = () =>
+      endSession(() =>
+        logger.info(`SSE connection closed (session ${sessionId})`),
+      )
 
-    req.on('close', () => {
-      logger.info(`Client disconnected (session ${sessionId})`)
-      delete sessions[sessionId]
-    })
+    sseTransport.onerror = (err) =>
+      endSession(() => logger.error(`SSE error (session ${sessionId}):`, err))
+
+    req.on('close', () =>
+      endSession(() =>
+        logger.info(`Client disconnected (session ${sessionId})`),
+      ),
+    )
   })
 
   // @ts-ignore

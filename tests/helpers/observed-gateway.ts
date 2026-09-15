@@ -39,7 +39,9 @@ export function observeGateway(t: TestContext) {
     listens: number[] = []
   const spawns: any[][] = [],
     servers: any[][] = [],
+    serverCloses: any[] = [],
     connections: any[] = []
+  let serverCloseFailure: Error | null = null
   const children: Child[] = [],
     transports: Transport[] = []
   let parses = 0
@@ -141,11 +143,26 @@ export function observeGateway(t: TestContext) {
   t.mock.module('@modelcontextprotocol/sdk/server/index.js', {
     namedExports: {
       Server: class {
+        transport: any = null
         constructor(...args: any[]) {
           servers.push(args)
         }
         async connect(transport: any) {
           connections.push(transport)
+          this.transport = transport
+        }
+        // Recorded, because a session's `Server` staying open is the same
+        // defect one indirection along: the next `connect` on it throws.
+        // `serverCloseFailure` lets a test make it reject, which is the only
+        // way to reach the gateway's handler for a close that goes wrong.
+        async close() {
+          serverCloses.push(this)
+          // Faithful to the SDK: `Protocol.close` closes its transport, and
+          // `SSEServerTransport.close` fires `onclose`. That round trip is what
+          // turns a naive teardown into unbounded recursion, so the mock has to
+          // make it, or no test here could ever see it.
+          this.transport?.onclose?.()
+          if (serverCloseFailure) throw serverCloseFailure
         }
       },
     },
@@ -186,6 +203,10 @@ export function observeGateway(t: TestContext) {
     listens,
     spawns,
     servers,
+    serverCloses,
+    failServerClose: (error: Error | null) => {
+      serverCloseFailure = error
+    },
     connections,
     children,
     transports,

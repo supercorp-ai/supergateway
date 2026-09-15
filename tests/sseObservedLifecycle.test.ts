@@ -38,6 +38,9 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       listens: b.listens,
       cors: b.corsOptions,
       routes: [...b.routes.keys()],
+      // No `Server` exists until a client connects: there is one per session,
+      // not one per process. A shared one served a single connection for the
+      // lifetime of the gateway and crashed on the second (#112, #138, #153).
       servers: b.servers,
     },
     {
@@ -45,9 +48,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       listens: [8127],
       cors: [{ origin: ['https://client.example', /trusted$/] }],
       routes: ['GET /health', 'GET /ready', 'GET /events', 'POST /messages'],
-      servers: [
-        [{ name: 'supergateway', version: getVersion() }, { capabilities: {} }],
-      ],
+      servers: [],
     },
   )
   // map: signals
@@ -67,10 +68,23 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       { code: 200, body: 'ok' },
     )
   }
-  for (const ending of ['close', 'error', 'request-close'] as const) {
+  for (const [index, ending] of (
+    ['close', 'error', 'request-close'] as const
+  ).entries()) {
     const { req } = await b.request('GET', '/events')
     const transport = b.transports.at(-1)!
     const id = transport.sessionId!
+    // map: session-server
+    assert.deepEqual(
+      { count: b.servers.length, args: b.servers.at(-1) },
+      {
+        count: index + 1,
+        args: [
+          { name: 'supergateway', version: getVersion() },
+          { capabilities: {} },
+        ],
+      },
+    )
     // map: transport-binding
     assert.equal(b.connections.at(-1), transport)
     // map: transport-url
@@ -104,6 +118,20 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       { code: rejected.res.code, body: rejected.res.body },
       { code: 503, body: `No active SSE connection for session ${id}` },
     )
+    // map: session-server-closed
+    //
+    // Exactly one close per ending, and exactly one diagnostic. Closing a
+    // session's `Server` closes its transport, which fires `onclose`, which
+    // arrives back at the same teardown — so a handler that acted before
+    // removing the session would recurse until the stack ran out
+    // (@RussellZager, on #113) and would log its ending twice on the way.
+    assert.equal(b.serverCloses.length, index + 1)
+    const endings: number = (b.info as unknown[][]).filter(
+      (line: unknown[]) =>
+        line[0] === `SSE connection closed (session ${id})` ||
+        line[0] === `Client disconnected (session ${id})`,
+    ).length
+    assert.equal(endings, ending === 'error' ? 0 : 1)
     // map: session-diagnostic
     assert.deepEqual(
       ending === 'error' ? b.errors.at(-1) : b.info.at(-1),

@@ -1,3 +1,4 @@
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
@@ -6,7 +7,6 @@ import {
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 // Nothing else in the suite connects two clients to one gateway, which is how
 // #112, #138 and #153 stayed open: every existing test exercises each gateway
@@ -27,8 +27,7 @@ import { knownBugTest } from './helpers/known-bug.js'
 // `sseClientIsolation.test.ts` asserts the property this one should have, and
 // is the spec for the fix. This stays as the reachability half of GW-017: when
 // the fix lands, both are enabled together and both must pass.
-knownBugTest(
-  'GW-017',
+test(
   'SSE gateway serves a second client on the same process',
   { timeout: 30000 },
   async (t) => {

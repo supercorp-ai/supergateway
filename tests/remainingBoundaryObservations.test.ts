@@ -58,9 +58,22 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         ? await b.request('POST', '/rpc', { body: initialize(83) })
         : undefined
     // map: server-metadata
-    assert.deepEqual(b.servers, [
-      [{ name: 'supergateway', version: getVersion() }, { capabilities: {} }],
-    ])
+    //
+    // The SSE gateway builds its `Server` per session rather than at startup —
+    // a single shared one served one connection per process and crashed on the
+    // second (#112, #138, #153) — so at this point it has none. The other three
+    // still build theirs up front.
+    assert.deepEqual(
+      b.servers,
+      mode === 'sse'
+        ? []
+        : [
+            [
+              { name: 'supergateway', version: getVersion() },
+              { capabilities: {} },
+            ],
+          ],
+    )
     const before = b.info.length
     b.children[0].stdout.emit('data', Buffer.from('\n \r\n\t\n'))
     // map: empty-frames
@@ -79,6 +92,10 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         body: { jsonrpc: '2.0', id: 2, method: 'ping' },
       })
       const missing = await b.request('POST', '/messages')
+      // map: sse-session-server
+      assert.deepEqual(b.servers, [
+        [{ name: 'supergateway', version: getVersion() }, { capabilities: {} }],
+      ])
       // map: sse-response-headers
       assert.deepEqual(
         [connected.res.headers, accepted.res.headers, missing.res.headers],

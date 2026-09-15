@@ -1,6 +1,6 @@
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { launchGateway, unusedPort } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 
@@ -26,12 +26,11 @@ const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
  * kills the gateway. That is #154's shape, and the mechanism ESLint's
  * `no-misused-promises` flags on the SSE route.
  *
- * Held rather than enforced: this is the spec for the fix, and it currently
- * fails from 1.26 up. It passes on 1.18.2, where the leak the SDK later
- * guarded is what makes the reconnection work.
+ * Fixed by giving each session its own `Server`, so nothing is ever asked to
+ * connect twice. The SDK's guard was right; the gateway was reusing one
+ * `Protocol` for every connection.
  */
-knownBugTest(
-  'GW-017',
+test(
   'an SSE client can reconnect after disconnecting',
   { timeout: 30000 },
   async (t) => {

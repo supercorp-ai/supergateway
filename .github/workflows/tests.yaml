@@ -81,6 +81,50 @@ jobs:
         timeout-minutes: 3
         run: npm run lint
 
+  # Every structural coverage metric is at 100% as of 2026-09-15, and this is
+  # what keeps it there. Without a gate the number only moves one way: a change
+  # adds an obligation, the percentage slips a little, and nobody is obliged to
+  # notice. Every defect in the backlog hid in a path no test exercised.
+  #
+  # It is not redundant with the suite. Calibrated by adding one unreachable
+  # function to `src/`: the suite stayed green at 151 passing, and this job went
+  # red on seven of eight metrics.
+  #
+  # MC/DC is gated rather than left advisory because it is the only metric that
+  # has ever predicted anything here. Against six condition-level mutants, every
+  # condition it flagged had a surviving mutant, while lines and assertion
+  # coverage — both at 100% — distinguished none of them.
+  #
+  # Assertion coverage is deliberately absent: it needs the authored map in
+  # `.supercov/`, which self-ignores and is not in the repository, so this job
+  # has nothing to measure it against. It is measured locally and quoted in the
+  # pull request until the map has somewhere to live.
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Over half the suite spawns dist/index.js; measuring a stale build would
+      # report coverage of code this commit does not contain.
+      - name: Build
+        run: npm run build
+      - name: Measure coverage
+        timeout-minutes: 10
+        run: npx -y supercov@0.0.53 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
+        env:
+          TS_NODE_TRANSPILE_ONLY: 'true'
+      - name: Enforce 100%
+        run: node scripts/coverage-gate.mjs
+
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.
   # Cluster C exists only above our pin, so no test written against the lockfile

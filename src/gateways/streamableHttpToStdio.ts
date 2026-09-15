@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { describeHeaders } from '../lib/headers.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -62,9 +63,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   const { streamableHttpUrl, logger, headers } = args
 
   logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
-  logger.info(
-    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
-  )
+  logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info('Connecting to Streamable HTTP...')
 
   onSignals({ logger })

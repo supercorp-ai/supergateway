@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -77,9 +78,7 @@ export async function stdioToStatelessStreamableHttp(
     protocolVersion,
   } = args
 
-  logger.info(
-    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
-  )
+  logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)

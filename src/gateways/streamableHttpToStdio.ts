@@ -163,6 +163,9 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
               'Streamable HTTP client not initialized, creating fallback client',
             )
             mcpClient = await newFallbackMcpClient({ mcpTransport })
+            // The request that triggered the fallback still has to be
+            // answered. Creating the client was never the point of it.
+            result = await mcpClient.request(req, z.any())
           }
 
           logger.info('Streamable HTTP connected')
@@ -205,21 +208,30 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         ) {
           errorMsg = `HTTP ${rawCode}: ${errorMsg}`
         }
+        // Keep whatever structured detail the upstream error carried: it is
+        // the part a client can act on, and rebuilding the error without it
+        // discarded the most useful half.
+        const errorData =
+          err && typeof err === 'object' && 'data' in err
+            ? (err as { data?: unknown }).data
+            : undefined
         const errorResp = wrapResponse(req, {
           error: {
             code: errorCode,
             message: errorMsg,
+            ...(errorData === undefined ? {} : { data: errorData }),
           },
         })
         process.stdout.write(JSON.stringify(errorResp) + '\n')
         return
       }
-      const response = wrapResponse(
-        req,
-        result.hasOwnProperty('error')
-          ? { error: { ...result.error } }
-          : { result: { ...result } },
-      )
+      // `request` throws on a protocol error, so anything it returns is a
+      // successful result — including one that happens to carry a field named
+      // `error`, which is application data and not a JSON-RPC error. The old
+      // ternary both misread that data and called `hasOwnProperty` off the
+      // result itself, which a result carrying that key as a string turned
+      // into a crash.
+      const response = wrapResponse(req, { result: { ...result } })
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {

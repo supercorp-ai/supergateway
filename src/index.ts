@@ -290,9 +290,7 @@ async function main() {
   }
 }
 
-// `main` exits the process on any error it can see, but a rejection escaping it
-// would otherwise be unhandled — which on Node is a silent, immediate death.
-main().catch((err) => {
-  console.error('Fatal error:', err)
-  process.exit(1)
-})
+// `main` catches everything it can reach and exits non-zero, so this promise
+// cannot reject: the handler that used to sit here could never run. `void`
+// records that the floating promise is deliberate.
+void main()

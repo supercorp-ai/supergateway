@@ -98,18 +98,18 @@ export async function stdioToStatefulStreamableHttp(
         sessionTimeout,
         (sessionId: string) => {
           logger.info(`Session ${sessionId} timed out, cleaning up`)
+          // Reached only from the idle timer, and every path that removes a
+          // transport cancels that timer first: both `clear()` call sites pass
+          // `runCleanup: false`, so this callback never runs for a session that
+          // has already gone. The presence check could not be false.
+          //
+          // Still async, and still running from a timer with nothing above it,
+          // so the rejection handler stays — a cleanup path is the worst place
+          // to crash.
           const transport = transports[sessionId]
-          if (transport) {
-            // Async, and this runs from a timer with nothing above it to catch
-            // a rejection. Cleanup paths are the worst place to crash: they run
-            // when something has already gone wrong.
-            transport.close().catch((err) => {
-              logger.error(
-                `Failed to close timed-out session ${sessionId}`,
-                err,
-              )
-            })
-          }
+          transport.close().catch((err) => {
+            logger.error(`Failed to close timed-out session ${sessionId}`, err)
+          })
           delete transports[sessionId]
         },
         logger,

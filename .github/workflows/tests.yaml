@@ -154,8 +154,19 @@ jobs:
   # `received 'before\\u2028middle...'` — the client gets the escape as literal
   # text. That is a real second implementation catching a real regression, which
   # no unit test in this repository could have shown.
+  #
+  # Three drivers now run the same thirteen-scenario battery against all three
+  # output transports, so the result is a matrix: a cell that differs between
+  # languages is a disagreement between implementations rather than a gateway
+  # defect. Ruby and Rust drivers exist too and agree; they are left out of CI
+  # only to keep the toolchain list short.
+  #
+  # The battery deliberately runs below 1 MiB. At or above that a single SSE
+  # event is refused by the Python and Go clients, accepted by TypeScript, and
+  # capped at 16 MiB by Rust — four SDKs, four answers. That is GW-023, a
+  # specification gap rather than a regression, and not this job's business.
   python-client:
-    name: Python client
+    name: Cross-client battery
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -178,12 +189,32 @@ jobs:
       # so the other implementation must not drift underneath it silently.
       - name: Install the Python MCP client
         run: pip install 'mcp==2.2.0'
-      - name: Drive every gateway from Python
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      # Built here rather than committed: pinning the SDK version on the command
+      # line is enough, and it keeps Go module files out of a TypeScript repo.
+      - name: Build the Go driver
+        run: |
+          mkdir -p "$RUNNER_TEMP/gobattery"
+          cp tests/clients/battery.go "$RUNNER_TEMP/gobattery/main.go"
+          cd "$RUNNER_TEMP/gobattery"
+          go mod init battery
+          go get github.com/modelcontextprotocol/go-sdk@v0.2.0
+          go build -o "$RUNNER_TEMP/go-battery" .
+      - name: Conformance battery — Node
+        timeout-minutes: 6
+        run: node tests/clients/run-battery.mjs node
+      - name: Conformance battery — Python
         timeout-minutes: 6
         run: |
-          for mode in stateful stateless sse; do
-            python tests/clients/python_client_check.py "$mode"
-          done
+          printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
+          chmod +x "$RUNNER_TEMP/pybattery"
+          node tests/clients/run-battery.mjs python "$RUNNER_TEMP/pybattery"
+      - name: Conformance battery — Go
+        timeout-minutes: 6
+        run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery"
 
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.

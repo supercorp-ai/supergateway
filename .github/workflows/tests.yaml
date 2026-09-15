@@ -202,6 +202,10 @@ jobs:
           cd "$RUNNER_TEMP/gobattery"
           go mod init battery
           go get github.com/modelcontextprotocol/go-sdk@v0.2.0
+          # `go get` records the module but not the checksums of what it
+          # imports, and the build refuses to proceed without them. `tidy` keeps
+          # the version pinned on the line above and only fills in the sums.
+          go mod tidy
           go build -o "$RUNNER_TEMP/go-battery" .
       - name: Conformance battery — Node
         timeout-minutes: 6

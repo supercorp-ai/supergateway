@@ -11,6 +11,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
+import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -48,9 +49,7 @@ export async function stdioToStatefulStreamableHttp(
     sessionTimeout,
   } = args
 
-  logger.info(
-    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
-  )
+  logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)

@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
+import { describeHeaders } from '../lib/headers.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -61,9 +62,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
   const { sseUrl, logger, headers } = args
 
   logger.info(`  - sse: ${sseUrl}`)
-  logger.info(
-    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
-  )
+  logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info('Connecting to SSE...')
 
   onSignals({ logger })

@@ -29,7 +29,9 @@ mcp.tool('progress', {}, async (_args, extra) => {
     })
     if (SPACED) await new Promise((resolve) => setTimeout(resolve, 150))
   }
-  return { content: [{ type: 'text', text: `progress-done token=${String(token)}` }] }
+  return {
+    content: [{ type: 'text', text: `progress-done token=${String(token)}` }],
+  }
 })
 
 mcp.tool('toolsChanged', {}, async () => {
@@ -42,21 +44,39 @@ mcp.tool('sample', {}, async () => {
     messages: [{ role: 'user', content: { type: 'text', text: 'ping' } }],
     maxTokens: 16,
   })
-  const text = reply?.content?.type === 'text' ? reply.content.text : JSON.stringify(reply)
+  const text =
+    reply?.content?.type === 'text' ? reply.content.text : JSON.stringify(reply)
   return { content: [{ type: 'text', text: `sampled:${text}` }] }
 })
 
 mcp.tool('roots', {}, async () => {
   const reply = await server.listRoots()
-  return { content: [{ type: 'text', text: `roots:${(reply?.roots ?? []).map((r) => r.uri).join(',')}` }] }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `roots:${(reply?.roots ?? []).map((r) => r.uri).join(',')}`,
+      },
+    ],
+  }
 })
 
 mcp.tool('elicit', {}, async () => {
   const reply = await server.elicitInput({
     message: 'name?',
-    requestedSchema: { type: 'object', properties: { name: { type: 'string' } } },
+    requestedSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+    },
   })
-  return { content: [{ type: 'text', text: `elicited:${reply?.action}:${reply?.content?.name ?? ''}` }] }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `elicited:${reply?.action}:${reply?.content?.name ?? ''}`,
+      },
+    ],
+  }
 })
 
 await mcp.connect(new StdioServerTransport())

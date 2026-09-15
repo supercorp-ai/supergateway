@@ -23,4 +23,13 @@ server.tool('plain', {}, async () => ({
   content: [{ type: 'text', text: PLAIN_TEXT }],
 }))
 
+// A successful result that happens to carry a field named `error`. That is
+// application data, not a JSON-RPC error, and reading it as one is cluster E's
+// defect (GW-002). Without a payload like this an identity check cannot tell
+// the two spellings apart.
+server.tool('shadowed-error', {}, async () => ({
+  content: [{ type: 'text', text: 'ok' }],
+  error: { code: -1, message: 'application data, not a protocol error' },
+}))
+
 await server.connect(new StdioServerTransport())

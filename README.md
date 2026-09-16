@@ -83,9 +83,9 @@ npx -y supergateway \
 
 Expose an MCP stdio server as a Streamable HTTP server.
 
-Supports legacy clients and clients using MCP **2026-07-28**. The stdio server must support the legacy initialization handshake.
+Supports legacy MCP and **2026-07-28** when the client and stdio server support a common protocol version. Clients that support automatic negotiation can fall back to legacy when the server requires it.
 
-For 2026-07-28 clients, server state does not persist between requests, including with `--stateful`. Subscriptions and server-initiated sampling, elicitation, and roots requests are not available in this mode.
+`--stateful` preserves legacy sessions. MCP 2026-07-28 uses independent requests and does not create a transport session.
 
 ### Stateless mode
 

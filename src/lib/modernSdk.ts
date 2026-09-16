@@ -13,6 +13,7 @@ export {
   createMcpHandler,
   fromJsonSchema,
   classifyInboundRequest,
+  PerRequestHTTPServerTransport,
   type ServerCapabilities,
   type ServerContext,
   type CallToolResult,

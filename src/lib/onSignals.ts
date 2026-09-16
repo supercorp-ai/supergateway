@@ -2,7 +2,8 @@ import { Logger } from '../types.js'
 
 export interface OnSignalsOptions {
   logger: Logger
-  cleanup?: () => void
+  cleanup?: () => void | Promise<void>
+  drainStdin?: boolean
 }
 
 /**
@@ -15,25 +16,29 @@ export interface OnSignalsOptions {
 export function onSignals(options: OnSignalsOptions): void {
   const { logger, cleanup } = options
 
-  const handleSignal = (signal: string) => {
-    logger.info(`Caught ${signal}. Exiting...`)
-    if (cleanup) {
-      cleanup()
+  let stopping = false
+  const shutdown = (message: string) => {
+    if (stopping) return
+    stopping = true
+    logger.info(message)
+    const pending = cleanup?.()
+    if (pending) {
+      void pending
+        .then(() => process.exit(0))
+        .catch((error) => {
+          logger.error('Shutdown cleanup failed:', error)
+          process.exit(1)
+        })
+    } else {
+      process.exit(0)
     }
-    process.exit(0)
   }
 
-  process.on('SIGINT', () => handleSignal('SIGINT'))
-
-  process.on('SIGTERM', () => handleSignal('SIGTERM'))
-
-  process.on('SIGHUP', () => handleSignal('SIGHUP'))
-
-  process.stdin.on('close', () => {
-    logger.info('stdin closed. Exiting...')
-    if (cleanup) {
-      cleanup()
-    }
-    process.exit(0)
-  })
+  process.on('SIGINT', () => shutdown('Caught SIGINT. Exiting...'))
+  process.on('SIGTERM', () => shutdown('Caught SIGTERM. Exiting...'))
+  process.on('SIGHUP', () => shutdown('Caught SIGHUP. Exiting...'))
+  process.stdin.on('close', () => shutdown('stdin closed. Exiting...'))
+  // Network-output gateways do not otherwise read stdin, so EOF would never
+  // be observed. Stdio-input bridges must let their transport consume it.
+  if (options.drainStdin) process.stdin.resume()
 }

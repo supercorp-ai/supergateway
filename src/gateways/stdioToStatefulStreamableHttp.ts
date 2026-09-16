@@ -1,12 +1,13 @@
+import { spawn } from 'child_process'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
-import { spawn } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
+import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
@@ -64,7 +65,8 @@ export async function stdioToStatefulStreamableHttp(
     `  - Session timeout: ${sessionTimeout ? `${sessionTimeout}ms` : 'disabled'}`,
   )
 
-  onSignals({ logger })
+  const children = new OwnedChildProcesses(logger)
+  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
   const app = express()
   app.use(express.json())
@@ -122,6 +124,10 @@ export async function stdioToStatefulStreamableHttp(
 
   // Handle POST requests for client-to-server communication
   app.post(streamableHttpPath, async (req, res) => {
+    if (children.closing) {
+      res.status(503).send('Gateway is shutting down')
+      return
+    }
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -149,7 +155,8 @@ export async function stdioToStatefulStreamableHttp(
         },
       })
       await server.connect(transport)
-      const child = spawn(stdioCmd, { shell: true })
+      const child = spawn(stdioCmd, children.spawnOptions)
+      const stop = children.own(child)
       const pendingRequests = new Set<string | number>()
       let childStopped = false
       const stopChild = (reason: string) => {
@@ -159,7 +166,7 @@ export async function stdioToStatefulStreamableHttp(
           sessionCounter?.clear(transport.sessionId, false, reason)
           transports.delete(transport.sessionId)
         }
-        child.kill()
+        void stop()
       }
       let childFailed = false
       const handleChildError = (err: Error) => {

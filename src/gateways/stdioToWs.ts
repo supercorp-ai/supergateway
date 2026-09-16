@@ -1,13 +1,15 @@
+import { spawn } from 'child_process'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { createServer } from 'http'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
+import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 
 export interface StdioToWsArgs {
@@ -36,28 +38,28 @@ export async function stdioToWs(args: StdioToWsArgs) {
   let child: ChildProcessWithoutNullStreams | null = null
   let isReady = false
 
+  const children = new OwnedChildProcesses(logger)
   const cleanup = () => {
     if (wsTransport) {
       wsTransport.close().catch((err) => {
         logger.error(`Error stopping WebSocket server: ${err.message}`)
       })
     }
-    if (child) {
-      child.kill()
-    }
+    return children.close()
   }
 
   onSignals({
     logger,
     cleanup,
+    drainStdin: true,
   })
 
   try {
-    child = spawn(stdioCmd, { shell: true })
+    child = spawn(stdioCmd, children.spawnOptions)
+    children.own(child)
     child.on('exit', (code, signal) => {
       logger.error(`Child exited: code=${code}, signal=${signal}`)
-      cleanup()
-      process.exit(code ?? 1)
+      void cleanup().then(() => process.exit(code ?? 1))
     })
 
     const server = new Server(
@@ -160,7 +162,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
     })
   } catch (err: any) {
     logger.error(`Failed to start: ${err.message}`)
-    cleanup()
+    await cleanup()
     process.exit(1)
   }
 }

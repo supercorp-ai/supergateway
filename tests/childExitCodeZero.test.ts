@@ -1,3 +1,4 @@
+import { observeChildSignals } from './helpers/child-signals.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -12,7 +13,6 @@ import { observeGateway } from './helpers/observed-gateway.js'
 
 test('SSE gateway exits 0 when its child exits 0', async (t) => {
   const b = observeGateway(t)
-  const exited = new Error('exit observed')
   const codes: unknown[] = []
   const { stdioToSse } = await import('../src/gateways/stdioToSse.js')
   await stdioToSse({
@@ -28,12 +28,10 @@ test('SSE gateway exits 0 when its child exits 0', async (t) => {
   })
   t.mock.method(process, 'exit', (code?: any): never => {
     codes.push(code)
-    throw exited
+    return undefined as never
   })
-  assert.throws(
-    () => b.children[0].emit('exit', 0, null),
-    (error) => error === exited,
-  )
+  b.children[0].emit('exit', 0, null)
+  await new Promise((resolve) => setImmediate(resolve))
   // map: sse-clean-child-exit-code
   assert.deepEqual(
     codes,
@@ -45,9 +43,9 @@ test('SSE gateway exits 0 when its child exits 0', async (t) => {
 })
 
 test('WebSocket gateway exits 0 when its child exits 0', async (t) => {
+  t.mock.method(process.stdin, 'resume', () => process.stdin)
   const errors: string[] = [],
     codes: unknown[] = []
-  const exited = new Error('exit observed')
   let child: any
   class Child extends EventEmitter {
     stdout = new EventEmitter()
@@ -61,13 +59,14 @@ test('WebSocket gateway exits 0 when its child exits 0', async (t) => {
   }
   t.mock.method(process, 'exit', (code?: any): never => {
     codes.push(code)
-    throw exited
+    return undefined as never
   })
+  const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
       spawn() {
         child = new Child()
-        return child
+        return trackChild(child)
       },
     },
   })
@@ -101,10 +100,8 @@ test('WebSocket gateway exits 0 when its child exits 0', async (t) => {
     healthEndpoints: [],
     corsOrigin: false,
   })
-  assert.throws(
-    () => child.emit('exit', 0, null),
-    (error) => error === exited,
-  )
+  child.emit('exit', 0, null)
+  await new Promise((resolve) => setImmediate(resolve))
   // map: ws-clean-child-exit-code
   assert.deepEqual(
     codes,

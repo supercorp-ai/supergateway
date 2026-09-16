@@ -221,7 +221,7 @@ export function createModernHttp(args: {
                 pending = { id, resolve, reject }
               })
               const meta: Record<string, unknown> = {
-                ...message.params?._meta,
+                ...params._meta,
               }
               delete meta.progressToken
               void child

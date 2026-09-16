@@ -556,3 +556,14 @@ test('notification forwarding does not perform request-only tool discovery', asy
   assert.equal(s.httpStatus, 202)
   assert.deepEqual(s.sent, [s.request.body])
 })
+
+for (const body of [null, undefined])
+  test(`missing Content-Type with ${body} body rejects without inventing an ID`, async () => {
+    const s = setup()
+    s.request.body = body
+    delete s.request.headers['content-type']
+    await s.open()
+    assert.equal(s.httpStatus, 415)
+    assert.equal(JSON.parse(s.body).id, null)
+    assert.equal(s.starts, 0)
+  })

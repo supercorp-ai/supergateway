@@ -115,19 +115,11 @@ npx -y supergateway \
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 
-## Child process shutdown
+## Shutdown
 
-On POSIX systems (including Linux and macOS), stdio commands run in their own process groups. When their owner ends—a stateful session closes, the wrapper exits, or the gateway shuts down—the gateway sends SIGTERM to the group and allows up to five seconds before sending SIGKILL. Shutdown waits for this cleanup. Completing a stateful HTTP response does not end its session.
+Allow more than five seconds for graceful shutdown. Child servers should handle SIGTERM when you stop the gateway with Ctrl-C.
 
-For network-output gateways, closing a pipe connected to the gateway's stdin also triggers shutdown. Starting with stdin ignored or redirected from `/dev/null` keeps the gateway running. This supports launchers whose exit closes the pipe connected to gateway stdin; it is not general parent-process death detection or a server-wide idle timeout.
-
-Ctrl-C is handled by the gateway, which sends SIGTERM to its owned children. Child servers should handle SIGTERM for graceful shutdown. The separate POSIX session has no controlling terminal, so commands that require `/dev/tty` may behave differently. Allow more than five seconds for graceful gateway shutdown before forcing termination.
-
-Windows retains direct-child termination. Processes that deliberately create a separate process group or session are outside this cleanup scope. An uncatchable gateway SIGKILL also cannot run cleanup.
-
-In stateless Streamable HTTP mode, completed requests release their child and transport after the HTTP response closes and all pending JSON-RPC requests have replies. A client disconnect alone does not cancel work: the child stays alive until its pending work replies or the child/gateway terminates. There is no new execution timeout or response replay after disconnection.
-
-Notification-only POSTs return HTTP 202 before processing completes. The gateway finishes auto-initialization and forwards the message before closing child stdin, then allows five seconds for voluntary exit before starting the SIGTERM/SIGKILL cleanup above. This grace period can add up to five seconds to the child's lifetime; notifications have no completion acknowledgment, so it does not guarantee completion of arbitrary background work.
+For network-output gateways, closing a pipe connected to stdin also stops the gateway. Starting with stdin ignored or redirected from `/dev/null` keeps it running.
 
 ## Example with MCP Inspector (stdio → SSE mode)
 
@@ -295,20 +287,24 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 [Model Context Protocol](https://spec.modelcontextprotocol.io/) standardizes AI tool interactions. Supergateway converts MCP stdio servers into SSE or WS services, simplifying integration and debugging with web-based or remote clients.
 
-## Advanced Configuration
-
-Supergateway emphasizes modularity:
-
-- Automatically manages JSON-RPC versioning.
-- Retransmits package metadata where possible.
-- stdio→SSE or stdio→WS mode logs via standard output; SSE→stdio mode logs via stderr.
-
 ## Additional resources
 
 - [Superargs](https://github.com/supercorp-ai/superargs) - provide arguments to MCP servers during runtime.
 
 ## Contributors
 
+- [@AxelFooley](https://github.com/AxelFooley)
+- [@Growdy](https://github.com/Growdy)
+- [@sulivanti](https://github.com/sulivanti)
+- [@EvanSchalton](https://github.com/EvanSchalton)
+- [@suneetagarwalre-boop](https://github.com/suneetagarwalre-boop)
+- [@edmcman](https://github.com/edmcman)
+- [@noyoa](https://github.com/noyoa)
+- [@JamesSlocumIH](https://github.com/JamesSlocumIH)
+- [@mike12806](https://github.com/mike12806)
+- [@oscar-izval](https://github.com/oscar-izval)
+- [@haissamtariqzaman](https://github.com/haissamtariqzaman)
+- [@rubenmajor2](https://github.com/rubenmajor2)
 - [@quigles1977](https://github.com/quigles1977)
 - [@jmcgurk2](https://github.com/jmcgurk2)
 - [@maxx3250](https://github.com/maxx3250)

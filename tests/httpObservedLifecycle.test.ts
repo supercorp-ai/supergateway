@@ -189,12 +189,15 @@ for (const mode of ['stateful', 'stateless'] as const) {
       second.res.emit('finish')
       await b.request('POST', '/rpc', { body: initialize(33) })
       b.children[2].emit('exit', 23, null)
+      await new Promise((resolve) => setImmediate(resolve))
       // map: stateful-child-exit
       assert.deepEqual(
         {
           closes: b.transports[2].closes,
           kills: b.children[2].kills,
-          error: b.errors.at(-1),
+          error: b.errors.findLast(
+            ([message]) => message === 'Child exited: code=23, signal=null',
+          ),
         },
         { closes: 1, kills: 1, error: ['Child exited: code=23, signal=null'] },
       )
@@ -275,12 +278,15 @@ for (const mode of ['stateful', 'stateless'] as const) {
         },
       )
       automatic.emit('exit', 23, null)
+      await new Promise((resolve) => setImmediate(resolve))
       // map: child-exit
       assert.deepEqual(
         {
           closes: autoTransport.closes,
           kills: automatic.kills,
-          error: b.errors.at(-1),
+          error: b.errors.findLast(
+            ([message]) => message === 'Child exited: code=23, signal=null',
+          ),
         },
         { closes: 1, kills: 1, error: ['Child exited: code=23, signal=null'] },
       )

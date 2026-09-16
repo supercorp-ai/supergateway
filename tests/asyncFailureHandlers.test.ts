@@ -32,6 +32,7 @@ class Child extends EventEmitter {
 
 class Response extends EventEmitter {
   headersSent = false
+  destroy() {}
   setHeader() {}
   status() {
     return this

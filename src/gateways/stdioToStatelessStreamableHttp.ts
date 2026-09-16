@@ -137,14 +137,14 @@ export async function stdioToStatelessStreamableHttp(
       let childFailed = false
       let released = false
       let finishTimer: NodeJS.Timeout | undefined
-      const handleChildError = (err: Error) => {
-        // ChildProcess and stdin emit errors independently. Keep listeners on
-        // both after failure, but terminate this transport only once.
+      const handleChildFailure = (err?: Error) => {
+        // Exit, ChildProcess errors and stdin errors can arrive for the same
+        // child. Keep listeners installed and terminate this transport once.
         if (childFailed) return
         childFailed = true
         released = true
         clearTimeout(finishTimer)
-        logger.error('Child I/O error:', err)
+        if (err) logger.error('Child process failure:', err)
         void stop()
         // Ending an SSE response alone leaves SDK clients waiting for their
         // request timeout. Fail each outstanding call before closing streams.
@@ -156,7 +156,7 @@ export async function stdioToStatelessStreamableHttp(
               error: { code: -32603, message: 'MCP server process failed' },
             })
             .catch((sendError) => {
-              logger.error('Failed to send child I/O error', sendError)
+              logger.error('Failed to send child failure', sendError)
             }),
         )
         pendingRequests.clear()
@@ -164,7 +164,7 @@ export async function stdioToStatelessStreamableHttp(
           .then(() => transport.close())
           .catch((closeError) => {
             logger.error(
-              'Failed to close transport after child I/O error',
+              'Failed to close transport after child failure',
               closeError,
             )
           })
@@ -174,18 +174,13 @@ export async function stdioToStatelessStreamableHttp(
             if (!res.writableEnded) res.destroy()
           })
       }
-      child.on('error', handleChildError)
-      child.stdin.on('error', handleChildError)
+      child.on('error', handleChildFailure)
+      child.stdin.on('error', handleChildFailure)
       child.on('exit', (code, signal) => {
-        released = true
-        clearTimeout(finishTimer)
         logger.error(`Child exited: code=${code}, signal=${signal}`)
-        if (childFailed) return
-        // The child is already gone; a rejection here must not take the
-        // gateway with it.
-        transport.close().catch((err) => {
-          logger.error(`Failed to close transport after child exit`, err)
-        })
+        // HTTP EOF alone does not settle an SDK request. Use the same
+        // idempotent error delivery as spawn/stdin failure before closing.
+        handleChildFailure()
       })
 
       // State tracking for initialization flow

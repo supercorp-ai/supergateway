@@ -293,6 +293,17 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@move-hoon](https://github.com/move-hoon)
+- [@dustindoan](https://github.com/dustindoan)
+- [@swarthyplacebo](https://github.com/swarthyplacebo)
+- [@ildunari](https://github.com/ildunari)
+- [@tamermina](https://github.com/tamermina)
+- [@frankstupak](https://github.com/frankstupak)
+- [@brainoir](https://github.com/brainoir)
+- [@JuliaF1988](https://github.com/JuliaF1988)
+- [@terjefl](https://github.com/terjefl)
+- [@yangzinan](https://github.com/yangzinan)
+- [@ckhsponge](https://github.com/ckhsponge)
 - [@AxelFooley](https://github.com/AxelFooley)
 - [@Growdy](https://github.com/Growdy)
 - [@sulivanti](https://github.com/sulivanti)

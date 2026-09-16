@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
+import { randomInt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
 import { watchGateway, forgetGateway } from './leak-check.js'
@@ -92,30 +93,34 @@ export function launchGateway(
   }
 }
 
-// Binding port 0 and closing leaves a window in which the OS can hand the same
-// port to someone else, and with 55 files churning the ephemeral range it will.
-// Remembering what this process has already issued removes the self-collision,
-// which is the common case: a gateway that lost the race never binds, and the
-// test fails eight seconds later saying only that it "did not become ready".
+// Probe the same wildcard address the gateway binds, outside the usual OS
+// outgoing ephemeral range and above Fetch-blocked ports. A loopback port-0 probe can pick an IPv6-occupied
+// port or one that a subsequent HTTP connection claims before gateway startup.
+// This is still a probe, not a reservation; keep previously issued ports out
+// of reuse for the rest of this test process.
 const issued = new Set<number>()
 
 export async function unusedPort() {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const port = randomInt(20000, 32768)
+    if (issued.has(port)) continue
     const server = createServer()
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    })
-    const port = (server.address() as { port: number }).port
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(port, resolve)
+      })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') continue
+      throw error
+    }
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     )
-    if (!issued.has(port)) {
-      issued.add(port)
-      return port
-    }
+    issued.add(port)
+    return port
   }
-  throw Error('Could not find a port this run has not already handed out')
+  throw Error('Could not find an unused gateway test port')
 }
 
 export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'

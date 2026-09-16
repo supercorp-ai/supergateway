@@ -135,11 +135,15 @@ export async function stdioToStatelessStreamableHttp(
       const stop = children.own(child)
       const pendingRequests = new Set<string | number>()
       let childFailed = false
+      let released = false
+      let finishTimer: NodeJS.Timeout | undefined
       const handleChildError = (err: Error) => {
         // ChildProcess and stdin emit errors independently. Keep listeners on
         // both after failure, but terminate this transport only once.
         if (childFailed) return
         childFailed = true
+        released = true
+        clearTimeout(finishTimer)
         logger.error('Child I/O error:', err)
         void stop()
         // Ending an SSE response alone leaves SDK clients waiting for their
@@ -173,6 +177,8 @@ export async function stdioToStatelessStreamableHttp(
       child.on('error', handleChildError)
       child.stdin.on('error', handleChildError)
       child.on('exit', (code, signal) => {
+        released = true
+        clearTimeout(finishTimer)
         logger.error(`Child exited: code=${code}, signal=${signal}`)
         if (childFailed) return
         // The child is already gone; a rejection here must not take the
@@ -186,6 +192,40 @@ export async function stdioToStatelessStreamableHttp(
       let initializeRequestId: string | number | null = null // Current initialize request ID
       let isAutoInitializing = false // Flag to indicate if we're auto-initializing
       let pendingOriginalMessage: JSONRPCMessage | null = null
+      let responseClosed = false
+      let handled = false
+      let hasOneWayMessage = false
+      const release = () => {
+        if (released) return
+        released = true
+        void stop()
+        server.close().catch((error) => {
+          logger.error('Failed to close completed stateless request', error)
+        })
+      }
+      const finishRequest = () => {
+        // handleRequest resolves after dispatch, not after the child replies.
+        // A disconnected HTTP client also does not cancel its in-flight work.
+        if (
+          released ||
+          finishTimer ||
+          !handled ||
+          !responseClosed ||
+          pendingRequests.size ||
+          isAutoInitializing
+        )
+          return
+        if (hasOneWayMessage) {
+          // HTTP 202 precedes delivery, and notifications have no completion
+          // reply. Forward first, then allow stdio EOF a bounded grace period.
+          child.stdin.end()
+          finishTimer = setTimeout(release, 5000)
+        } else release()
+      }
+      res.once('close', () => {
+        responseClosed = true
+        finishRequest()
+      })
 
       let buffer = ''
       child.stdout.on('data', (chunk: Buffer) => {
@@ -232,6 +272,7 @@ export async function stdioToStatelessStreamableHttp(
                 // Reset auto-initialize tracking
                 isAutoInitializing = false
                 initializeRequestId = null
+                finishRequest()
 
                 // Don't forward our auto-initialize response to the client
                 return
@@ -241,9 +282,12 @@ export async function stdioToStatelessStreamableHttp(
               }
             }
 
-            transport.send(jsonMsg).catch((e) => {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            })
+            void transport
+              .send(jsonMsg)
+              .catch((e) => {
+                logger.error(`Failed to send to StreamableHttp`, e)
+              })
+              .finally(finishRequest)
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }
@@ -256,6 +300,7 @@ export async function stdioToStatelessStreamableHttp(
 
       transport.onmessage = (msg: JSONRPCMessage) => {
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
+        else hasOneWayMessage = true
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
 
         // Auto-initialize anything that is not itself an initialize request.
@@ -327,7 +372,15 @@ export async function stdioToStatelessStreamableHttp(
         void stop()
       }
 
-      await transport.handleRequest(req, res, req.body)
+      try {
+        await transport.handleRequest(req, res, req.body)
+      } catch (error) {
+        release()
+        throw error
+      } finally {
+        handled = true
+        finishRequest()
+      }
     } catch (error) {
       logger.error('Error handling MCP request:', error)
       if (!res.headersSent) {

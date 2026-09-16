@@ -6,7 +6,7 @@ Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterf
 
 ## Installation & Usage
 
-Requires Node.js **18.14.1 or newer**. Run Supergateway via `npx`:
+Run Supergateway via `npx`:
 
 ```bash
 npx -y supergateway --stdio "uvx mcp-server-git"

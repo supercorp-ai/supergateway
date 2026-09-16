@@ -46,12 +46,7 @@ const createInitializeRequest = (
   method: 'initialize',
   params: {
     protocolVersion,
-    capabilities: {
-      roots: {
-        listChanged: true,
-      },
-      sampling: {},
-    },
+    capabilities: {},
     clientInfo: {
       name: 'supergateway',
       version: getVersion(),
@@ -234,7 +229,27 @@ export async function stdioToStatelessStreamableHttp(
           try {
             const jsonMsg = JSON.parse(line)
             logger.info('Child → StreamableHttp:', line)
-            if ('id' in jsonMsg && !('method' in jsonMsg)) {
+            // A later HTTP POST starts a different child, so it cannot answer
+            // this child's reverse request. Reply locally instead of hanging.
+            if ('method' in jsonMsg && 'id' in jsonMsg) {
+              child.stdin.write(
+                JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: jsonMsg.id,
+                  ...(jsonMsg.method === 'ping'
+                    ? { result: {} }
+                    : {
+                        error: {
+                          code: -32601,
+                          message:
+                            'Server-to-client requests are not supported in stateless mode',
+                        },
+                      }),
+                }) + '\n',
+              )
+              return
+            }
+            if ('id' in jsonMsg) {
               pendingRequests.delete(jsonMsg.id)
             }
 
@@ -278,7 +293,11 @@ export async function stdioToStatelessStreamableHttp(
             }
 
             void transport
-              .send(jsonMsg)
+              .send(jsonMsg, {
+                // Each stateless child serves one POST. Responses route by
+                // their own ID; notifications share the pending request stream.
+                relatedRequestId: pendingRequests.values().next().value,
+              })
               .catch((e) => {
                 logger.error(`Failed to send to StreamableHttp`, e)
               })
@@ -353,8 +372,13 @@ export async function stdioToStatelessStreamableHttp(
           logger.info(`Tracking initialize request ID: ${msg.id}`)
         }
 
-        // Send all messages to child process normally
-        child.stdin.write(JSON.stringify(msg) + '\n')
+        // This child cannot use client features that require another HTTP POST.
+        child.stdin.write(
+          JSON.stringify({
+            ...msg,
+            params: { ...msg.params, capabilities: {} },
+          }) + '\n',
+        )
       }
 
       transport.onclose = () => {

@@ -306,7 +306,7 @@ jobs:
 
   # Every Node version the package is actually run on, with real tests rather
   # than a smoke check. Only the files needing the runner's module mocking are
-  # left out: that API is experimental and behaves differently on 18, 20 and 22,
+  # left out: that API is experimental and behaves differently on 20 and 22,
   # for reasons that have nothing to do with this gateway. Everything else runs,
   # including every end-to-end test that spawns the compiled CLI - which is the
   # part that catches platform differences, as GW-015 showed.
@@ -318,7 +318,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [18, 20, 22]
+        node: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -349,10 +349,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['18.14.1', '18', '20', '22', '24', '26']
+        node: ['20', '22', '24', '26']
         include:
           - os: windows-latest
-            node: '18.14.1'
+            node: '20'
           - os: windows-latest
             node: '24'
     steps:
@@ -382,7 +382,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20, 22, 24]
+        node: [20, 22, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

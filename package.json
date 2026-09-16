@@ -19,7 +19,7 @@
     "supergateway": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/build-modern-sdk.mjs",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
     "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
@@ -37,7 +37,10 @@
     "**/*": "prettier --write --ignore-unknown"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
@@ -47,9 +50,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/node": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
     "@types/body-parser": "^1.19.5",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
@@ -58,7 +58,6 @@
     "@types/yargs": "^17.0.33",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",
-    "esbuild": "0.25.2",
     "eslint": "^10.10.0",
     "fast-check": "^4.10.0",
     "husky": "^9.1.7",
@@ -76,7 +75,7 @@
     "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=18.14.1"
+    "node": ">=20"
   },
   "files": [
     "dist",

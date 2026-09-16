@@ -8,7 +8,10 @@
       "name": "supergateway",
       "version": "3.4.3",
       "dependencies": {
+        "@modelcontextprotocol/client": "2.0.0",
+        "@modelcontextprotocol/node": "2.0.0",
         "@modelcontextprotocol/sdk": "1.30.0",
+        "@modelcontextprotocol/server": "2.0.0",
         "body-parser": "^1.20.3",
         "cors": "^2.8.5",
         "express": "^4.21.2",
@@ -21,9 +24,6 @@
         "supergateway": "dist/index.js"
       },
       "devDependencies": {
-        "@modelcontextprotocol/client": "2.0.0",
-        "@modelcontextprotocol/node": "2.0.0",
-        "@modelcontextprotocol/server": "2.0.0",
         "@types/body-parser": "^1.19.5",
         "@types/cors": "^2.8.18",
         "@types/express": "^5.0.2",
@@ -32,7 +32,6 @@
         "@types/yargs": "^17.0.33",
         "@typescript-eslint/eslint-plugin": "^8.70.0",
         "@typescript-eslint/parser": "^8.70.0",
-        "esbuild": "0.25.2",
         "eslint": "^10.10.0",
         "fast-check": "^4.10.0",
         "husky": "^9.1.7",
@@ -50,7 +49,7 @@
         "typescript": "^5.8.3"
       },
       "engines": {
-        "node": ">=18.14.1"
+        "node": ">=20"
       }
     },
     "node_modules/@cacheable/memory": {
@@ -764,7 +763,6 @@
       "version": "2.0.0",
       "resolved": "https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.0.0.tgz",
       "integrity": "sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/core": "2.0.0",
@@ -783,7 +781,6 @@
       "version": "4.6.5",
       "resolved": "https://registry.npmjs.org/zod/-/zod-4.6.5.tgz",
       "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==",
-      "dev": true,
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/colinhacks"
@@ -793,7 +790,6 @@
       "version": "2.0.0",
       "resolved": "https://registry.npmjs.org/@modelcontextprotocol/core/-/core-2.0.0.tgz",
       "integrity": "sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "zod": "^4.2.0"
@@ -806,7 +802,6 @@
       "version": "4.6.5",
       "resolved": "https://registry.npmjs.org/zod/-/zod-4.6.5.tgz",
       "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==",
-      "dev": true,
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/colinhacks"
@@ -816,7 +811,6 @@
       "version": "2.0.0",
       "resolved": "https://registry.npmjs.org/@modelcontextprotocol/node/-/node-2.0.0.tgz",
       "integrity": "sha512-Y4hAC2XdGDUdDOCbLDOCA4+aL3NUldjsOWlDL/YwpAxrPhRm1xHd7lZ+mLacvZ9t3PaH28wgNoaLQGrIk1P2pg==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@hono/node-server": "^1.19.9"
@@ -1268,7 +1262,6 @@
       "version": "2.0.0",
       "resolved": "https://registry.npmjs.org/@modelcontextprotocol/server/-/server-2.0.0.tgz",
       "integrity": "sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/core": "2.0.0",
@@ -1282,7 +1275,6 @@
       "version": "4.6.5",
       "resolved": "https://registry.npmjs.org/zod/-/zod-4.6.5.tgz",
       "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==",
-      "dev": true,
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/colinhacks"

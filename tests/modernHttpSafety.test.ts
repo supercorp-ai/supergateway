@@ -522,6 +522,31 @@ for (const stateful of [true, false]) {
   )
 
   test(
+    `${label}: custom requests preserve extension results and unknown-method errors`,
+    { timeout: 15000 },
+    async (t) => {
+      const { url } = await setup(t, stateful)
+      const custom = await post(url, 'custom/echo', {
+        value: 7,
+        nested: { kept: true },
+      })
+      assert.equal(custom.status, 200)
+      assert.equal(custom.message.id, 17)
+      assert.deepEqual(custom.message.result.received, {
+        value: 7,
+        nested: { kept: true },
+      })
+      const unknown = await post(url, 'custom/unknown')
+      assert.equal(unknown.status, 200)
+      assert.equal(unknown.message.id, 17)
+      assert.deepEqual(unknown.message.error, {
+        code: -32601,
+        message: 'Unknown fixture method',
+      })
+    },
+  )
+
+  test(
     `${label}: a tool schema cannot fetch a remote reference`,
     { timeout: 15000 },
     async (t) => {

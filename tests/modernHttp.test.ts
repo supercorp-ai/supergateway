@@ -1,6 +1,7 @@
 import { test, mock, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
 const sdk = await import('../src/lib/modernSdk.js')
 let b: any
 mock.module(new URL('../src/lib/modernSdk.js', import.meta.url).href, {
@@ -209,7 +210,15 @@ test('modern adapter uses SDK classification and passes the parsed request to th
 test('modern factory with an empty backend advertises no unsupported features and releases on close', async () => {
   const s = setup()
   assert.equal(await s.open(), s.frontend)
-  assert.deepEqual(s.clientArgs[1], { capabilities: {} })
+  assert.deepEqual(s.clientArgs, [
+    {
+      name: 'supergateway',
+      version: JSON.parse(
+        readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+      ).version,
+    },
+    { capabilities: {} },
+  ])
   assert.deepEqual(s.serverArgs, [
     { name: 'peer', version: '2' },
     { capabilities: {}, instructions: 'peer instructions' },
@@ -362,6 +371,10 @@ test('modern forwarding preserves protocol errors and conceals internal child fa
   })
   assert.equal(s.calls.at(-1)[0], request)
   assert.equal(s.calls.at(-1)[2].signal, context.mcpReq.signal)
+  assert.deepEqual(
+    s.calls.at(-1)[1].parse({ custom: 'value', nested: { kept: true } }),
+    { custom: 'value', nested: { kept: true } },
+  )
 })
 
 for (const failure of [

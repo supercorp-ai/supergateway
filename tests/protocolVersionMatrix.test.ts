@@ -1,13 +1,23 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { TestContext } from 'node:test'
-import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js'
-import { knownBugTest } from './helpers/known-bug.js'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import {
   launchGateway,
   unusedPort,
   peerCommand,
 } from './helpers/gateway-process.js'
+
+// Package tests may exercise a separately installed SDK version. Resolve the
+// version list from that gateway, rather than from the test runner's checkout.
+const gatewayRequire = createRequire(
+  process.env.SUPERGATEWAY_TEST_ENTRY ?? import.meta.url,
+)
+const { SUPPORTED_PROTOCOL_VERSIONS } = await import(
+  pathToFileURL(gatewayRequire.resolve('@modelcontextprotocol/sdk/types.js'))
+    .href
+)
 
 /**
  * Legacy initialization proposes a version; subsequent requests must use the
@@ -111,7 +121,7 @@ for (const mode of MODES) {
       for (const version of [
         ...SUPPORTED_PROTOCOL_VERSIONS,
         ...FUTURE_VERSIONS,
-        'not-a-version',
+        '1900-01-01',
       ]) {
         const url = await gateway(t, mode.args)
         const { response, body } = await initialize(url, version)
@@ -150,7 +160,10 @@ for (const mode of MODES) {
     `${mode.label}: unsupported protocol headers are rejected`,
     { timeout: 60000 },
     async (t) => {
-      for (const header of [...FUTURE_VERSIONS, 'not-a-version']) {
+      for (const header of [
+        ...FUTURE_VERSIONS.filter((version) => version !== '2026-07-28'),
+        '1900-01-01',
+      ]) {
         const url = await gateway(t, mode.args)
         const { session } = await initialize(url, '2025-06-18')
         const response = await post(
@@ -191,8 +204,7 @@ for (const mode of MODES) {
   )
 }
 
-knownBugTest(
-  '#156',
+test(
   'stateful: an unsupported header does not destroy the established session',
   { timeout: 20000 },
   async (t) => {
@@ -210,7 +222,7 @@ knownBugTest(
       { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
       {
         ...headers,
-        'mcp-protocol-version': '2026-07-28',
+        'mcp-protocol-version': '1900-01-01',
       },
     )
     assert.equal(rejected.status, 400)
@@ -232,7 +244,7 @@ knownBugTest(
       ['add'],
     )
     // The rejected request was not a DELETE, timeout, or child failure.
-    // SDK 1.30 emits onerror for it; the gateway currently kills this session.
+    // SDK 1.30 reports this rejection through onerror; it must remain recoverable.
     const recovered = await afterInitialize(
       url,
       affected.session,
@@ -245,5 +257,44 @@ knownBugTest(
       ),
       ['add'],
     )
+  },
+)
+
+test(
+  'stateful: a duplicate SSE GET preserves the session and its in-flight stream',
+  { timeout: 20000 },
+  async (t) => {
+    const url = await gateway(t, ['--stateful'])
+    const initial = await initialize(url, '2025-06-18')
+    assert.ok(initial.session)
+    const headers = {
+      accept: 'text/event-stream',
+      'mcp-session-id': initial.session,
+      'mcp-protocol-version': negotiated(initial.body)!,
+    }
+    const controller = new AbortController()
+    t.after(() => controller.abort())
+    const first = await fetch(url, { headers, signal: controller.signal })
+    assert.equal(first.status, 200)
+    const duplicate = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(duplicate.status, 409)
+    assert.match(await duplicate.text(), /Only one SSE stream/)
+    const recovered = await afterInitialize(
+      url,
+      initial.session,
+      negotiated(initial.body),
+    )
+    assert.equal(recovered.status, 200, recovered.body)
+    assert.deepEqual(
+      message(recovered.body).result.tools.map(
+        (tool: { name: string }) => tool.name,
+      ),
+      ['add'],
+    )
+    assert.equal(controller.signal.aborted, false)
+    controller.abort()
   },
 )

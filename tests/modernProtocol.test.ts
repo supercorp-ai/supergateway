@@ -1,7 +1,6 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { knownBugTest } from './helpers/known-bug.js'
 import {
   launchGateway,
   unusedPort,
@@ -9,13 +8,7 @@ import {
 } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
-// The v2 test clients require Node 20. Keep the gateway's Node 18 tests running
-// without importing those packages or changing its production dependencies.
-const modernRuntime = Number(process.versions.node.split('.')[0]) >= 20
-const options = {
-  timeout: 20000,
-  skip: modernRuntime ? false : 'SDK v2 requires Node 20',
-}
+const options = { timeout: 20000 }
 const modes = [
   { label: 'stateful', args: ['--stateful'] },
   { label: 'stateless', args: [] },
@@ -31,7 +24,7 @@ type Exchange = {
 async function clientFor(
   t: TestContext,
   url: string,
-  mode: 'auto' | { pin: typeof VERSION },
+  mode: 'auto' | 'legacy' | { pin: typeof VERSION },
 ) {
   const { Client, StreamableHTTPClientTransport } = await import(
     '@modelcontextprotocol/client'
@@ -60,11 +53,11 @@ async function clientFor(
   return { client, transport, exchanges }
 }
 
-async function gateway(t: TestContext, args: string[]) {
+async function gateway(t: TestContext, args: string[], command = peerCommand) {
   const port = await unusedPort()
   const child = launchGateway(t, [
     '--stdio',
-    peerCommand,
+    command,
     '--outputTransport',
     'streamableHttp',
     '--port',
@@ -117,9 +110,12 @@ for (const mode of ['auto', { pin: VERSION }] as const) {
         tools.tools.map((tool) => tool.name),
         ['probe'],
       )
-      const result = await client.callTool({ name: 'probe' }, undefined, {
-        timeout: 5000,
-      })
+      const result = await client.callTool(
+        { name: 'probe' },
+        {
+          timeout: 5000,
+        },
+      )
       assert.deepEqual(result.content, [
         { type: 'text', text: 'modern control result' },
       ])
@@ -146,11 +142,11 @@ for (const mode of ['auto', { pin: VERSION }] as const) {
 
 for (const mode of modes) {
   test(
-    `${mode.label}: modern SDK auto client falls back and completes a legacy tool call`,
+    `${mode.label}: explicit legacy SDK client still completes a legacy tool call`,
     options,
     async (t) => {
       const url = await gateway(t, mode.args)
-      const { client, transport, exchanges } = await clientFor(t, url, 'auto')
+      const { client, transport, exchanges } = await clientFor(t, url, 'legacy')
       await client.connect(transport, { timeout: 5000 })
       assert.equal(client.getProtocolEra(), 'legacy')
       const tools = await client.listTools({}, { timeout: 5000 })
@@ -160,15 +156,13 @@ for (const mode of modes) {
       )
       const result = await client.callTool(
         { name: 'add', arguments: { a: 2, b: 3 } },
-        undefined,
         { timeout: 5000 },
       )
       assert.deepEqual(result.content, [
         { type: 'text', text: 'The sum of 2 and 3 is 5.' },
       ])
-      assert.equal(exchanges[0].body?.method, 'server/discover')
-      assert.equal(exchanges[0].headers.get('mcp-protocol-version'), VERSION)
-      assert.equal(exchanges[0].status, 400)
+      assert.equal(exchanges[0].body?.method, 'initialize')
+      assert.equal(exchanges[0].status, 200)
       assert.ok(
         exchanges.some(
           (exchange) =>
@@ -181,32 +175,15 @@ for (const mode of modes) {
   // This is the actual compatibility target. The same real client passes the
   // modern-server controls above. An unsupported header alone is not proof
   // of a gateway defect, and accepting that header would not pass this test.
-  knownBugTest(
-    '#156',
+  test(
     `${mode.label}: a modern-only client discovers and calls a legacy child tool`,
     { timeout: 20000 },
     async (t) => {
-      if (!modernRuntime) return t.skip('SDK v2 requires Node 20')
       const url = await gateway(t, mode.args)
       const { client, transport, exchanges } = await clientFor(t, url, {
         pin: VERSION,
       })
-      try {
-        await client.connect(transport, { timeout: 5000 })
-      } catch (error) {
-        const probe = exchanges[0]
-        assert.equal(probe.body?.method, 'server/discover')
-        assert.equal(
-          probe.status,
-          400,
-          'reproduction must fail with a response, not a timeout',
-        )
-        assert.equal(
-          (error as { code?: string }).code,
-          'ERA_NEGOTIATION_FAILED',
-        )
-        throw error
-      }
+      await client.connect(transport, { timeout: 5000 })
       assert.equal(client.getProtocolEra(), 'modern')
       assert.ok(
         (await client.listTools({}, { timeout: 5000 })).tools.some(
@@ -215,7 +192,6 @@ for (const mode of modes) {
       )
       const result = await client.callTool(
         { name: 'add', arguments: { a: 2, b: 3 } },
-        undefined,
         { timeout: 5000 },
       )
       assert.deepEqual(result.content, [
@@ -225,6 +201,33 @@ for (const mode of modes) {
         exchanges.some((exchange) => exchange.body?.method === 'initialize'),
         false,
       )
+    },
+  )
+}
+
+for (const mode of modes) {
+  test(
+    `${mode.label}: modern client calls an official SDK v2 stdio server`,
+    options,
+    async (t) => {
+      const url = await gateway(
+        t,
+        mode.args,
+        'node tests/helpers/modern-sdk-peer.mjs',
+      )
+      const { client, transport } = await clientFor(t, url, { pin: VERSION })
+      await client.connect(transport, { timeout: 5000 })
+      assert.equal(client.getProtocolEra(), 'modern')
+      assert.deepEqual(
+        (await client.listTools({}, { timeout: 5000 })).tools.map(
+          (tool) => tool.name,
+        ),
+        ['probe'],
+      )
+      const result = await client.callTool({ name: 'probe' }, { timeout: 5000 })
+      assert.deepEqual(result.content, [
+        { type: 'text', text: 'official SDK stdio result' },
+      ])
     },
   )
 }

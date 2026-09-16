@@ -8,6 +8,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
+import { createModernHttp } from '../lib/modernHttp.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
@@ -66,7 +67,14 @@ export async function stdioToStatefulStreamableHttp(
   )
 
   const children = new OwnedChildProcesses(logger)
-  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
+  const modern = createModernHttp({ stdioCmd, children, logger })
+  onSignals({
+    logger,
+    cleanup: async () => {
+      await Promise.all([modern.close(), children.close()])
+    },
+    drainStdin: true,
+  })
 
   const app = express()
   app.use(express.json())
@@ -128,6 +136,7 @@ export async function stdioToStatefulStreamableHttp(
       res.status(503).send('Gateway is shutting down')
       return
     }
+    if (await modern.handle(req, res)) return
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -254,7 +263,8 @@ export async function stdioToStatefulStreamableHttp(
 
       transport.onerror = (err) => {
         logger.error(`StreamableHttp error (session ${sessionId}):`, err)
-        stopChild('transport emitting error')
+        // A rejected HTTP request is recoverable; actual transport closure
+        // and child failure have their own cleanup paths.
       }
     } else {
       // Invalid request

@@ -11,6 +11,7 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
+import { createModernHttp } from '../lib/modernHttp.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 
@@ -88,7 +89,14 @@ export async function stdioToStatelessStreamableHttp(
   )
 
   const children = new OwnedChildProcesses(logger)
-  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
+  const modern = createModernHttp({ stdioCmd, children, logger })
+  onSignals({
+    logger,
+    cleanup: async () => {
+      await Promise.all([modern.close(), children.close()])
+    },
+    drainStdin: true,
+  })
 
   const app = express()
   app.use(express.json())
@@ -112,6 +120,7 @@ export async function stdioToStatelessStreamableHttp(
       res.status(503).send('Gateway is shutting down')
       return
     }
+    if (await modern.handle(req, res)) return
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.

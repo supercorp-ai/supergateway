@@ -6,7 +6,7 @@ Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterf
 
 ## Installation & Usage
 
-Run Supergateway via `npx`:
+Requires Node.js **18.14.1 or newer**. Run Supergateway via `npx`:
 
 ```bash
 npx -y supergateway --stdio "uvx mcp-server-git"
@@ -82,6 +82,10 @@ npx -y supergateway \
 ## stdio → Streamable HTTP
 
 Expose an MCP stdio server as a Streamable HTTP server.
+
+Supports legacy clients and clients using MCP **2026-07-28**. The stdio server must support the legacy initialization handshake.
+
+For 2026-07-28 clients, server state does not persist between requests, including with `--stateful`. Subscriptions and server-initiated sampling, elicitation, and roots requests are not available in this mode.
 
 ### Stateless mode
 
@@ -293,6 +297,7 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@0xt3ch](https://github.com/0xt3ch)
 - [@werebear73](https://github.com/werebear73)
 - [@move-hoon](https://github.com/move-hoon)
 - [@dustindoan](https://github.com/dustindoan)

@@ -1,4 +1,3 @@
-import { expectedUpstreamFailure, sdkBetween } from './helpers/upstream.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
@@ -17,15 +16,9 @@ import {
 
 const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 
-// The SDK's stateful transport answers 200 to a malformed envelope it should
-// reject with 400, in 1.25.3 and 1.26.0 only: 1.24.3 rejects it and 1.27.1
-// rejects it again. Encoding the wrong answer for those two releases would put
-// someone else's regression in our suite permanently, and skipping the check
-// would lose it on every version. This keeps the check running everywhere and
-// fails loudly if the band ever stops being the explanation.
-expectedUpstreamFailure(
-  sdkBetween('1.25.0', '1.27.0'),
-  'SDK 1.25-1.26 accept malformed envelopes',
+// The shared SDK classifier rejects malformed envelopes before either
+// transport dispatches them. Rejection must preserve an established session.
+test(
   'stateful HTTP rejects malformed envelopes before and after initialization',
   { timeout: 20000 },
   async (t) => {
@@ -45,19 +38,20 @@ expectedUpstreamFailure(
     await gateway.ready()
     const invalidInit = await rpc(url, { ...initialize(), jsonrpc: 'invalid' })
     assert.equal(invalidInit.response.status, 400)
-    assert.equal(invalidInit.messages[0].error.code, -32700)
+    assert.equal(invalidInit.messages[0].error.code, -32600)
     const healthyInit = await rpc(url, initialize(2))
     assert.equal(healthyInit.response.status, 200)
     const session = healthyInit.response.headers.get('mcp-session-id')!
     const invalidRequest = await rpc(url, { jsonrpc: '2.0', id: 3 }, session)
     assert.equal(invalidRequest.response.status, 400)
-    assert.equal(invalidRequest.messages[0].error.code, -32700)
+    assert.equal(invalidRequest.messages[0].error.code, -32600)
     const stale = await rpc(
       url,
       { jsonrpc: '2.0', id: 4, method: 'tools/list' },
       session,
     )
-    assert.equal(stale.response.status, 400)
+    assert.equal(stale.response.status, 200)
+    assert.equal(stale.messages[0].result.tools[0].name, 'add')
     const recovered = await rpc(url, initialize(5))
     assert.equal(recovered.response.status, 200)
     assert.ok(recovered.response.headers.get('mcp-session-id'))

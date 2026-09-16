@@ -172,10 +172,20 @@ for (const mode of ['stateful', 'stateless'] as const) {
           b.errors.at(-1)![1],
         ],
       },
-      { kills: 1, diagnostic: ['StreamableHttp error:', failure] },
+      {
+        kills: mode === 'stateful' ? 0 : 1,
+        diagnostic: ['StreamableHttp error:', failure],
+      },
     )
     if (mode === 'stateful') {
-      for (const old of b.transports) {
+      // Only the explicitly closed transport lost its session. A reported
+      // request error leaves the second session available for another request.
+      const preserved = await b.request('GET', '/rpc', {
+        headers: { 'mcp-session-id': b.transports[1].sessionId },
+      })
+      assert.equal(preserved.res.code, 200)
+      assert.equal(b.children[1].kills, 0)
+      for (const old of [b.transports[0]]) {
         const missing = await b.request('GET', '/rpc', {
           headers: { 'mcp-session-id': old.sessionId },
         })

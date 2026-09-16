@@ -337,6 +337,42 @@ jobs:
         timeout-minutes: 8
         run: npm run test:compat
 
+  # Build with the supported SDK toolchain, then install the exact tarball with
+  # each consumer's npm and run its CLI with that consumer's Node. A loopback
+  # registry exercises shrinkwrap resolution, which differs from local tarballs
+  # on older npm. No publication is involved.
+  package:
+    name: Package on Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['18.14.1', '18', '20', '22', '24', '26']
+        include:
+          - os: windows-latest
+            node: '18.14.1'
+          - os: windows-latest
+            node: '24'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Save consumer runtime paths
+        shell: bash
+        run: |
+          node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NODE=" + process.execPath + "\n")'
+          npm exec --offline -- node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NPM=" + process.env.npm_execpath + "\n")'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify fresh npx installation and protocol/lifecycle behavior
+        run: npm run test:package
+
   # The libc the shipped image actually uses. The compat job covers glibc and
   # darwin; this covers musl, and checks that the compiled gateway starts,
   # announces its listener and serves a request there.

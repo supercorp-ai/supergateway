@@ -48,19 +48,26 @@ async function run(executable, args, cwd, env, capture = false) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
+    let errors = ''
     const timer = setTimeout(() => child.kill(), 240000)
     child.stdout.on('data', (chunk) => {
       output += chunk
       if (!capture) process.stdout.write(chunk)
     })
     child.stderr.on('data', (chunk) => {
+      errors += chunk
       process.stderr.write(chunk)
     })
     child.once('error', reject)
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
       if (code === 0) resolve(output)
-      else reject(new Error(`${executable} exited with ${code ?? signal}`))
+      else
+        reject(
+          new Error(
+            `${executable} ${args.join(' ')} exited with ${code ?? signal}\n${output}\n${errors}`,
+          ),
+        )
     })
   })
 }
@@ -81,6 +88,7 @@ try {
       /^(dist\/|package\.json$|npm-shrinkwrap\.json$|README\.md$|LICENSE$)/,
     )
   assert.ok(packed.files.some((file) => file.path === 'npm-shrinkwrap.json'))
+  console.log(`Packed ${packed.files.length} files (${packed.size} bytes)`)
   const tarball = readFileSync(join(temporary, packed.filename))
   let registry
   // Exercise registry installation: older npm handles a local tarball's
@@ -118,6 +126,7 @@ try {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   registry = `http://127.0.0.1:${server.address().port}`
   const cache = join(temporary, 'cache')
+  console.log(`Installing candidate with ${runtime} and ${runtimeNpm}`)
   const output = await run(
     runtime,
     [
@@ -142,6 +151,7 @@ try {
     true,
   )
   assert.match(output, /--outputTransport/)
+  console.log('Fresh npx install and CLI help succeeded')
   const entry = readdirSync(join(cache, '_npx'))
     .map((name) =>
       join(cache, '_npx', name, 'node_modules/supergateway/dist/index.js'),

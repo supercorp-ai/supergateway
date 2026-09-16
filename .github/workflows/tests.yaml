@@ -313,7 +313,7 @@ jobs:
   compat:
     name: Compatible suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 8
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -333,7 +333,8 @@ jobs:
         run: npm ci
 
       - name: Run the version-portable suite
-        timeout-minutes: 6
+        # Native lifecycle tests include the same shutdown grace as the full suite.
+        timeout-minutes: 8
         run: npm run test:compat
 
   # The libc the shipped image actually uses. The compat job covers glibc and

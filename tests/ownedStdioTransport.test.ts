@@ -18,6 +18,8 @@ async function setup() {
   const writes: string[] = []
   let writeError: Error | undefined
   const child = Object.assign(new EventEmitter(), {
+    exitCode: null as number | null,
+    signalCode: null as string | null,
     stdin: new Writable({
       write(chunk, _encoding, callback) {
         writes.push(chunk.toString())
@@ -172,4 +174,42 @@ test('owned stdio cleanup is safe without callbacks or a started child', async (
   c.child.emit('error', new Error('unobserved failure'))
   assert.equal(c.stops(), 1)
   assert.equal(c.failures.length, 0)
+})
+
+for (const outcome of ['exit', 'failure', 'deadline'] as const) {
+  test(`notification pipe drain handles ${outcome} and releases listeners`, async (t) => {
+    const s = await setup()
+    await s.transport.start()
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const before = s.child.listenerCount('exit')
+    const pending = s.transport.finish()
+    assert.equal(s.child.stdin.writableEnded, true)
+    if (outcome === 'failure') {
+      const rejected = assert.rejects(pending, /code=4/)
+      s.child.emit('exit', 4, null)
+      await rejected
+    } else {
+      if (outcome === 'exit') s.child.emit('exit', 0, null)
+      else t.mock.timers.tick(5000)
+      await pending
+    }
+    assert.equal(s.child.listenerCount('exit'), before)
+    assert.deepEqual(s.failures, [])
+    await s.transport.close()
+    assert.equal(s.stops(), 1)
+  })
+}
+test('notification drain tolerates absent, closed and already exited children', async () => {
+  const s = await setup()
+  await s.transport.finish()
+  await s.transport.start()
+  s.child.exitCode = 0
+  await s.transport.finish()
+  s.child.exitCode = null
+  s.child.signalCode = 'SIGTERM'
+  await s.transport.finish()
+  s.child.signalCode = null
+  await s.transport.close()
+  await s.transport.finish()
+  assert.equal(s.child.stdin.writableEnded, false)
 })

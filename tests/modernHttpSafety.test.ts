@@ -1,5 +1,5 @@
 import { test, type TestContext } from 'node:test'
-import { knownBugTest } from './helpers/known-bug.js'
+
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { processInfo, reapAfter, stopped } from './helpers/process-tree.js'
@@ -277,8 +277,7 @@ for (const stateful of [true, false]) {
     },
   )
 
-  knownBugTest(
-    'PR-193 transparent HTTP parameter validation',
+  test(
     `${label}: mismatched tool parameter header is rejected before dispatch`,
     { timeout: 15000 },
     async (t) => {
@@ -540,7 +539,7 @@ for (const stateful of [true, false]) {
         nested: { kept: true },
       })
       const unknown = await post(url, 'custom/unknown')
-      assert.equal(unknown.status, 200)
+      assert.equal(unknown.status, 404)
       assert.equal(unknown.message.id, 17)
       assert.deepEqual(unknown.message.error, {
         code: -32601,
@@ -624,3 +623,124 @@ for (const stateful of [true, false]) {
     )
   }
 }
+
+for (const stateful of [true, false]) {
+  test(
+    `modern notification is delivered before EOF cleanup (${stateful})`,
+    { timeout: 15000 },
+    async (t) => {
+      const { url, trace } = await setup(t, stateful)
+      const response = await fetch(url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(10000),
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': VERSION,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'custom/notify',
+          params: { _meta: meta, value: 'delivered' },
+        }),
+      })
+      assert.equal(response.status, 202)
+      assert.equal(await response.text(), '')
+      assert.equal(
+        trace().filter(
+          (e) =>
+            e.message?.method === 'custom/notify' &&
+            e.message.params.value === 'delivered',
+        ).length,
+        1,
+      )
+      await eventually(
+        () =>
+          trace()
+            .filter((e) => e.event === 'start')
+            .every((e) => !alive(e.pid)),
+        'notification child exits',
+      )
+    },
+  )
+  test(
+    `modern schema lookup failure and repeated pagination do not dispatch tools (${stateful})`,
+    { timeout: 15000 },
+    async (t) => {
+      const { url, trace } = await setup(t, stateful, 'repeat-cursor')
+      const response = await post(url, 'tools/call', {
+        name: 'not-listed',
+        arguments: {},
+      })
+      assert.equal(response.message.error.code, -32603)
+      assert.equal(
+        trace().filter((e) => e.message?.method === 'tools/list').length,
+        2,
+      )
+      assert.equal(
+        trace().filter((e) => e.message?.method === 'tools/call').length,
+        0,
+      )
+      await eventually(
+        () =>
+          trace()
+            .filter((e) => e.event === 'start')
+            .every((e) => !alive(e.pid)),
+        'lookup failure reaps child',
+      )
+    },
+  )
+}
+
+for (const stateful of [false, true])
+  test(
+    `HTTP validation and errors after SSE starts (${stateful})`,
+    { timeout: 15000 },
+    async (t) => {
+      const { url, trace } = await setup(t, stateful)
+      for (const [header, status] of [
+        [{ 'content-type': 'text/plain' }, 415],
+        [{ accept: 'application/json' }, 406],
+        [{ accept: '' }, 406],
+      ] as const) {
+        const bad = await post(url, 'server/discover', {}, header)
+        assert.equal(bad.status, status)
+        assert.equal(bad.message.id, header['content-type'] ? null : 17)
+      }
+      assert.equal(trace().length, 0, 'invalid HTTP metadata starts no child')
+      const response = await fetch(url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-method': 'custom/stream-error',
+          'mcp-protocol-version': VERSION,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 17,
+          method: 'custom/stream-error',
+          params: { _meta: meta },
+        }),
+      })
+      assert.equal(response.status, 200)
+      assert.match(response.headers.get('content-type')!, /text\/event-stream/)
+      const frames = (await response.text())
+        .split('\n')
+        .filter((l) => l.startsWith('data:'))
+        .map((l) => JSON.parse(l.slice(5)))
+      assert.deepEqual(frames, [
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/progress',
+          params: { progressToken: 'p', progress: 1 },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 17,
+          error: { code: -32601, message: 'fixture error after progress' },
+        },
+      ])
+    },
+  )

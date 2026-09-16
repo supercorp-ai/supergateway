@@ -177,6 +177,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     result({
       completion: { values: ['alice', 'albert'], total: 2, hasMore: false },
     })
-  else if (method === 'custom/echo') result({ received: params })
+  else if (method === 'custom/stream-error') {
+    send({
+      jsonrpc: '2.0',
+      method: 'notifications/progress',
+      params: { progressToken: 'p', progress: 1 },
+    })
+    error(-32601, 'fixture error after progress')
+  } else if (method === 'custom/echo') result({ received: params })
   else if (id !== undefined) error(-32601, 'Unknown fixture method')
 }

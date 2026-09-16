@@ -1,21 +1,12 @@
 export {
-  Client,
   parseJSONRPCMessage,
   type JSONRPCMessage,
+  type JSONRPCResponse,
   type Transport,
-  type Request as McpRequest,
-  type RequestMethod,
-  type ResultTypeMap,
 } from '@modelcontextprotocol/client'
 export {
-  McpServer,
-  ProtocolError,
-  createMcpHandler,
-  fromJsonSchema,
   classifyInboundRequest,
   PerRequestHTTPServerTransport,
-  type ServerCapabilities,
-  type ServerContext,
-  type CallToolResult,
+  isJsonContentType,
 } from '@modelcontextprotocol/server'
 export { toNodeHandler } from '@modelcontextprotocol/node'

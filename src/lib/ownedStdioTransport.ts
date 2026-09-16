@@ -72,6 +72,32 @@ export class OwnedStdioTransport implements Transport {
     })
   }
 
+  async finish(): Promise<void> {
+    const child = this.child
+    if (
+      !child ||
+      this.closed ||
+      child.exitCode !== null ||
+      child.signalCode !== null
+    )
+      return
+    // A notification has no reply. Deliver EOF and allow the peer to consume
+    // the pipe before the normal bounded process-owner shutdown takes over.
+    this.closed = true
+    await new Promise<void>((resolve, reject) => {
+      const done = (code?: number | null) => {
+        clearTimeout(timer)
+        child.off('exit', done)
+        if (typeof code === 'number' && code !== 0)
+          reject(new Error(`Child exited: code=${code}`))
+        else resolve()
+      }
+      const timer = setTimeout(done, 5000)
+      child.once('exit', done)
+      child.stdin.end()
+    })
+  }
+
   async close(): Promise<void> {
     if (!this.closed) {
       this.closed = true

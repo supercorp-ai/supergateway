@@ -68,3 +68,46 @@ test('stdioToStatefulStreamableHttp listTools and callTool', async () => {
   await client.close()
   transport.close()
 })
+
+test('stdioToStatefulStreamableHttp returns 404 for unknown session IDs', async () => {
+  await new Promise((r) => setTimeout(r, 2000))
+
+  const unknownSession = await fetch(MCP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      'mcp-session-id': 'unknown-session-id',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+    }),
+  })
+
+  assert.strictEqual(unknownSession.status, 404)
+  assert.deepStrictEqual(await unknownSession.json(), {
+    jsonrpc: '2.0',
+    error: {
+      code: -32001,
+      message: 'Session not found',
+    },
+    id: null,
+  })
+
+  const missingSession = await fetch(MCP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/list',
+    }),
+  })
+
+  assert.strictEqual(missingSession.status, 400)
+})

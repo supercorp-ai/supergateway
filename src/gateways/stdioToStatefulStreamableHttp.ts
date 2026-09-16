@@ -259,6 +259,16 @@ export async function stdioToStatefulStreamableHttp(
         logger.error(`StreamableHttp error (session ${sessionId}):`, err)
         stopChild('transport emitting error')
       }
+    } else if (sessionId) {
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Session not found',
+        },
+        id: null,
+      })
+      return
     } else {
       // Invalid request
       res.status(400).json({

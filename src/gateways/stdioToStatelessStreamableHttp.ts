@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
+import { stdoutLines } from '../lib/stdoutLines.js'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -17,6 +17,7 @@ import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
+  maxStdoutLineBytes?: number
   port: number
   streamableHttpPath: string
   logger: Logger
@@ -66,6 +67,7 @@ export async function stdioToStatelessStreamableHttp(
 ) {
   const {
     stdioCmd,
+    maxStdoutLineBytes,
     port,
     streamableHttpPath,
     logger,
@@ -218,97 +220,104 @@ export async function stdioToStatelessStreamableHttp(
         finishRequest()
       })
 
-      const decoder = new StringDecoder('utf8')
-      let buffer = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk)
-        const lines = buffer.split(/\r?\n/)
-        // `split` always returns at least one element, so `pop()` is never
-        // undefined here — the fallback it replaced could not be taken.
-        buffer = lines.pop()!
-        lines.forEach((line) => {
-          if (!line.trim()) return
-          try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            // A later HTTP POST starts a different child, so it cannot answer
-            // this child's reverse request. Reply locally instead of hanging.
-            if ('method' in jsonMsg && 'id' in jsonMsg) {
-              child.stdin.write(
-                JSON.stringify({
-                  jsonrpc: '2.0',
-                  id: jsonMsg.id,
-                  ...(jsonMsg.method === 'ping'
-                    ? { result: {} }
-                    : {
-                        error: {
-                          code: -32601,
-                          message:
-                            'Server-to-client requests are not supported in stateless mode',
-                        },
-                      }),
-                }) + '\n',
-              )
-              return
-            }
-            if ('id' in jsonMsg) {
-              pendingRequests.delete(jsonMsg.id)
-            }
-
-            // Handle initialize response (both auto and client initiated)
-            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
-              logger.info('Initialize response received')
-
-              // If this was our auto-initialization, send initialized notification and pending message
-              if (isAutoInitializing) {
-                // Send initialized notification
-                const initializedNotification = createInitializedNotification()
-                logger.info(
-                  `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
-                )
+      child.stdout.on(
+        'data',
+        stdoutLines(
+          maxStdoutLineBytes,
+          (line) => {
+            if (!line.trim()) return
+            try {
+              const jsonMsg = JSON.parse(line)
+              logger.info('Child → StreamableHttp:', line)
+              // A later HTTP POST starts a different child, so it cannot answer
+              // this child's reverse request. Reply locally instead of hanging.
+              if ('method' in jsonMsg && 'id' in jsonMsg) {
                 child.stdin.write(
-                  JSON.stringify(initializedNotification) + '\n',
+                  JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: jsonMsg.id,
+                    ...(jsonMsg.method === 'ping'
+                      ? { result: {} }
+                      : {
+                          error: {
+                            code: -32601,
+                            message:
+                              'Server-to-client requests are not supported in stateless mode',
+                          },
+                        }),
+                  }) + '\n',
                 )
-
-                // Now send the original message. There is always one to
-                // send: `isAutoInitializing` is only ever set true alongside
-                // assigning it, and the only assignment back to null is the one
-                // below, immediately before the flag is cleared again. The
-                // guard that used to stand here could not be false.
-                logger.info(
-                  `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
-                )
-                child.stdin.write(JSON.stringify(pendingOriginalMessage) + '\n')
-                pendingOriginalMessage = null
-
-                // Reset auto-initialize tracking
-                isAutoInitializing = false
-                initializeRequestId = null
-                finishRequest()
-
-                // Don't forward our auto-initialize response to the client
                 return
-              } else {
-                // Client-initiated initialize response, just reset tracking
-                initializeRequestId = null
               }
-            }
+              if ('id' in jsonMsg) {
+                pendingRequests.delete(jsonMsg.id)
+              }
 
-            void transport
-              .send(jsonMsg, {
-                // Each stateless child serves one POST. Responses route by
-                // their own ID; notifications share the pending request stream.
-                relatedRequestId: pendingRequests.values().next().value,
-              })
-              .catch((e) => {
-                logger.error(`Failed to send to StreamableHttp`, e)
-              })
-              .finally(finishRequest)
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
-          }
-        })
-      })
+              // Handle initialize response (both auto and client initiated)
+              if (initializeRequestId && jsonMsg.id === initializeRequestId) {
+                logger.info('Initialize response received')
+
+                // If this was our auto-initialization, send initialized notification and pending message
+                if (isAutoInitializing) {
+                  // Send initialized notification
+                  const initializedNotification =
+                    createInitializedNotification()
+                  logger.info(
+                    `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
+                  )
+                  child.stdin.write(
+                    JSON.stringify(initializedNotification) + '\n',
+                  )
+
+                  // Now send the original message. There is always one to
+                  // send: `isAutoInitializing` is only ever set true alongside
+                  // assigning it, and the only assignment back to null is the one
+                  // below, immediately before the flag is cleared again. The
+                  // guard that used to stand here could not be false.
+                  logger.info(
+                    `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
+                  )
+                  child.stdin.write(
+                    JSON.stringify(pendingOriginalMessage) + '\n',
+                  )
+                  pendingOriginalMessage = null
+
+                  // Reset auto-initialize tracking
+                  isAutoInitializing = false
+                  initializeRequestId = null
+                  finishRequest()
+
+                  // Don't forward our auto-initialize response to the client
+                  return
+                } else {
+                  // Client-initiated initialize response, just reset tracking
+                  initializeRequestId = null
+                }
+              }
+
+              void transport
+                .send(jsonMsg, {
+                  // Each stateless child serves one POST. Responses route by
+                  // their own ID; notifications share the pending request stream.
+                  relatedRequestId: pendingRequests.values().next().value,
+                })
+                .catch((e) => {
+                  logger.error(`Failed to send to StreamableHttp`, e)
+                })
+                .finally(finishRequest)
+            } catch {
+              logger.error(`Child non-JSON: ${line}`)
+            }
+          },
+          () => {
+            handleChildFailure(
+              new Error(
+                `Child stdout line exceeds maxStdoutLineBytes (${maxStdoutLineBytes} bytes)`,
+              ),
+            )
+          },
+        ),
+      )
 
       child.stderr.on('data', (chunk: Buffer) => {
         logger.error(`Child stderr: ${chunk.toString('utf8')}`)

@@ -22,6 +22,9 @@ const packages = new Map()
 const vendored = new Map()
 const vendorAliases = {
   ajv: 'modern-vendor-ajv',
+  'ajv-formats': 'modern-vendor-ajv-formats',
+  'content-type': 'modern-vendor-content-type',
+  'fast-deep-equal': 'modern-vendor-fast-deep-equal',
   'fast-uri': 'modern-vendor-fast-uri',
   'json-schema-traverse': 'modern-vendor-json-schema-traverse',
 }

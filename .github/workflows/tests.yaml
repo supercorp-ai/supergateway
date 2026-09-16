@@ -363,8 +363,7 @@ jobs:
       - name: Save consumer runtime paths
         shell: bash
         run: |
-          node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NODE=" + process.execPath + "\n")'
-          npm exec --offline -- node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NPM=" + process.env.npm_execpath + "\n")'
+          node -e 'const fs = require("node:fs"), path = require("node:path"); const npm = path.resolve(path.dirname(process.execPath), process.platform === "win32" ? "node_modules/npm/bin/npm-cli.js" : "../lib/node_modules/npm/bin/npm-cli.js"); if (!fs.existsSync(npm)) throw new Error("Missing consumer npm: " + npm); fs.appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NODE=" + process.execPath + "\nSUPERGATEWAY_TEST_NPM=" + npm + "\n")'
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -117,7 +117,11 @@ npx -y supergateway \
 
 ## Child process shutdown
 
-On POSIX systems (including Linux and macOS), stdio commands run in their own process groups. When their owner ends—a stateful session closes, the wrapper exits, or the gateway shuts down—the gateway sends SIGTERM to the group and allows up to five seconds before sending SIGKILL. Shutdown signals and stdin EOF wait for this cleanup. Completing a stateful HTTP response does not end its session.
+On POSIX systems (including Linux and macOS), stdio commands run in their own process groups. When their owner ends—a stateful session closes, the wrapper exits, or the gateway shuts down—the gateway sends SIGTERM to the group and allows up to five seconds before sending SIGKILL. Shutdown waits for this cleanup. Completing a stateful HTTP response does not end its session.
+
+For network-output gateways, closing a pipe connected to the gateway's stdin also triggers shutdown. Starting with stdin ignored or redirected from `/dev/null` keeps the gateway running. This supports launchers whose exit closes the pipe connected to gateway stdin; it is not general parent-process death detection or a server-wide idle timeout.
+
+Ctrl-C is handled by the gateway, which sends SIGTERM to its owned children. Child servers should handle SIGTERM for graceful shutdown. The separate POSIX session has no controlling terminal, so commands that require `/dev/tty` may behave differently. Allow more than five seconds for graceful gateway shutdown before forcing termination.
 
 Windows retains direct-child termination. Processes that deliberately create a separate process group or session are outside this cleanup scope. An uncatchable gateway SIGKILL also cannot run cleanup.
 
@@ -301,6 +305,7 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@logan-crosby](https://github.com/logan-crosby)
 - [@BishopMartin](https://github.com/BishopMartin)
 - [@gkinter](https://github.com/gkinter)
 - [@JoeLuker](https://github.com/JoeLuker)

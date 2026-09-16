@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
+import { stdoutLines } from '../lib/stdoutLines.js'
 import express from 'express'
 import bodyParser from 'body-parser'
 import cors, { type CorsOptions } from 'cors'
@@ -15,6 +15,7 @@ import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
+  maxStdoutLineBytes?: number
   port: number
   baseUrl: string
   ssePath: string
@@ -39,6 +40,7 @@ const setResponseHeaders = ({
 export async function stdioToSse(args: StdioToSseArgs) {
   const {
     stdioCmd,
+    maxStdoutLineBytes,
     port,
     baseUrl,
     ssePath,
@@ -65,6 +67,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
 
+  let stdoutFailed = false
   const children = new OwnedChildProcesses(logger)
   onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
@@ -72,7 +75,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
   children.own(child)
   child.on('exit', (code, signal) => {
     logger.error(`Child exited: code=${code}, signal=${signal}`)
-    void children.close().then(() => process.exit(code ?? 1))
+    void children
+      .close()
+      .then(() => process.exit(stdoutFailed ? 1 : (code ?? 1)))
   })
 
   // One `Server` per session, not one per process.
@@ -210,34 +215,38 @@ export async function stdioToSse(args: StdioToSseArgs) {
     logger.info(`POST messages: http://localhost:${port}${messagePath}`)
   })
 
-  const decoder = new StringDecoder('utf8')
-  let buffer = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += decoder.write(chunk)
-    const lines = buffer.split(/\r?\n/)
-    // `split` always returns at least one element, so `pop()` is never
-    // undefined here — the fallback it replaced could not be taken.
-    buffer = lines.pop()!
-    lines.forEach((line) => {
-      if (!line.trim()) return
-      try {
-        const jsonMsg = JSON.parse(line)
-        logger.info('Child → SSE:', jsonMsg)
-        for (const [sid, session] of Object.entries(sessions)) {
-          // `send` is async: it reports failure by rejecting, so a synchronous
-          // try/catch around it never ran and the rejection escaped to kill the
-          // process. Attaching the handler here is also what makes the pruning
-          // below reachable for the first time.
-          session.transport.send(jsonMsg).catch((err) => {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          })
+  child.stdout.on(
+    'data',
+    stdoutLines(
+      maxStdoutLineBytes,
+      (line) => {
+        if (!line.trim()) return
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info('Child → SSE:', jsonMsg)
+          for (const [sid, session] of Object.entries(sessions)) {
+            // `send` is async: it reports failure by rejecting, so a synchronous
+            // try/catch around it never ran and the rejection escaped to kill the
+            // process. Attaching the handler here is also what makes the pruning
+            // below reachable for the first time.
+            session.transport.send(jsonMsg).catch((err) => {
+              logger.error(`Failed to send to session ${sid}:`, err)
+              delete sessions[sid]
+            })
+          }
+        } catch {
+          logger.error(`Child non-JSON: ${line}`)
         }
-      } catch {
-        logger.error(`Child non-JSON: ${line}`)
-      }
-    })
-  })
+      },
+      () => {
+        stdoutFailed = true
+        logger.error(
+          `Child stdout line exceeds maxStdoutLineBytes (${maxStdoutLineBytes} bytes)`,
+        )
+        void children.close()
+      },
+    ),
+  )
 
   child.stderr.on('data', (chunk: Buffer) => {
     logger.error(`Child stderr: ${chunk.toString('utf8')}`)

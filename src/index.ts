@@ -20,6 +20,7 @@
  */
 
 import yargs from 'yargs'
+import { constants as bufferConstants } from 'node:buffer'
 import { hideBin } from 'yargs/helpers'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
@@ -38,6 +39,11 @@ async function main() {
     .option('stdio', {
       type: 'string',
       description: 'Command to run an MCP server over Stdio',
+    })
+    .option('maxStdoutLineBytes', {
+      type: 'number',
+      description:
+        'Maximum bytes per child stdout line before LF. Only supported for --stdio. Default: unlimited.',
     })
     .option('sse', {
       type: 'string',
@@ -160,6 +166,18 @@ async function main() {
     process.exit(1)
   }
 
+  if (
+    argv.maxStdoutLineBytes !== undefined &&
+    (!Number.isSafeInteger(argv.maxStdoutLineBytes) ||
+      argv.maxStdoutLineBytes <= 0 ||
+      argv.maxStdoutLineBytes > bufferConstants.MAX_STRING_LENGTH)
+  ) {
+    logger.error(
+      `Error: maxStdoutLineBytes must be an integer between 1 and ${bufferConstants.MAX_STRING_LENGTH}`,
+    )
+    process.exit(1)
+  }
+
   const inputTransport = inputTransports[0]
 
   logger.info('Starting...')
@@ -173,6 +191,7 @@ async function main() {
       if (argv.outputTransport === 'sse') {
         await stdioToSse({
           stdioCmd: argv.stdio!,
+          maxStdoutLineBytes: argv.maxStdoutLineBytes,
           port: argv.port,
           baseUrl: argv.baseUrl,
           ssePath: argv.ssePath,
@@ -188,6 +207,7 @@ async function main() {
       } else if (argv.outputTransport === 'ws') {
         await stdioToWs({
           stdioCmd: argv.stdio!,
+          maxStdoutLineBytes: argv.maxStdoutLineBytes,
           port: argv.port,
           messagePath: argv.messagePath,
           logger,
@@ -215,6 +235,7 @@ async function main() {
 
           await stdioToStatefulStreamableHttp({
             stdioCmd: argv.stdio!,
+            maxStdoutLineBytes: argv.maxStdoutLineBytes,
             port: argv.port,
             streamableHttpPath: argv.streamableHttpPath,
             logger,
@@ -231,6 +252,7 @@ async function main() {
 
           await stdioToStatelessStreamableHttp({
             stdioCmd: argv.stdio!,
+            maxStdoutLineBytes: argv.maxStdoutLineBytes,
             port: argv.port,
             streamableHttpPath: argv.streamableHttpPath,
             logger,

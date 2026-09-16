@@ -23,6 +23,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
+- **`--maxStdoutLineBytes 16777216`**: Optional limit on bytes per child stdout line, before the newline (`--stdio` only; default: unlimited). Exceeding it stops the child. Streamable HTTP keeps other sessions running; SSE and WebSocket exit with an error.
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.

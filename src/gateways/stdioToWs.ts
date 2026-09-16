@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
+import { stdoutLines } from '../lib/stdoutLines.js'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { createServer } from 'http'
@@ -15,6 +15,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
+  maxStdoutLineBytes?: number
   port: number
   messagePath: string
   logger: Logger
@@ -23,8 +24,15 @@ export interface StdioToWsArgs {
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
-  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
-    args
+  const {
+    stdioCmd,
+    maxStdoutLineBytes,
+    port,
+    messagePath,
+    logger,
+    healthEndpoints,
+    corsOrigin,
+  } = args
   logger.info(`  - port: ${port}`)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - messagePath: ${messagePath}`)
@@ -39,6 +47,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   let child: ChildProcessWithoutNullStreams | null = null
   let isReady = false
 
+  let stdoutFailed = false
   const children = new OwnedChildProcesses(logger)
   const cleanup = () => {
     if (wsTransport) {
@@ -60,7 +69,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
     children.own(child)
     child.on('exit', (code, signal) => {
       logger.error(`Child exited: code=${code}, signal=${signal}`)
-      void cleanup().then(() => process.exit(code ?? 1))
+      void cleanup().then(() => process.exit(stdoutFailed ? 1 : (code ?? 1)))
     })
 
     const server = new Server(
@@ -69,32 +78,36 @@ export async function stdioToWs(args: StdioToWsArgs) {
     )
 
     // Handle child process output
-    const decoder = new StringDecoder('utf8')
-    let buffer = ''
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += decoder.write(chunk)
-      const lines = buffer.split(/\r?\n/)
-      // `split` always returns at least one element, so `pop()` is never
-      // undefined here — the fallback it replaced could not be taken.
-      buffer = lines.pop()!
-      lines.forEach((line) => {
-        if (!line.trim()) return
-        try {
-          const jsonMsg = JSON.parse(line)
-          logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
-          // Broadcast to all connected clients
-          // `wsTransport` is assigned further down this same synchronous
-          // stretch — there is no await between registering this handler and
-          // that assignment — so Node cannot deliver a chunk while it is still
-          // null. The optional chain guarded a tick that cannot happen.
-          wsTransport!.send(jsonMsg, jsonMsg.id).catch((err) => {
-            logger.error('Failed to broadcast message:', err)
-          })
-        } catch {
-          logger.error(`Child non-JSON: ${line}`)
-        }
-      })
-    })
+    child.stdout.on(
+      'data',
+      stdoutLines(
+        maxStdoutLineBytes,
+        (line) => {
+          if (!line.trim()) return
+          try {
+            const jsonMsg = JSON.parse(line)
+            logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
+            // Broadcast to all connected clients
+            // `wsTransport` is assigned further down this same synchronous
+            // stretch — there is no await between registering this handler and
+            // that assignment — so Node cannot deliver a chunk while it is still
+            // null. The optional chain guarded a tick that cannot happen.
+            wsTransport!.send(jsonMsg, jsonMsg.id).catch((err) => {
+              logger.error('Failed to broadcast message:', err)
+            })
+          } catch {
+            logger.error(`Child non-JSON: ${line}`)
+          }
+        },
+        () => {
+          stdoutFailed = true
+          logger.error(
+            `Child stdout line exceeds maxStdoutLineBytes (${maxStdoutLineBytes} bytes)`,
+          )
+          void children.close()
+        },
+      ),
+    )
 
     child.stderr.on('data', (chunk: Buffer) => {
       logger.info(`Child stderr: ${chunk.toString('utf8')}`)

@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
+import { stdoutLines } from '../lib/stdoutLines.js'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -17,6 +17,7 @@ import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
+  maxStdoutLineBytes?: number
   port: number
   streamableHttpPath: string
   logger: Logger
@@ -42,6 +43,7 @@ export async function stdioToStatefulStreamableHttp(
 ) {
   const {
     stdioCmd,
+    maxStdoutLineBytes,
     port,
     streamableHttpPath,
     logger,
@@ -214,30 +216,34 @@ export async function stdioToStatefulStreamableHttp(
         handleChildFailure()
       })
 
-      const decoder = new StringDecoder('utf8')
-      let buffer = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk)
-        const lines = buffer.split(/\r?\n/)
-        // `split` always returns at least one element, so `pop()` is never
-        // undefined here — the fallback it replaced could not be taken.
-        buffer = lines.pop()!
-        lines.forEach((line) => {
-          if (!line.trim()) return
-          try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            if ('id' in jsonMsg && !('method' in jsonMsg)) {
-              pendingRequests.delete(jsonMsg.id)
+      child.stdout.on(
+        'data',
+        stdoutLines(
+          maxStdoutLineBytes,
+          (line) => {
+            if (!line.trim()) return
+            try {
+              const jsonMsg = JSON.parse(line)
+              logger.info('Child → StreamableHttp:', line)
+              if ('id' in jsonMsg && !('method' in jsonMsg)) {
+                pendingRequests.delete(jsonMsg.id)
+              }
+              transport.send(jsonMsg).catch((e) => {
+                logger.error(`Failed to send to StreamableHttp`, e)
+              })
+            } catch {
+              logger.error(`Child non-JSON: ${line}`)
             }
-            transport.send(jsonMsg).catch((e) => {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            })
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
-          }
-        })
-      })
+          },
+          () => {
+            handleChildFailure(
+              new Error(
+                `Child stdout line exceeds maxStdoutLineBytes (${maxStdoutLineBytes} bytes)`,
+              ),
+            )
+          },
+        ),
+      )
 
       child.stderr.on('data', (chunk: Buffer) => {
         logger.error(`Child stderr: ${chunk.toString('utf8')}`)

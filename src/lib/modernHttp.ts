@@ -105,7 +105,6 @@ export function createModernHttp(args: {
           stopped = true
           res.off('close', closed)
           pending?.reject(new Error('Request closed'))
-          pending = undefined
           stopPromise = Promise.resolve()
             .then(async () => {
               try {
@@ -130,8 +129,6 @@ export function createModernHttp(args: {
       const fail = async (error: Error) => {
         if (stopped || failed) return
         failed = true
-        pending?.reject(error)
-        pending = undefined
         logger.error('MCP child request failed:', error)
         if (error instanceof HeaderMismatch) responseStatus = 400
         if (route.messageKind === 'request') {

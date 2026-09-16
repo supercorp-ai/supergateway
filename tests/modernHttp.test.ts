@@ -286,6 +286,7 @@ for (const outcome of [
   'notification',
   'wrong-id',
   'write-failure',
+  'child-error',
   'backend-error',
   'abort',
   'abort-between-pages',
@@ -306,6 +307,10 @@ for (const outcome of [
         assert.notEqual(message.id, 0)
         if (outcome === 'write-failure')
           throw new Error('private write failure')
+        if (outcome === 'child-error') {
+          s.child.onerror(new Error('private lookup pipe failure'))
+          return
+        }
         if (outcome === 'abort') {
           s.response.emit('close')
           return
@@ -367,7 +372,11 @@ for (const outcome of [
     else {
       await s.open()
       const body = JSON.parse(s.body)
-      if (outcome === 'write-failure' || outcome === 'backend-error')
+      if (
+        outcome === 'write-failure' ||
+        outcome === 'backend-error' ||
+        outcome === 'child-error'
+      )
         assert.equal(body.error.code, -32603)
       else {
         assert.deepEqual(body.result, { opaque: 'reply' })

@@ -127,6 +127,8 @@ Windows retains direct-child termination. Processes that deliberately create a s
 
 In stateless Streamable HTTP mode, completed requests release their child and transport after the HTTP response closes and all pending JSON-RPC requests have replies. A client disconnect alone does not cancel work: the child stays alive until its pending work replies or the child/gateway terminates. There is no new execution timeout or response replay after disconnection.
 
+In both Streamable HTTP modes, a child exit or I/O failure sends a JSON-RPC internal error (`-32603`) for each unfinished client request before closing the transport. This includes initialization failures and a child that exits with code zero before replying. Child diagnostics remain in the gateway logs; other sessions keep running.
+
 Notification-only POSTs return HTTP 202 before processing completes. The gateway finishes auto-initialization and forwards the message before closing child stdin, then allows five seconds for voluntary exit before starting the SIGTERM/SIGKILL cleanup above. This grace period can add up to five seconds to the child's lifetime; notifications have no completion acknowledgment, so it does not guarantee completion of arbitrary background work.
 
 ## Example with MCP Inspector (stdio → SSE mode)
@@ -309,6 +311,7 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@rubenmajor2](https://github.com/rubenmajor2)
 - [@quigles1977](https://github.com/quigles1977)
 - [@jmcgurk2](https://github.com/jmcgurk2)
 - [@maxx3250](https://github.com/maxx3250)

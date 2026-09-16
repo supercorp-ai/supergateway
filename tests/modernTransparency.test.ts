@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -120,3 +121,66 @@ for (const modernOnly of [false, true])
       },
     )
   }
+
+for (const wrapped of [false, true]) {
+  test(
+    `${wrapped ? 'wrapped' : 'direct'} official SDK: opt-in logs and subscription notifications survive`,
+    { timeout: 15000 },
+    async (t) => {
+      const peer = await client(t, wrapped, true, true)
+      const logs: unknown[] = []
+      peer.setNotificationHandler('notifications/message', (message) =>
+        logs.push(message.params.data),
+      )
+      const logged = await peer.callTool(
+        {
+          name: 'logs',
+          arguments: {},
+          _meta: { 'io.modelcontextprotocol/logLevel': 'info' },
+        },
+        { timeout: 3000 },
+      )
+      assert.deepEqual(logged.content, [{ type: 'text', text: 'logged' }])
+      assert.deepEqual(logs, ['visible log'])
+      const changes: unknown[] = []
+      peer.setNotificationHandler(
+        'notifications/tools/list_changed',
+        (message) => changes.push(message),
+      )
+      const subscription = await peer.listen(
+        { toolsListChanged: true },
+        { timeout: 3000 },
+      )
+      t.after(() => subscription.close())
+      assert.deepEqual(subscription.honoredFilter, { toolsListChanged: true })
+      for (
+        const end = Date.now() + 3000;
+        changes.length === 0 && Date.now() < end;
+
+      )
+        await delay(10)
+      assert.ok(
+        changes.length > 0,
+        'the subscription delivers real backend changes',
+      )
+      await subscription.close()
+      assert.equal(await subscription.closed, 'local')
+      const count = changes.length
+      await delay(200)
+      assert.equal(
+        changes.length,
+        count,
+        'closed subscription delivers no more changes',
+      )
+      assert.deepEqual(
+        (
+          await peer.readResource(
+            { uri: 'note://still-healthy' },
+            { timeout: 3000 },
+          )
+        ).contents,
+        [{ uri: 'note://still-healthy', text: 'resource body' }],
+      )
+    },
+  )
+}

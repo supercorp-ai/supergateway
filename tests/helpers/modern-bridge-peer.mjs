@@ -1,4 +1,5 @@
-// A legacy wire peer with observable process identity and deterministic faults.
+// A wire peer with observable process identity and deterministic faults.
+// Legacy by default; safety tests opt into modern request envelopes.
 // The separate SDK-backed fixture still supplies the real implementation control.
 import readline from 'node:readline'
 import { spawn } from 'node:child_process'
@@ -65,14 +66,29 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   const request = JSON.parse(line)
   trace({ event: 'message', message: request })
   const { method, params = {}, id } = request
-  const result = (result) => send({ jsonrpc: '2.0', id, result })
+  const modern =
+    process.env.MODERN_WIRE === '1' &&
+    params._meta?.['io.modelcontextprotocol/protocolVersion'] === '2026-07-28'
+  const result = (result) =>
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        ...(modern
+          ? { resultType: 'complete', ttlMs: 0, cacheScope: 'private' }
+          : {}),
+        ...result,
+      },
+    })
   const error = (code, message) =>
     send({ jsonrpc: '2.0', id, error: { code, message } })
-  if (method === 'initialize') {
+  if (method === 'initialize' || (modern && method === 'server/discover')) {
     if (mode === 'exit-init') process.exit(0)
     if (mode === 'wait-init') continue
     result({
-      protocolVersion: '2025-06-18',
+      ...(modern
+        ? { supportedVersions: ['2026-07-28'] }
+        : { protocolVersion: '2025-06-18' }),
       serverInfo: { name: 'modern-bridge-peer', version: String(process.pid) },
       instructions: 'fixture instructions',
       capabilities:

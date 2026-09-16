@@ -6,21 +6,14 @@ import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client'
 import { launchGateway, unusedPort } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 // These clients already work against main through automatic legacy fallback.
 // State and roots assertions hold the existing gateway compatibility contract,
 // not protocol conformance: modern MCP removes transport-level sessions and
 // replaces reverse requests with input_required results. Logging has a separate
 // per-request opt-in rule, so unsolicited modern logs must not be expected.
-// The state/roots auto cases are held pending the endpoint compatibility choice;
-// RUN_KNOWN_BUG_TESTS=1 also runs them against an independently built baseline.
+// Run the same cases against independently built main and release baselines.
 for (const mode of ['auto', 'legacy'] as const) {
-  const check =
-    mode === 'auto'
-      ? knownBugTest.bind(null, 'PR-193 auto-negotiation regression')
-      : test
-
   async function connect(t: TestContext, peer: string) {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -58,7 +51,7 @@ for (const mode of ['auto', 'legacy'] as const) {
     return { client, logs }
   }
 
-  check(
+  test(
     `${mode} client preserves state across calls with --stateful`,
     { timeout: 15000 },
     async (t) => {
@@ -107,7 +100,7 @@ for (const mode of ['auto', 'legacy'] as const) {
     },
   )
 
-  check(
+  test(
     `${mode} client answers a backend roots request`,
     { timeout: 15000 },
     async (t) => {

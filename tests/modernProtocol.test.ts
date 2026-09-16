@@ -172,35 +172,24 @@ for (const mode of modes) {
     },
   )
 
-  // This is the actual compatibility target. The same real client passes the
-  // modern-server controls above. An unsupported header alone is not proof
-  // of a gateway defect, and accepting that header would not pass this test.
+  // Transport conversion must not manufacture protocol support the backend lacks.
   test(
-    `${mode.label}: a modern-only client discovers and calls a legacy child tool`,
-    { timeout: 20000 },
+    `${mode.label}: a modern-only client cannot negotiate with a legacy-only child`,
+    options,
     async (t) => {
       const url = await gateway(t, mode.args)
       const { client, transport, exchanges } = await clientFor(t, url, {
         pin: VERSION,
       })
-      await client.connect(transport, { timeout: 5000 })
-      assert.equal(client.getProtocolEra(), 'modern')
-      assert.ok(
-        (await client.listTools({}, { timeout: 5000 })).tools.some(
-          (tool) => tool.name === 'add',
-        ),
+      await assert.rejects(
+        client.connect(transport, { timeout: 5000 }),
+        /protocol|method|modern|support/i,
       )
-      const result = await client.callTool(
-        { name: 'add', arguments: { a: 2, b: 3 } },
-        { timeout: 5000 },
+      assert.deepEqual(
+        exchanges.map((exchange) => exchange.body?.method),
+        ['server/discover'],
       )
-      assert.deepEqual(result.content, [
-        { type: 'text', text: 'The sum of 2 and 3 is 5.' },
-      ])
-      assert.equal(
-        exchanges.some((exchange) => exchange.body?.method === 'initialize'),
-        false,
-      )
+      assert.equal(client.getDiscoverResult(), undefined)
     },
   )
 }

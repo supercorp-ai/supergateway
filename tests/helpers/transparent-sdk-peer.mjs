@@ -7,16 +7,29 @@ serveStdio(
   ({ era }) => {
     const server = new Server(
       { name: 'transparent-sdk-peer', version: '1.0.0' },
-      { capabilities: { tools: {}, resources: {}, logging: {} } },
+      {
+        capabilities: {
+          tools: { listChanged: true },
+          resources: {},
+          logging: {},
+        },
+      },
     )
     const tool = (name) => ({
       name,
       inputSchema: { type: 'object', properties: {} },
     })
     server.setRequestHandler('tools/list', async () => ({
-      tools: [tool('inspect'), tool('roots')],
+      tools: [tool('inspect'), tool('roots'), tool('logs')],
     }))
     server.setRequestHandler('tools/call', async (request, ctx) => {
+      if (request.params.name === 'logs') {
+        await ctx.mcpReq.notify({
+          method: 'notifications/message',
+          params: { level: 'info', data: 'visible log' },
+        })
+        return { content: [{ type: 'text', text: 'logged' }] }
+      }
       if (request.params.name === 'roots') {
         const roots = ctx.mcpReq.inputResponses?.locations
         if (!roots)
@@ -50,10 +63,11 @@ serveStdio(
     server.setRequestHandler('resources/read', async (request) => ({
       contents: [{ uri: request.params.uri, text: 'resource body' }],
     }))
-    server.fallbackRequestHandler = async (request) => ({
-      echoed: request.params,
-      extension: true,
-    })
+    const timer = setInterval(() => {
+      void server.sendToolListChanged().catch(() => {})
+    }, 80)
+    timer.unref()
+    server.onclose = () => clearInterval(timer)
     return server
   },
   { legacy: process.argv.includes('--modern-only') ? 'reject' : 'serve' },

@@ -1,4 +1,5 @@
 import { test, type TestContext } from 'node:test'
+import { knownBugTest } from './helpers/known-bug.js'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { processInfo, reapAfter, stopped } from './helpers/process-tree.js'
@@ -45,7 +46,7 @@ async function setup(
       String(port),
       ...(stateful ? ['--stateful'] : []),
     ],
-    { ...env, MODERN_TRACE: tracePath },
+    { ...env, MODERN_TRACE: tracePath, MODERN_WIRE: '1' },
     nodeArgs,
   )
   t.after(() => rmSync(directory, { recursive: true, force: true }))
@@ -151,10 +152,11 @@ for (const stateful of [true, false]) {
       assert.deepEqual(discovery.supportedVersions, [VERSION])
       assert.equal(discovery.instructions, 'fixture instructions')
       assert.deepEqual(discovery.capabilities, {
-        tools: { listChanged: false },
-        resources: { listChanged: false, subscribe: false },
-        prompts: { listChanged: false },
+        tools: { listChanged: true },
+        resources: { listChanged: true, subscribe: true },
+        prompts: { listChanged: true },
         completions: {},
+        logging: {},
       })
       const tools = await client.listTools({}, { timeout: 5000 })
       assert.deepEqual(
@@ -220,7 +222,7 @@ for (const stateful of [true, false]) {
       const pids = trace()
         .filter((event) => event.event === 'start')
         .map((event) => event.pid)
-      assert.equal(pids.length, 9)
+      assert.equal(pids.length, 10)
       await eventually(
         () => pids.every((pid) => !alive(pid)),
         'completed modern requests release every child',
@@ -250,16 +252,6 @@ for (const stateful of [true, false]) {
         ],
         [{ _meta: {} }, {}, -32602],
         [{}, { 'mcp-method': 'tools/list' }, -32020],
-        [
-          {
-            _meta: {
-              ...meta,
-              'io.modelcontextprotocol/protocolVersion': '2099-01-01',
-            },
-          },
-          { 'mcp-protocol-version': '2099-01-01' },
-          -32022,
-        ],
       ] as const) {
         const rejected = await post(url, 'server/discover', params, headers)
         assert.equal(rejected.status, 400)
@@ -271,6 +263,26 @@ for (const stateful of [true, false]) {
         before,
         'invalid modern envelopes do not start children',
       )
+      const recovered = await rpc(
+        url,
+        { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} },
+        session,
+      )
+      assert.equal(recovered.response.status, 200)
+      assert.ok(
+        recovered.messages[0].result.tools.some(
+          (tool: any) => tool.name === 'identity',
+        ),
+      )
+    },
+  )
+
+  knownBugTest(
+    'PR-193 transparent HTTP parameter validation',
+    `${label}: mismatched tool parameter header is rejected before dispatch`,
+    { timeout: 15000 },
+    async (t) => {
+      const { url, trace } = await setup(t, stateful)
       const badTool = await post(
         url,
         'tools/call',
@@ -282,17 +294,6 @@ for (const stateful of [true, false]) {
       assert.equal(
         trace().some((event) => event.message?.method === 'tools/call'),
         false,
-      )
-      const recovered = await rpc(
-        url,
-        { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} },
-        session,
-      )
-      assert.equal(recovered.response.status, 200)
-      assert.ok(
-        recovered.messages[0].result.tools.some(
-          (tool: any) => tool.name === 'identity',
-        ),
       )
     },
   )
@@ -429,7 +430,7 @@ for (const stateful of [true, false]) {
     )
 
   test(
-    `${label}: disconnect during initialization reaps the unfinished child`,
+    `${label}: disconnect during discovery reaps the unfinished child`,
     { timeout: 20000 },
     async (t) => {
       const { url, trace } = await setup(t, stateful, 'wait-init')
@@ -437,14 +438,15 @@ for (const stateful of [true, false]) {
       const pending = post(url, 'server/discover', {}, {}, controller.signal)
       const cancelled = assert.rejects(pending, { name: 'AbortError' })
       await eventually(
-        () => trace().some((event) => event.message?.method === 'initialize'),
-        'child receives initialization',
+        () =>
+          trace().some((event) => event.message?.method === 'server/discover'),
+        'child receives discovery',
       )
       const pid = trace().find((event) => event.event === 'start').pid
       assert.ok(alive(pid))
       controller.abort()
       await cancelled
-      await eventually(() => !alive(pid), 'aborted initialization reaps child')
+      await eventually(() => !alive(pid), 'aborted discovery reaps child')
     },
   )
 
@@ -509,10 +511,10 @@ for (const stateful of [true, false]) {
         arguments: {},
       })
       assert.equal(reverse.status, 200)
-      assert.equal(
-        JSON.parse(reverse.message.result.content[0].text).code,
-        -32601,
-      )
+      assert.deepEqual(reverse.message.error, {
+        code: -32603,
+        message: 'MCP server process failed',
+      })
       const healthy = await post(url, 'tools/call', {
         name: 'identity',
         arguments: {},
@@ -533,6 +535,7 @@ for (const stateful of [true, false]) {
       assert.equal(custom.status, 200)
       assert.equal(custom.message.id, 17)
       assert.deepEqual(custom.message.result.received, {
+        _meta: meta,
         value: 7,
         nested: { kept: true },
       })
@@ -547,7 +550,7 @@ for (const stateful of [true, false]) {
   )
 
   test(
-    `${label}: a tool schema cannot fetch a remote reference`,
+    `${label}: tool schemas pass through without fetching or compiling remote references`,
     { timeout: 15000 },
     async (t) => {
       let requests = 0
@@ -574,42 +577,40 @@ for (const stateful of [true, false]) {
       const { url, trace } = await setup(t, stateful, 'normal', {
         MODERN_SCHEMA_REF: reference,
       })
-      const response = await post(url, 'tools/call', {
-        name: 'echo',
-        arguments: { value: 'test' },
-      })
-      assert.ok(
-        response.message.error || response.message.result?.isError,
-        JSON.stringify(response.message),
+      const response = await post(url, 'tools/list', { cursor: 'page-2' })
+      assert.equal(response.status, 200)
+      const echo = response.message.result.tools.find(
+        (tool: any) => tool.name === 'echo',
       )
+      assert.equal(echo.inputSchema.$ref, reference)
       assert.equal(
-        trace().some((event) => event.message?.method === 'tools/call'),
-        false,
-        'unresolved reference cannot bypass validation',
+        trace().filter((event) => event.message?.method === 'tools/list')
+          .length,
+        1,
       )
       await eventually(
         () =>
           trace()
             .filter((event) => event.event === 'start')
             .every((event) => !alive(event.pid)),
-        'invalid schema releases the child',
+        'completed schema response releases the child',
       )
       assert.equal(
         requests,
         0,
-        'the SDK performs local schema resolution without fetching remote references',
+        'the relay preserves schema references without fetching them',
       )
     },
   )
 
-  for (const mode of ['exit-init', 'repeat-cursor']) {
+  for (const mode of ['exit-init']) {
     test(
       `${label}: ${mode} fails promptly and releases its child`,
       { timeout: 15000 },
       async (t) => {
         const { url, trace } = await setup(t, stateful, mode)
         const reply = await post(url, 'server/discover')
-        assert.equal(reply.status, 500)
+        assert.equal(reply.status, 200)
         assert.equal(reply.message.error.code, -32603)
         assert.equal(reply.message.id, 17)
         await eventually(

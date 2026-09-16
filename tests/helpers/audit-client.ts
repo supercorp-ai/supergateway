@@ -5,6 +5,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { WebSocket } from 'ws'
 import { initialize, launchGateway, unusedPort } from './gateway-process.js'
+import { faultControl } from './fault-control.js'
 
 export type AuditMode = 'sse' | 'ws' | 'stateful' | 'stateless'
 export async function auditClient(
@@ -13,6 +14,7 @@ export async function auditClient(
   peer: string,
   env?: Record<string, string>,
 ) {
+  const control = mode === 'stateless' ? await faultControl(t) : undefined
   const port = await unusedPort()
   const gateway = launchGateway(
     t,
@@ -25,9 +27,32 @@ export async function auditClient(
       mode === 'stateful' || mode === 'stateless' ? 'streamableHttp' : mode,
       ...(mode === 'stateful' ? ['--stateful'] : []),
     ],
-    env,
+    control ? { ...env, FAULT_CONTROL: control.url } : env,
   )
   await gateway.ready()
+  if (control) {
+    // A completed stateless initialization now releases its child. Hold actual
+    // work open so shutdown tests still observe a live, owned process.
+    const abort = new AbortController()
+    t.after(() => abort.abort())
+    const pending = fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'hold', arguments: {} },
+      }),
+      signal: abort.signal,
+    }).then((response) => response.text())
+    void pending.catch(() => {})
+    const held = await control.wait('hold')
+    return { gateway, pid: held.pid }
+  }
   if (mode === 'ws') {
     const socket = new WebSocket(`ws://127.0.0.1:${port}/message`)
     t.after(() => socket.terminate())

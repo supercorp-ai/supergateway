@@ -27,7 +27,9 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           mode,
           wrapped
             ? 'exec node tests/helpers/fault-wrapper.mjs'
-            : 'exec node tests/helpers/lifecycle-identity-peer.mjs',
+            : mode === 'stateless'
+              ? 'exec node tests/helpers/fault-peer.mjs'
+              : 'exec node tests/helpers/lifecycle-identity-peer.mjs',
         )
         assert.ok(Number.isInteger(b.pid) && b.pid > 0)
         assert.equal(

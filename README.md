@@ -125,6 +125,10 @@ Ctrl-C is handled by the gateway, which sends SIGTERM to its owned children. Chi
 
 Windows retains direct-child termination. Processes that deliberately create a separate process group or session are outside this cleanup scope. An uncatchable gateway SIGKILL also cannot run cleanup.
 
+In stateless Streamable HTTP mode, completed requests release their child and transport after the HTTP response closes and all pending JSON-RPC requests have replies. A client disconnect alone does not cancel work: the child stays alive until its pending work replies or the child/gateway terminates. There is no new execution timeout or response replay after disconnection.
+
+Notification-only POSTs return HTTP 202 before processing completes. The gateway finishes auto-initialization and forwards the message before closing child stdin, then allows five seconds for voluntary exit before starting the SIGTERM/SIGKILL cleanup above. This grace period can add up to five seconds to the child's lifetime; notifications have no completion acknowledgment, so it does not guarantee completion of arbitrary background work.
+
 ## Example with MCP Inspector (stdio → SSE mode)
 
 1. **Run Supergateway**:
@@ -305,6 +309,10 @@ Supergateway emphasizes modularity:
 
 ## Contributors
 
+- [@quigles1977](https://github.com/quigles1977)
+- [@jmcgurk2](https://github.com/jmcgurk2)
+- [@maxx3250](https://github.com/maxx3250)
+- [@julioccorderoc](https://github.com/julioccorderoc)
 - [@logan-crosby](https://github.com/logan-crosby)
 - [@BishopMartin](https://github.com/BishopMartin)
 - [@gkinter](https://github.com/gkinter)

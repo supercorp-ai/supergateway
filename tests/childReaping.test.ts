@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
 import type { TestContext } from 'node:test'
-import { knownBugTest } from './helpers/known-bug.js'
 import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
 
 /**
@@ -14,7 +13,7 @@ import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
  *
  *   explicit DELETE        stateless: no sessions      stateful: yes
  *   idle timer             stateless: none             stateful: only with --sessionTimeout
- *   res.on('finish'/'close')  stateless: absent        stateful: feeds the session counter,
+ *   completed request        stateless: reaped        stateful: feeds the session counter,
  *                                                      which is null without --sessionTimeout
  *
  * #108 is a completed-request leak. The former #141 TODO below incorrectly
@@ -176,13 +175,11 @@ test(
 
 /**
  * #108. The stateless gateway spawns a child per POST and has no
- * `res.on('close')` hook at all, so nothing ever closes the transport and
- * nothing ever kills the child. This is the worse of the two, because it is one
- * process per request with no ceiling.
+ * response-completion hook used to be absent, so nothing closed its transport
+ * or killed its child. Keep the completed-request leak as a regression test.
  */
-knownBugTest(
-  '#108',
-  'stateless HTTP reaps the child it spawned for a completed request',
+test(
+  'stateless HTTP reaps the child it spawned for a completed request (#108)',
   { timeout: 30000 },
   async (t) => {
     const { marker } = await openSessions(

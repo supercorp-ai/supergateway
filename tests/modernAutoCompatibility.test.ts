@@ -9,8 +9,11 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
 import { knownBugTest } from './helpers/known-bug.js'
 
 // These clients already work against main through automatic legacy fallback.
-// Enabling a new protocol must not silently remove their state or callbacks.
-// The auto cases are held until the modern endpoint's compatibility is fixed;
+// State and roots assertions hold the existing gateway compatibility contract,
+// not protocol conformance: modern MCP removes transport-level sessions and
+// replaces reverse requests with input_required results. Logging has a separate
+// per-request opt-in rule, so unsolicited modern logs must not be expected.
+// The state/roots auto cases are held pending the endpoint compatibility choice;
 // RUN_KNOWN_BUG_TESTS=1 also runs them against an independently built baseline.
 for (const mode of ['auto', 'legacy'] as const) {
   const check =
@@ -84,8 +87,8 @@ for (const mode of ['auto', 'legacy'] as const) {
     },
   )
 
-  check(
-    `${mode} client receives log notifications during a tool call`,
+  test(
+    `${mode} client follows negotiated logging rules without a requested log level`,
     { timeout: 15000 },
     async (t) => {
       const { client, logs } = await connect(t, 'reverse-peer')
@@ -95,7 +98,12 @@ for (const mode of ['auto', 'legacy'] as const) {
       )
       assert.deepEqual(result.content, [{ type: 'text', text: 'logged' }])
       await delay(500)
-      assert.deepEqual(logs, ['log-info', 'log-warning', 'log-error'])
+      assert.deepEqual(
+        logs,
+        client.getProtocolEra() === 'modern'
+          ? []
+          : ['log-info', 'log-warning', 'log-error'],
+      )
     },
   )
 

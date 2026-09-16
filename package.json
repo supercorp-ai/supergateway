@@ -44,6 +44,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "@types/body-parser": "^1.19.5",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",

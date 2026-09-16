@@ -119,7 +119,10 @@ for (const paused of [false, true]) {
           break
         } catch (error) {
           if (Date.now() > deadline || gateway.child.exitCode !== null)
-            throw error
+            throw new Error(
+              `Gateway health check failed:\n${gateway.output()}\n${gateway.errors()}`,
+              { cause: error },
+            )
           await delay(20)
         }
       }

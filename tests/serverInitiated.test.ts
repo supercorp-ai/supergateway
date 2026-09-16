@@ -27,10 +27,9 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
  *
  * `reverse-peer.mjs` exercises all six from the server side.
  *
- * Result: stateful HTTP and SSE relay all six correctly. Stateless HTTP relays
- * none of them, and its two halves fail differently (GW-026) — notifications
- * are dropped, server-initiated requests hang. A fourth finding (GW-027) turned
- * out to be an upstream SDK defect; see below.
+ * Stateful HTTP and SSE relay all six. Stateless HTTP delivers notifications
+ * and declines unsupported reverse requests without hanging (GW-026).
+ * Batched progress callbacks expose a separate upstream SDK defect (GW-027).
  */
 const MODES = [
   {
@@ -246,24 +245,8 @@ knownBugTest(
   },
 )
 
-/**
- * GW-026, first half: notifications a server emits *while handling a request*
- * are dropped.
- *
- * The gateway itself is not at fault — it calls `transport.send` for every
- * message the child writes. The SDK's stateless transport then has nowhere to
- * put a message that is not the answer to a request: there is no session and no
- * standalone GET stream, so it silently discards it. Measured on the raw body —
- * the POST response is already `text/event-stream` and carries exactly one
- * event, the result.
- *
- * This one is fixable. The spec intends the POST's own SSE stream to carry
- * notifications ahead of the result, and in stateless mode there is exactly one
- * request in flight per child, so tagging child notifications with that
- * request's id is unambiguous.
- */
-knownBugTest(
-  'GW-026',
+// GW-026: route notifications through the active POST response.
+test(
   `${stateless.label}: a notification emitted during a call reaches the client`,
   { timeout: 90000 },
   async (t) => {
@@ -279,34 +262,44 @@ knownBugTest(
   },
 )
 
-/**
- * GW-026, second half, and the worse one: a request the *server* makes hangs.
- *
- * `sampling/createMessage` cannot work statelessly — the client would have to
- * POST its answer back, and with no session there is nothing to correlate that
- * answer with. That is a limitation. Hanging is not: the peer waits forever for
- * a reply that can never arrive, the tool call never returns, and the client
- * discovers this only by timing out. Every such call wedges a request and its
- * child.
- *
- * Failing fast — answering the child's request with a JSON-RPC error — costs
- * nothing and turns an indefinite hang into an error the caller can act on.
- * The timeout below is what makes the distinction testable.
- */
-knownBugTest(
-  'GW-026',
+// The SDK peer reports a tool error promptly, either from its own capability
+// checks or from the gateway rejection. Raw-peer tests prove the wire error.
+test(
   `${stateless.label}: a server-initiated request fails fast instead of hanging`,
   { timeout: 90000 },
   async (t) => {
     const o = await connect(t, stateless)
     for (const tool of ['sample', 'roots', 'elicit']) {
-      await assert.doesNotReject(
-        () =>
-          o.client.callTool({ name: tool, arguments: {} }, undefined, {
-            timeout: 8000,
-          }),
-        `${tool} did not come back within 8s`,
+      const reply = await o.client.callTool(
+        { name: tool, arguments: {} },
+        undefined,
+        { timeout: 8000 },
+      )
+      assert.equal(
+        reply.isError,
+        true,
+        `${tool} must report unsupported capability`,
+      )
+      assert.match(
+        textOf(reply),
+        /Client does not support|MCP error -32601: Server-to-client requests are not supported in stateless mode/,
       )
     }
+  },
+)
+
+test(
+  'stateless HTTP: progress and tool-list notifications reach the active caller',
+  { timeout: 90000 },
+  async (t) => {
+    const o = await connect(t, stateless)
+    assert.deepEqual(await progressSeenBy(o), [1, 2, 3])
+    const reply = await o.client.callTool({
+      name: 'toolsChanged',
+      arguments: {},
+    })
+    await settle()
+    assert.equal(textOf(reply), 'announced')
+    assert.equal(o.toolsChanged(), 1)
   },
 )

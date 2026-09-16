@@ -213,7 +213,7 @@ for (const mode of ['stateful', 'stateless'] as const) {
         ...initialize(autoInit.id),
         params: {
           protocolVersion: '2024-11-05',
-          capabilities: { roots: { listChanged: true }, sampling: {} },
+          capabilities: {},
           clientInfo: { name: 'supergateway', version: getVersion() },
         },
       })

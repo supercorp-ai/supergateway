@@ -187,41 +187,47 @@ test(
   async (t) => {
     // Two sessions always exist; unlike a random open/use/close array this cannot
     // degenerate into mostly no-ops. Every use checks both identity and state.
-    await fc.assert(
-      fc.asyncProperty(
-        fc.array(fc.integer({ min: 0, max: 3 }), {
-          minLength: 10,
-          maxLength: 16,
-        }),
-        async (operations) => {
-          const b = await setup(t)
-          try {
-            const sessions = [await b.open(), await b.open()]
-            for (const operation of operations) {
-              const index = operation % 2
-              if (operation < 2) await b.step(sessions[index])
-              else {
-                const held = await b.stream(sessions[index].session)
-                await b.step(sessions[1 - index])
-                await held.abort()
-                await b.step(sessions[index])
+    await fc
+      .assert(
+        fc.asyncProperty(
+          fc.array(fc.integer({ min: 0, max: 3 }), {
+            minLength: 10,
+            maxLength: 16,
+          }),
+          async (operations) => {
+            const b = await setup(t)
+            try {
+              const sessions = [await b.open(), await b.open()]
+              for (const operation of operations) {
+                const index = operation % 2
+                if (operation < 2) await b.step(sessions[index])
+                else {
+                  const held = await b.stream(sessions[index].session)
+                  await b.step(sessions[1 - index])
+                  await held.abort()
+                  await b.step(sessions[index])
+                }
               }
+              await b.close(sessions[0].session)
+              await b.step(sessions[1])
+              const fresh = await b.open()
+              assert.notEqual(fresh.session, sessions[0].session)
+              await b.step(fresh)
+            } finally {
+              await b.gateway.dispose()
             }
-            await b.close(sessions[0].session)
-            await b.step(sessions[1])
-            const fresh = await b.open()
-            assert.notEqual(fresh.session, sessions[0].session)
-            await b.step(fresh)
-          } finally {
-            await b.gateway.dispose()
-          }
+          },
+        ),
+        {
+          seed: Number(process.env.LIFECYCLE_SEED ?? 141182),
+          numRuns: Number(process.env.LIFECYCLE_RUNS ?? 8),
         },
-      ),
-      {
-        seed: Number(process.env.LIFECYCLE_SEED ?? 141182),
-        numRuns: Number(process.env.LIFECYCLE_RUNS ?? 8),
-      },
-    )
+      )
+      .catch((error: Error) => {
+        throw new Error(`${error.message}\nCause: ${String(error.cause)}`, {
+          cause: error,
+        })
+      })
   },
 )
 

@@ -5,6 +5,14 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
 import { watchGateway, forgetGateway } from './leak-check.js'
 
+// Eight seconds is many times the healthy worst case: across a full soak the
+// slowest relay-edge gateway reached its ready line in under four. The override
+// exists so a loaded runner can be given headroom without editing this file —
+// raising it hides nothing, because the failure message now reports how long
+// the gateway actually took and whether it ever ran at all.
+const readyTimeout = () =>
+  Number(process.env.SUPERGATEWAY_TEST_READY_TIMEOUT ?? 8000)
+
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
 export function launchGateway(
@@ -29,17 +37,39 @@ export function launchGateway(
   )
   let output = ''
   let errors = ''
+  // A readiness failure reports whatever was captured, and "nothing at all" is
+  // a different diagnosis from "something, but not the ready line": the gateway
+  // logs `Starting...` within milliseconds of the entry running, so empty
+  // streams mean it never reached its own first line.
+  const spawnedAt = Date.now()
+  let firstByteAt: number | null = null
+  const record = (chunk: string) => {
+    firstByteAt ??= Date.now()
+    return chunk
+  }
   child.stdout.setEncoding('utf8').on('data', (chunk) => {
-    output += chunk
+    output += record(chunk)
   })
   child.stderr.setEncoding('utf8').on('data', (chunk) => {
-    errors += chunk
+    errors += record(chunk)
   })
+  let spawnError: Error | null = null
   const exited = new Promise<{ code: number | null; signal: string | null }>(
     (resolve, reject) => {
-      child.once('error', reject)
+      child.once('error', (error) => {
+        spawnError = error
+        reject(error)
+      })
       child.once('exit', (code, signal) => resolve({ code, signal }))
     },
+  )
+  // A spawn error rejects this long before any consumer awaits it, and an
+  // unhandled rejection takes down the whole test file with a stack that names
+  // node:internal rather than the gateway that failed. Record it instead and
+  // let `waitFor` report it; teardown uses the non-rejecting alias.
+  const settled = exited.then(
+    (value) => value,
+    () => ({ code: null, signal: null }),
   )
   const signal = (name: NodeJS.Signals) => {
     try {
@@ -58,10 +88,10 @@ export function launchGateway(
   t.after(async () => {
     forgetGateway(child.pid)
     signal('SIGTERM')
-    await Promise.race([exited, delay(6500, undefined, { ref: false })])
+    await Promise.race([settled, delay(6500, undefined, { ref: false })])
     // The CLI may already have exited, leaving its stdio child behind.
     signal('SIGKILL')
-    await exited
+    await settled
   })
   // Property tests launch a gateway per generated case and must not leave them
   // all running until the test ends. `t.after` still fires afterwards and
@@ -69,20 +99,53 @@ export function launchGateway(
   const dispose = async () => {
     forgetGateway(child.pid)
     signal('SIGTERM')
-    await Promise.race([exited, delay(6500, undefined, { ref: false })])
+    await Promise.race([settled, delay(6500, undefined, { ref: false })])
     signal('SIGKILL')
-    await exited.catch(() => {})
+    await settled
+  }
+  const describe = (elapsed: number, polls: number, budget: number) => {
+    const state = spawnError
+      ? `spawn failed (${spawnError.message})`
+      : child.exitCode !== null
+        ? `exited with code ${child.exitCode}`
+        : child.signalCode !== null
+          ? `killed by ${child.signalCode}`
+          : 'still running'
+    const wrote =
+      firstByteAt === null
+        ? 'wrote nothing'
+        : `wrote ${output.length + errors.length} chars, first ${firstByteAt - spawnedAt}ms after spawn`
+    return [
+      `pid ${child.pid ?? 'unassigned'}`,
+      state,
+      wrote,
+      `waited ${elapsed}ms of ${budget}ms over ${polls} polls`,
+      `${Date.now() - spawnedAt}ms since spawn`,
+    ].join('; ')
   }
   const waitFor = async (predicate: () => boolean, description: string) => {
-    const deadline = Date.now() + 8000
+    const startedAt = Date.now()
+    const budget = readyTimeout()
+    const deadline = startedAt + budget
+    // The poll count separates "the gateway is stuck" from "this whole runner
+    // was starved": the loop asks for 10ms and burns at least that much, so a
+    // healthy host completes close to `elapsed / 10` passes. Far fewer means
+    // the test process itself was not being scheduled, and the gateway never
+    // had the CPU to reach its first log line either.
+    let polls = 0
     while (!predicate()) {
       if (
         child.exitCode !== null ||
         child.signalCode !== null ||
+        spawnError ||
         Date.now() > deadline
       ) {
-        throw Error(`Gateway did not ${description}:\n${output}\n${errors}`)
+        const elapsed = Date.now() - startedAt
+        throw Error(
+          `Gateway did not ${description} [${describe(elapsed, polls, budget)}]:\n${output}\n${errors}`,
+        )
       }
+      polls++
       await delay(10)
     }
   }

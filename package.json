@@ -80,8 +80,7 @@
     "node": ">=20"
   },
   "files": [
-    "dist",
-    "npm-shrinkwrap.json"
+    "dist"
   ],
   "overrides": {
     "@hono/node-server": "1.19.17"

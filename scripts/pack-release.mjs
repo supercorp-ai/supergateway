@@ -36,11 +36,8 @@ const [packed] = JSON.parse(
 )
 if (publishedVersion) assert.equal(packed.version, publishedVersion)
 for (const file of packed.files)
-  assert.match(
-    file.path,
-    /^(dist\/|package\.json$|npm-shrinkwrap\.json$|README\.md$|LICENSE$)/,
-  )
-assert.ok(packed.files.some((f) => f.path === 'npm-shrinkwrap.json'))
+  assert.match(file.path, /^(dist\/|package\.json$|README\.md$|LICENSE$)/)
+assert.ok(!packed.files.some((f) => /(?:shrinkwrap|lock)\.json$/.test(f.path)))
 const bytes = readFileSync(resolve(output, packed.filename))
 const manifest = {
   version: packed.version,

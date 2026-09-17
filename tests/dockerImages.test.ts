@@ -78,6 +78,13 @@ for (const variant of ['base', 'uvx', 'deno'])
         docker(['run', '--rm', `${TAG}:${variant}`, '--version']).trim(),
         manifest().version,
       )
+      assert.equal(
+        shell(
+          `${TAG}:${variant}`,
+          'test ! -d /usr/local/lib/node_modules/supergateway/node_modules/typescript && test ! -d /usr/local/lib/node_modules/supergateway/node_modules/prev-modelcontextprotocol-sdk && echo production-only',
+        ).trim(),
+        'production-only',
+      )
       assert.match(help, /--stdio/)
       assert.match(help, /--outputTransport/)
     },

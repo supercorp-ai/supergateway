@@ -91,11 +91,10 @@ try {
         ),
       )[0]
   for (const file of packed.files)
-    assert.match(
-      file.path,
-      /^(dist\/|package\.json$|npm-shrinkwrap\.json$|README\.md$|LICENSE$)/,
-    )
-  assert.ok(packed.files.some((file) => file.path === 'npm-shrinkwrap.json'))
+    assert.match(file.path, /^(dist\/|package\.json$|README\.md$|LICENSE$)/)
+  assert.ok(
+    !packed.files.some((file) => /(?:shrinkwrap|lock)\.json$/.test(file.path)),
+  )
   assert.equal(packed.version, pkg.version)
   console.log(
     `Testing ${packed.files.length} files from ${staged ?? 'fresh pack'}`,
@@ -113,8 +112,7 @@ try {
   const oldPackage = await oldResponse.json()
   let latest = '3.4.3'
   let registry
-  // Exercise registry installation: older npm handles a local tarball's
-  // shrinkwrap differently from the registry's _hasShrinkwrap manifest.
+  // Exercise the real registry/npx path with normal dependency resolution.
   server = createServer((req, res) => {
     if (req.url === '/supergateway/-/candidate.tgz') {
       res.end(tarball)
@@ -130,7 +128,7 @@ try {
             '3.4.3': oldPackage,
             [pkg.version]: {
               ...pkg,
-              _hasShrinkwrap: true,
+              _hasShrinkwrap: false,
               dist: {
                 tarball: registry + '/supergateway/-/candidate.tgz',
                 integrity: integrity,
@@ -173,6 +171,33 @@ try {
   )
   assert.match(output, /--outputTransport/)
   console.log('Fresh npx install and CLI help succeeded')
+  const entry = readdirSync(join(cache, '_npx'))
+    .map((name) =>
+      join(cache, '_npx', name, 'node_modules/supergateway/dist/index.js'),
+    )
+    .find(existsSync)
+  assert.ok(entry, 'npx installed the candidate CLI')
+  const installedRoot = resolve(entry, '../..')
+  for (const name of [
+    'typescript',
+    'ts-node',
+    'lint-staged',
+    'husky',
+    'fast-check',
+    'prev-modelcontextprotocol-sdk',
+  ]) {
+    assert.equal(
+      existsSync(join(installedRoot, 'node_modules', name)),
+      false,
+      `Published package installed development dependency ${name}`,
+    )
+    assert.equal(
+      existsSync(resolve(installedRoot, '..', name)),
+      false,
+      `npx installed hoisted development dependency ${name}`,
+    )
+  }
+  console.log('Fresh npx installation excludes development tools and test SDKs')
   const npx = resolve(dirname(runtimeNpm), 'npx-cli.js')
   const project = join(temporary, 'existing project with spaces')
   mkdirSync(project)
@@ -369,12 +394,6 @@ for await (const line of readline.createInterface({input: process.stdin})) {
     'Actual npx: fresh and explicit latest with 3.4.3-warm cache select the candidate; existing project unchanged',
   )
 
-  const entry = readdirSync(join(cache, '_npx'))
-    .map((name) =>
-      join(cache, '_npx', name, 'node_modules/supergateway/dist/index.js'),
-    )
-    .find(existsSync)
-  assert.ok(entry, 'npx installed the candidate CLI')
   const installed = JSON.parse(
     readFileSync(resolve(entry, '../../package.json'), 'utf8'),
   )

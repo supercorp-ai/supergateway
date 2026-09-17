@@ -19,6 +19,7 @@
 
 ### Fixes
 
+- `--version` reports Supergateway's version even when npm hoists its dependencies.
 - Unicode text stays intact when a child splits a UTF-8 character across stdout writes.
 - SSE clients can reconnect without the previous transport-connection crash.
 - Completed stateless HTTP requests release their subprocesses. Stateful
@@ -40,9 +41,10 @@
 
 ### Packaging
 
-- npm packages include compiled code, package metadata, the dependency
-  shrinkwrap, README and license. Development tests and tooling are excluded.
-- The declared dependency tree is pinned by the shipped shrinkwrap.
+- npm packages include compiled code, package metadata, README and license.
+  Development tests and tooling are excluded.
+- Repository installs use package-lock.json. Published packages use normal npm
+  dependency resolution; dependencies are not bundled.
 
 ### Usage notes
 

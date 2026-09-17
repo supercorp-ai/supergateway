@@ -26,7 +26,7 @@ env:
 jobs:
   publish:
     name: Build and push supergateway container
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write

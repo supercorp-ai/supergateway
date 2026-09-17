@@ -7,10 +7,18 @@ import { resolve } from 'node:path'
 export function createSoakCommandGroup({ root, events, env }) {
   const active = new Set()
   const abort = new AbortController()
-  function cancel(reason) {
+  // Why the group stopped, kept apart from what each command then did. A
+  // cancelled runner SIGTERMs the whole tree, so every command still running
+  // dies non-zero — reporting those as failures buried the one job that
+  // actually failed among eleven that were merely cancelled.
+  let cancelReason = null
+  let external = false
+  function cancel(reason, fromSignal = false) {
     if (!abort.signal.aborted) {
+      cancelReason = reason
+      external = fromSignal
       abort.abort(reason)
-      events({ phase: 'cancel-commands', reason })
+      events({ phase: 'cancel-commands', reason, external })
     }
     for (const stop of active) stop()
   }
@@ -44,7 +52,14 @@ export function createSoakCommandGroup({ root, events, env }) {
     clearTimeout(hardTimer)
     active.delete(stop)
     await new Promise((ok) => log.end(ok))
-    events({ phase: 'end-command', name, ...result, timedOut })
+    // Cancellation reaches a command only through `stop()`, so a non-zero exit
+    // while the group is already cancelling is that kill landing, not a verdict
+    // on the command. Timeouts stay failures: `stop()` fired for this command's
+    // own sake, and the group was not cancelling before it did.
+    const cancelled = abort.signal.aborted && !timedOut && result.code !== 0
+    events({ phase: 'end-command', name, ...result, timedOut, cancelled })
+    if (cancelled)
+      throw Error(`${name} was cancelled before it finished (${cancelReason})`)
     if (result.code !== 0 || timedOut) {
       cancel(`${name} failed`)
       throw Error(`${name} failed; inspect ${root}/${name}.log`)
@@ -56,6 +71,10 @@ export function createSoakCommandGroup({ root, events, env }) {
     signal: abort.signal,
     get failed() {
       return abort.signal.aborted
+    },
+    // True only when nothing under this soak failed and the runner stopped us.
+    get cancelledExternally() {
+      return abort.signal.aborted && external
     },
   }
 }

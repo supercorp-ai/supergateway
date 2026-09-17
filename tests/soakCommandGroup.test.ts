@@ -96,3 +96,70 @@ test('successful soak commands complete without cancelling the group', async (t)
   assert.equal(group.failed, false)
   assert.equal(readFileSync(join(root, 'one.log'), 'utf8').trim(), '42')
 })
+
+// GitHub cancels the rest of a fail-fast matrix by signalling the whole tree.
+// Every command still running then dies non-zero through our own `stop()`, and
+// calling that a failure is what made eleven cancelled jobs in soak run
+// 35270724649 indistinguishable from the one that genuinely failed.
+test('a runner-cancelled command is reported as cancelled, not as a failure', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-cancelled-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: { ...process.env, REPORT: root },
+  })
+  t.after(() => group.cancel('test cleanup'))
+  const running = group.run(
+    'cycle-6-group-0',
+    [
+      '-e',
+      `require('node:fs').writeFileSync(require('node:path').join(process.env.REPORT,'ready'),'yes');setInterval(()=>{},1000)`,
+    ],
+    60000,
+  )
+  // Cancel a command that is genuinely mid-flight, which is the shape the
+  // runner produces: not one killed before it could exec.
+  const deadline = Date.now() + 5000
+  while (!existsSync(join(root, 'ready'))) {
+    assert.ok(Date.now() < deadline, 'command did not start')
+    await delay(10)
+  }
+  group.cancel('SIGINT', true)
+  await assert.rejects(
+    running,
+    /cycle-6-group-0 was cancelled before it finished \(SIGINT\)/,
+  )
+  const ended = events.find((row) => row.phase === 'end-command')
+  assert.equal(ended.cancelled, true)
+  assert.equal(ended.timedOut, false)
+  assert.equal(group.cancelledExternally, true)
+  const cancelling = events.find((row) => row.phase === 'cancel-commands')
+  assert.deepEqual(
+    { reason: cancelling.reason, external: cancelling.external },
+    { reason: 'SIGINT', external: true },
+  )
+})
+
+test('a genuine failure is never reported as an external cancellation', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-genuine-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: process.env,
+  })
+  t.after(() => group.cancel('test cleanup'))
+  await assert.rejects(
+    group.run('battery', ['-e', 'process.exit(7)'], 5000),
+    /battery failed/,
+  )
+  assert.equal(group.failed, true)
+  // The lane must still exit non-zero and still name the real culprit.
+  assert.equal(group.cancelledExternally, false)
+  const ended = events.find((row) => row.phase === 'end-command')
+  assert.equal(ended.cancelled, false)
+  assert.equal(ended.code, 7)
+})

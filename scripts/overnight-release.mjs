@@ -34,7 +34,7 @@ const env = { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry }
 const commands = createSoakCommandGroup({ root, events, env })
 const { run } = commands
 for (const signal of ['SIGINT', 'SIGTERM'])
-  process.once(signal, () => commands.cancel(signal))
+  process.once(signal, () => commands.cancel(signal, true))
 const modern = [
   'modernProtocol',
   'modernTransparency',
@@ -175,8 +175,16 @@ const errors = results
   .filter((result) => result.status === 'rejected')
   .map((result) => String(result.reason))
 if (preflightError) errors.unshift(preflightError)
+// A cancelled lane is not a passing lane, but it is not evidence against the
+// release either: the workflow stopped this runner because a *different* job
+// failed, and fail-fast means that job is the one worth reading.
+const status = commands.cancelledExternally
+  ? 'cancelled'
+  : errors.length || commands.failed
+    ? 'failed'
+    : 'passed'
 const summary = {
-  status: errors.length || commands.failed ? 'failed' : 'passed',
+  status,
   seconds,
   elapsedSeconds: Math.round((Date.now() - started) / 1000),
   errors,
@@ -186,4 +194,4 @@ writeFileSync(
   JSON.stringify(summary, null, 2) + '\n',
 )
 events({ phase: 'complete', ...summary })
-process.exitCode = summary.status === 'failed' ? 1 : 0
+process.exitCode = summary.status === 'passed' ? 0 : 1

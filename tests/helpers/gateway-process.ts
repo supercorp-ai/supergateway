@@ -11,13 +11,22 @@ export function launchGateway(
   t: TestContext,
   args: string[],
   env?: Record<string, string>,
+  nodeArgs: string[] = [],
 ) {
   const grouped = process.platform !== 'win32'
-  const child = spawn(process.execPath, ['dist/index.js', ...args], {
-    stdio: 'pipe',
-    detached: grouped,
-    env: env ? { ...process.env, ...env } : process.env,
-  })
+  const child = spawn(
+    process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+    [
+      ...nodeArgs,
+      process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
+      ...args,
+    ],
+    {
+      stdio: 'pipe',
+      detached: grouped,
+      env: env ? { ...process.env, ...env } : process.env,
+    },
+  )
   let output = ''
   let errors = ''
   child.stdout.setEncoding('utf8').on('data', (chunk) => {

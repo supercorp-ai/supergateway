@@ -83,6 +83,10 @@ npx -y supergateway \
 
 Expose an MCP stdio server as a Streamable HTTP server.
 
+Supports legacy MCP and **2026-07-28** when the client and stdio server support a common protocol version. Clients that support automatic negotiation can fall back to legacy when the server requires it.
+
+`--stateful` preserves legacy sessions. MCP 2026-07-28 uses independent requests and does not create a transport session.
+
 ### Stateless mode
 
 ```bash
@@ -293,6 +297,8 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@0xt3ch](https://github.com/0xt3ch)
+- [@werebear73](https://github.com/werebear73)
 - [@move-hoon](https://github.com/move-hoon)
 - [@dustindoan](https://github.com/dustindoan)
 - [@swarthyplacebo](https://github.com/swarthyplacebo)

@@ -46,8 +46,15 @@ test('stateless lifetime waits for dispatch, pending replies and one-way deliver
   await flush()
   assert.equal(b.serverCloses.length, 1, 'late output cannot repeat release')
 
-  // HTTP rejection: no child request was dispatched, but close still releases it.
-  const rejected = await b.request('POST', '/mcp')
+  // Transport rejection: no child request was dispatched, but close releases it.
+  const prototype = Object.getPrototypeOf(transport)
+  const rejectDispatch = t.mock.method(
+    prototype,
+    'handleRequest',
+    async () => {},
+  )
+  const rejected = await b.request('POST', '/mcp', { body: initialize(1) })
+  rejectDispatch.mock.restore()
   const failingClose = t.mock.method(
     Object.getPrototypeOf(b.serverCloses[0]),
     'close',
@@ -64,7 +71,6 @@ test('stateless lifetime waits for dispatch, pending replies and one-way deliver
   ])
   failingClose.mock.restore()
 
-  const prototype = Object.getPrototypeOf(transport)
   let releaseDispatch!: () => void
   const delayed = t.mock.method(
     prototype,
@@ -76,7 +82,7 @@ test('stateless lifetime waits for dispatch, pending replies and one-way deliver
       })
     },
   )
-  const dispatch = b.request('POST', '/mcp')
+  const dispatch = b.request('POST', '/mcp', { body: initialize(2) })
   await flush()
   assert.equal(
     b.children[2].kills,
@@ -94,7 +100,7 @@ test('stateless lifetime waits for dispatch, pending replies and one-way deliver
       throw new Error('dispatch failed')
     })
     const before = b.serverCloses.length
-    const result = await b.request('POST', '/mcp')
+    const result = await b.request('POST', '/mcp', { body: initialize(3) })
     assert.equal(result.res.code, 500)
     assert.equal(b.children.at(-1)!.kills, 1)
     assert.equal(b.serverCloses.length, before + (exited ? 0 : 1))
@@ -104,6 +110,28 @@ test('stateless lifetime waits for dispatch, pending replies and one-way deliver
     ])
     failure.mock.restore()
   }
+
+  const partialResponse = t.mock.method(
+    prototype,
+    'handleRequest',
+    async (_req: unknown, res: Response) => {
+      res.headersSent = true
+      throw new Error('dispatch failed after headers')
+    },
+  )
+  const partial = await b.request('POST', '/mcp', { body: initialize(4) })
+  assert.equal(
+    partial.res.code,
+    200,
+    'headers already sent: do not write a second status',
+  )
+  assert.equal(
+    partial.res.body,
+    undefined,
+    'do not append JSON to an already started response',
+  )
+  assert.equal(b.children.at(-1)!.kills, 1)
+  partialResponse.mock.restore()
 
   for (const ending of ['deadline', 'exit', 'error'] as const) {
     const request = await b.request('POST', '/mcp', {

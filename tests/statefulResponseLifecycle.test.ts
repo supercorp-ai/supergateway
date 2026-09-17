@@ -25,6 +25,11 @@ test('stateful response completion releases once and cleanup cancels session tim
   }
   class Response extends EventEmitter {
     code = 200
+    destroyed = false
+    destroy() {
+      this.destroyed = true
+      this.emit('close')
+    }
     body: unknown
     status(code: number) {
       this.code = code
@@ -49,6 +54,7 @@ test('stateful response completion releases once and cleanup cancels session tim
       return true
     }
   }
+  let beforeSession = false
   const children: Child[] = [],
     transports: Transport[] = []
   class Transport {
@@ -64,7 +70,11 @@ test('stateful response completion releases once and cleanup cancels session tim
     ) {
       transports.push(this)
     }
-    async handleRequest() {
+    async handleRequest(_req: unknown, res: Response) {
+      if (beforeSession) {
+        res.emit('finish')
+        return
+      }
       if (!this.sessionId) {
         this.sessionId = this.options.sessionIdGenerator()
         this.options.onsessioninitialized(this.sessionId)
@@ -202,7 +212,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     },
   )
 
-  // Both close and error can remove a session while its idle timer is pending.
+  // Closing removes a session; a reported request error preserves its lifetime.
   // A bounded fake-clock advance makes the absence check deterministic.
   const closing = await request('POST')
   const closeSession = transports[1].sessionId!
@@ -226,17 +236,22 @@ test('stateful response completion releases once and cleanup cancels session tim
   const errorSession = transports[2].sessionId!
   failing.emit('finish')
   failing.emit('close')
-  transports[2].onerror!(new Error('connection lost'))
-  assert.deepEqual(clear.mock.calls.at(-1)!.arguments, [
-    errorSession,
-    false,
-    'transport emitting error',
-  ])
-  assert.equal(children[2].kills, 1)
+  const clearsBeforeError = clear.mock.callCount()
+  transports[2].onerror!(new Error('unsupported request version'))
+  assert.equal(clear.mock.callCount(), clearsBeforeError)
+  assert.equal(children[2].kills, 0, 'a rejected request preserves its child')
+  const recovered = await request('GET', errorSession)
+  assert.equal(recovered.code, 200)
+  recovered.emit('close')
   t.mock.timers.tick(100)
   assert.equal(
+    children[2].kills,
+    1,
+    'the recovered session still expires when idle',
+  )
+  assert.equal(
     logs.some((line) => line.includes(`Session ${errorSession} timed out`)),
-    false,
+    true,
   )
   assert.equal((await request('GET', errorSession)).code, 400)
   assert.equal(
@@ -244,4 +259,24 @@ test('stateful response completion releases once and cleanup cancels session tim
     3,
     'expired IDs never spawn a replacement child',
   )
+
+  // Spawn/pipe failures can happen before the SDK assigns an initialization ID.
+  // No counter belongs to this failed exchange; closing it must not affect a
+  // different session or schedule an idle timer for an undefined ID.
+  beforeSession = true
+  const clears = clear.mock.callCount(),
+    decrements = decrement.mock.callCount()
+  const incomplete = await request('POST')
+  assert.equal(transports[3].sessionId, undefined)
+  assert.equal(decrement.mock.callCount(), decrements)
+  children[3].stdin.emit(
+    'error',
+    new Error('spawn failed before initialization'),
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(incomplete.destroyed, true)
+  assert.equal(children[3].kills, 1)
+  assert.equal(transports[3].closes, 1)
+  assert.equal(clear.mock.callCount(), clears)
+  assert.equal(decrement.mock.callCount(), decrements)
 })

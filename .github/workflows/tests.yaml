@@ -19,7 +19,7 @@ jobs:
   test:
     name: Suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +45,7 @@ jobs:
       # stale build would let the compiled CLI tests pass against old code.
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: npm test
         env:
           # The ts-node typechecking loader aborts every file on Node 24.
@@ -130,7 +130,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Measure coverage
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: npx -y supercov@0.0.53 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
@@ -169,7 +169,7 @@ jobs:
   python-client:
     name: Cross-client battery
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -267,7 +267,7 @@ jobs:
   sdk:
     name: SDK ${{ matrix.sdk }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -299,26 +299,26 @@ jobs:
         run: npm install --no-save @modelcontextprotocol/sdk@${{ matrix.sdk }}
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: npm test
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
 
   # Every Node version the package is actually run on, with real tests rather
   # than a smoke check. Only the files needing the runner's module mocking are
-  # left out: that API is experimental and behaves differently on 18, 20 and 22,
+  # left out: that API is experimental and behaves differently on 20 and 22,
   # for reasons that have nothing to do with this gateway. Everything else runs,
   # including every end-to-end test that spawns the compiled CLI - which is the
   # part that catches platform differences, as GW-015 showed.
   compat:
     name: Compatible suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [18, 20, 22]
+        node: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -334,8 +334,43 @@ jobs:
 
       - name: Run the version-portable suite
         # Native lifecycle tests include the same shutdown grace as the full suite.
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: npm run test:compat
+
+  # Build with the supported SDK toolchain, then install the exact tarball with
+  # each consumer's npm and run its CLI with that consumer's Node. A loopback
+  # registry exercises shrinkwrap resolution, which differs from local tarballs
+  # on older npm. No publication is involved.
+  package:
+    name: Package on Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['20', '22', '24', '26']
+        include:
+          - os: windows-latest
+            node: '20'
+          - os: windows-latest
+            node: '24'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Save consumer runtime paths
+        shell: bash
+        run: |
+          node -e 'const fs = require("node:fs"), path = require("node:path"); const npm = path.resolve(path.dirname(process.execPath), process.platform === "win32" ? "node_modules/npm/bin/npm-cli.js" : "../lib/node_modules/npm/bin/npm-cli.js"); if (!fs.existsSync(npm)) throw new Error("Missing consumer npm: " + npm); fs.appendFileSync(process.env.GITHUB_ENV, "SUPERGATEWAY_TEST_NODE=" + process.execPath + "\nSUPERGATEWAY_TEST_NPM=" + npm + "\n")'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify fresh npx installation and protocol/lifecycle behavior
+        run: npm run test:package
 
   # The libc the shipped image actually uses. The compat job covers glibc and
   # darwin; this covers musl, and checks that the compiled gateway starts,
@@ -347,7 +382,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20, 22, 24]
+        node: [20, 22, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

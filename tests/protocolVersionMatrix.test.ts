@@ -1,31 +1,30 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { TestContext } from 'node:test'
-import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js'
-import { knownBugTest } from './helpers/known-bug.js'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import {
   launchGateway,
   unusedPort,
   peerCommand,
 } from './helpers/gateway-process.js'
 
+// Package tests may exercise a separately installed SDK version. Resolve the
+// version list from that gateway, rather than from the test runner's checkout.
+const gatewayRequire = createRequire(
+  process.env.SUPERGATEWAY_TEST_ENTRY ?? import.meta.url,
+)
+const { SUPPORTED_PROTOCOL_VERSIONS } = await import(
+  pathToFileURL(gatewayRequire.resolve('@modelcontextprotocol/sdk/types.js'))
+    .href
+)
+
 /**
- * Issue #156 / GW-022: a client states its protocol version in two places and
- * gets two different answers.
- *
- * In the `initialize` body it is a proposal — the SDK negotiates, and anything
- * it does not know comes back as the latest version it does know. In the
- * `mcp-protocol-version` header on every later request it is a demand: the SDK
- * matches it against a fixed list and answers 400 otherwise, with no
- * negotiation. So a client that is merely newer than the gateway connects
- * happily and then has every subsequent request rejected.
- *
- * The list below is deliberately read from the SDK at runtime rather than
- * written out here. The half of #156 that bites today is a *pin*: support for
- * 2025-11-25 landed in SDK 1.24.3, `package.json` already allows it, and only
- * the lockfile (and therefore the Docker image) holds us at 1.18.2. Deriving
- * the expectations means a lockfile bump moves that row from the known-bug test
- * to the passing one on its own, instead of leaving a stale constant behind.
+ * Legacy initialization proposes a version; subsequent requests must use the
+ * negotiated version. An unsupported header must be rejected (HTTP 400).
+ * Modern 2026 discovery/requests are tested with a real client separately in
+ * modernProtocol.test.ts. These initialization tests do not establish modern
+ * compatibility.
  */
 const FUTURE_VERSIONS = ['2025-11-25', '2026-07-28'].filter(
   (version) => !SUPPORTED_PROTOCOL_VERSIONS.includes(version),
@@ -36,16 +35,6 @@ const MODES = [
   { label: 'stateless', args: [] },
 ] as const
 
-/**
- * A fresh gateway per case, not one for the whole loop.
- *
- * Both HTTP gateways leak a child per request until something closes the
- * transport (#108 stateless, #141 stateful — `childReaping.test.ts` owns both),
- * so a gateway held across a seven-version sweep trips the harness's
- * process-accumulation check and reports that defect from here instead of from
- * the test that names it. One gateway per case keeps this file about protocol
- * versions.
- */
 async function gateway(t: TestContext, extra: readonly string[]) {
   const port = await unusedPort()
   const process_ = launchGateway(t, [
@@ -73,15 +62,18 @@ const post = (url: string, body: unknown, extra: Record<string, string> = {}) =>
     signal: AbortSignal.timeout(10000),
   })
 
-/** The negotiated version, whether the SDK answers as JSON or as one SSE event. */
-function negotiated(payload: string) {
+/** Parse a JSON response or a single SSE result. */
+function message(payload: string) {
   const line =
     payload
       .split('\n')
       .find((l) => l.startsWith('data:'))
       ?.slice(5) ?? payload
-  return JSON.parse(line).result?.protocolVersion as string | undefined
+  return JSON.parse(line)
 }
+
+const negotiated = (payload: string) =>
+  message(payload).result?.protocolVersion as string | undefined
 
 async function initialize(url: string, version: string) {
   const response = await post(url, {
@@ -129,7 +121,7 @@ for (const mode of MODES) {
       for (const version of [
         ...SUPPORTED_PROTOCOL_VERSIONS,
         ...FUTURE_VERSIONS,
-        'not-a-version',
+        '1900-01-01',
       ]) {
         const url = await gateway(t, mode.args)
         const { response, body } = await initialize(url, version)
@@ -164,27 +156,145 @@ for (const mode of MODES) {
     },
   )
 
-  /**
-   * The asymmetry itself. Every version here is one the body accepted a few
-   * lines above — the gateway already told this client it was happy to talk to
-   * it — and the header rejects it with `400 Bad Request: Unsupported protocol
-   * version`. That is what the reporter is working around with a Cloudflare
-   * rule that rewrites the header, since it is the only thing in the request
-   * being checked this way.
-   */
-  knownBugTest(
-    '#156',
-    `${mode.label}: a header version the body negotiates is not rejected`,
+  test(
+    `${mode.label}: unsupported protocol headers are rejected`,
     { timeout: 60000 },
     async (t) => {
-      const refused: string[] = []
-      for (const header of FUTURE_VERSIONS) {
+      for (const header of [
+        ...FUTURE_VERSIONS.filter((version) => version !== '2026-07-28'),
+        '1900-01-01',
+      ]) {
         const url = await gateway(t, mode.args)
         const { session } = await initialize(url, '2025-06-18')
-        const { status } = await afterInitialize(url, session, header)
-        if (status !== 200) refused.push(`${header} -> ${status}`)
+        const response = await post(
+          url,
+          { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+          {
+            ...(session ? { 'mcp-session-id': session } : {}),
+            'mcp-protocol-version': header,
+          },
+        )
+        assert.equal(response.status, 400)
+        const error = await response.json()
+        assert.equal(error.jsonrpc, '2.0')
+        assert.equal(error.error.code, -32000)
+        assert.match(error.error.message, /Unsupported protocol version/)
       }
-      assert.deepEqual(refused, [])
+    },
+  )
+
+  test(
+    `${mode.label}: a future proposal remains usable with the negotiated legacy version`,
+    { timeout: 20000 },
+    async (t) => {
+      const url = await gateway(t, mode.args)
+      const { response, session, body } = await initialize(url, '2026-07-28')
+      assert.equal(response.status, 200)
+      const version = negotiated(body)
+      assert.ok(version && SUPPORTED_PROTOCOL_VERSIONS.includes(version))
+      const reply = await afterInitialize(url, session, version)
+      assert.equal(reply.status, 200)
+      assert.deepEqual(
+        message(reply.body).result.tools.map(
+          (tool: { name: string }) => tool.name,
+        ),
+        ['add'],
+      )
     },
   )
 }
+
+test(
+  'stateful: an unsupported header does not destroy the established session',
+  { timeout: 20000 },
+  async (t) => {
+    const url = await gateway(t, ['--stateful'])
+    const affected = await initialize(url, '2025-06-18')
+    const healthy = await initialize(url, '2025-06-18')
+    assert.equal(affected.response.status, 200)
+    assert.equal(healthy.response.status, 200)
+    assert.ok(affected.session)
+    assert.ok(healthy.session)
+    assert.notEqual(affected.session, healthy.session)
+    const headers = { 'mcp-session-id': affected.session }
+    const rejected = await post(
+      url,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+      {
+        ...headers,
+        'mcp-protocol-version': '1900-01-01',
+      },
+    )
+    assert.equal(rejected.status, 400)
+    assert.match(
+      (await rejected.json()).error.message,
+      /Unsupported protocol version/,
+    )
+    // Confirm the gateway and an independent child remain healthy first.
+    const other = await afterInitialize(
+      url,
+      healthy.session,
+      negotiated(healthy.body),
+    )
+    assert.equal(other.status, 200)
+    assert.deepEqual(
+      message(other.body).result.tools.map(
+        (tool: { name: string }) => tool.name,
+      ),
+      ['add'],
+    )
+    // The rejected request was not a DELETE, timeout, or child failure.
+    // SDK 1.30 reports this rejection through onerror; it must remain recoverable.
+    const recovered = await afterInitialize(
+      url,
+      affected.session,
+      negotiated(affected.body),
+    )
+    assert.equal(recovered.status, 200, recovered.body)
+    assert.deepEqual(
+      message(recovered.body).result.tools.map(
+        (tool: { name: string }) => tool.name,
+      ),
+      ['add'],
+    )
+  },
+)
+
+test(
+  'stateful: a duplicate SSE GET preserves the session and its in-flight stream',
+  { timeout: 20000 },
+  async (t) => {
+    const url = await gateway(t, ['--stateful'])
+    const initial = await initialize(url, '2025-06-18')
+    assert.ok(initial.session)
+    const headers = {
+      accept: 'text/event-stream',
+      'mcp-session-id': initial.session,
+      'mcp-protocol-version': negotiated(initial.body)!,
+    }
+    const controller = new AbortController()
+    t.after(() => controller.abort())
+    const first = await fetch(url, { headers, signal: controller.signal })
+    assert.equal(first.status, 200)
+    const duplicate = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(duplicate.status, 409)
+    assert.match(await duplicate.text(), /Only one SSE stream/)
+    const recovered = await afterInitialize(
+      url,
+      initial.session,
+      negotiated(initial.body),
+    )
+    assert.equal(recovered.status, 200, recovered.body)
+    assert.deepEqual(
+      message(recovered.body).result.tools.map(
+        (tool: { name: string }) => tool.name,
+      ),
+      ['add'],
+    )
+    assert.equal(controller.signal.aborted, false)
+    controller.abort()
+  },
+)

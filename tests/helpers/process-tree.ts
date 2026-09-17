@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict'
+import { setTimeout as delay } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
 
 /**
@@ -29,4 +31,50 @@ export function descendantsOf(pid: number): number[] {
   }
   walk(pid)
   return found
+}
+
+export function processInfo(pid: number) {
+  try {
+    const row = execFileSync(
+      'ps',
+      ['-o', 'ppid=,pgid=,stat=', '-p', String(pid)],
+      { encoding: 'utf8' },
+    )
+      .trim()
+      .split(/\s+/)
+    return {
+      parent: Number(row[0]),
+      group: Number(row[1]),
+      alive: row.length === 3 && !row[2].startsWith('Z'),
+    }
+  } catch (error) {
+    if ((error as { status?: number }).status === 1)
+      return { parent: 0, group: 0, alive: false }
+    throw error
+  }
+}
+export async function stopped(pid: number) {
+  const deadline = Date.now() + 7000
+  while (processInfo(pid).alive && Date.now() < deadline) await delay(25)
+  assert.equal(
+    processInfo(pid).alive,
+    false,
+    `owned peer ${pid} survived cleanup`,
+  )
+}
+export function reapAfter(
+  t: import('node:test').TestContext,
+  pid: number,
+  group: number,
+) {
+  // Runs AFTER the assertions; also cleans detached groups when a mutant fails.
+  t.after(() => {
+    for (const target of [-group, pid]) {
+      try {
+        process.kill(target, 'SIGKILL')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+    }
+  })
 }

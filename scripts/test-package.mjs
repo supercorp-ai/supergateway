@@ -45,7 +45,15 @@ const runtimeEnv = {
     (process.platform === 'win32' ? ';' : ':') +
     process.env.PATH,
 }
-async function run(executable, args, cwd, env, capture = false) {
+const installTimeoutMs = 6 * 60 * 1000
+async function run(
+  executable,
+  args,
+  cwd,
+  env,
+  capture = false,
+  timeoutMs = 240000,
+) {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd,
@@ -54,7 +62,11 @@ async function run(executable, args, cwd, env, capture = false) {
     })
     let output = ''
     let errors = ''
-    const timer = setTimeout(() => child.kill(), 240000)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, timeoutMs)
     child.stdout.on('data', (chunk) => {
       output += chunk
       if (!capture) process.stdout.write(chunk)
@@ -63,14 +75,17 @@ async function run(executable, args, cwd, env, capture = false) {
       errors += chunk
       process.stderr.write(chunk)
     })
-    child.once('error', reject)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      if (code === 0) resolve(output)
+      if (!timedOut && code === 0) resolve(output)
       else
         reject(
           new Error(
-            `${executable} ${args.join(' ')} exited with ${code ?? signal}\n${output}\n${errors}`,
+            `${executable} ${args.join(' ')} ${timedOut ? `timed out after ${timeoutMs / 1000}s` : `exited with ${code ?? signal}`}\n${output}\n${errors}`,
           ),
         )
     })
@@ -168,6 +183,7 @@ try {
     temporary,
     runtimeEnv,
     true,
+    installTimeoutMs,
   )
   assert.match(output, /--outputTransport/)
   console.log('Fresh npx install and CLI help succeeded')
@@ -213,6 +229,8 @@ try {
         npx,
         '--yes',
         '--engine-strict',
+        '--no-audit',
+        '--no-fund',
         '--cache',
         selectedCache,
         '--registry',
@@ -223,6 +241,7 @@ try {
       project,
       runtimeEnv,
       true,
+      installTimeoutMs,
     )
   latest = '3.4.3'
   // Published 3.4.3 prints `unknown` outside its repository; identify it by metadata.
@@ -295,6 +314,8 @@ for await (const line of readline.createInterface({input: process.stdin})) {
       npx,
       '--yes',
       '--engine-strict',
+      '--no-audit',
+      '--no-fund',
       '--cache',
       cache,
       '--registry',

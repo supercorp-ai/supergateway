@@ -28,6 +28,7 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
+import { getVersion } from './lib/getVersion.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 
@@ -35,6 +36,7 @@ type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
 
 async function main() {
   const argv = yargs(hideBin(process.argv))
+    .version(getVersion())
     .option('stdio', {
       type: 'string',
       description: 'Command to run an MCP server over Stdio',
@@ -164,7 +166,7 @@ async function main() {
 
   logger.info('Starting...')
   logger.info(
-    'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai',
+    'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 

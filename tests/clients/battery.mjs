@@ -4,9 +4,14 @@
 // into a matrix. This one is the baseline: it uses the same SDK the gateway
 // does, so anything failing here is the gateway, while anything failing only in
 // another client is a disagreement between implementations.
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+const sdk = process.env.BATTERY_SDK ?? '@modelcontextprotocol/sdk'
+const { Client } = await import(`${sdk}/client/index.js`)
+const { SSEClientTransport } = await import(`${sdk}/client/sse.js`)
+const StreamableHTTPClientTransport =
+  process.argv[3] === 'sse'
+    ? undefined
+    : (await import(`${sdk}/client/streamableHttp.js`))
+        .StreamableHTTPClientTransport
 
 const URL_ = process.argv[2]
 const KIND = process.argv[3]

@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process'
 
 const DRIVER = process.argv[2]
 const BIN = process.argv[3]
-const PEER = 'node tests/clients/battery-peer.mjs'
+const PEER = process.env.BATTERY_PEER ?? 'node tests/clients/battery-peer.mjs'
 
 // Deliberately below the smallest limit any SDK imposes on a single SSE event
 // (1 MiB, in the Python and Go clients). Sizes at or above it are an
@@ -38,8 +38,11 @@ async function launch(args) {
   for (let attempt = 1; attempt <= 4; attempt++) {
     const port = await freePort()
     const gw = spawn(
-      process.execPath,
-      ['dist/index.js', ...args.map((a) => (a === '$PORT' ? String(port) : a))],
+      process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+      [
+        process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
+        ...args.map((a) => (a === '$PORT' ? String(port) : a)),
+      ],
       { stdio: 'pipe', detached: true, env: { ...process.env, BIG_LENGTH } },
     )
     let out = ''
@@ -70,7 +73,8 @@ async function launch(args) {
   throw new Error('gateway never started')
 }
 
-const MODES = ['stateful', 'stateless', 'sse']
+const MODES = (process.env.BATTERY_MODES ?? 'stateful,stateless,sse').split(',')
+const report = []
 let failures = 0
 
 for (const mode of MODES) {
@@ -114,6 +118,7 @@ for (const mode of MODES) {
     ]
   }
 
+  report.push({ mode, driver: DRIVER, rows })
   const bad = rows.filter((r) => !r.ok)
   failures += bad.length
   console.log(
@@ -121,6 +126,14 @@ for (const mode of MODES) {
   )
   for (const r of bad) console.log(`  FAIL ${r.name}: ${r.detail}`)
   await gateway.stop()
+}
+
+if (process.env.BATTERY_REPORT) {
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(
+    process.env.BATTERY_REPORT,
+    JSON.stringify(report, null, 2) + '\n',
+  )
 }
 
 if (failures > 0) {

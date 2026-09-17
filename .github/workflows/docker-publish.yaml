@@ -1,10 +1,20 @@
 name: Publish Docker images
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact npm version (defaults to package.json)
+        type: string
+        default: ''
+      channel:
+        description: npm channel to publish as Docker aliases
+        type: choice
+        options: [next, latest]
+        default: next
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
 
 permissions:
   contents: read
@@ -16,16 +26,44 @@ env:
 jobs:
   publish:
     name: Build and push supergateway container
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
-      id-token: write
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve the published npm version and channel
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_CHANNEL: ${{ inputs.channel }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { releaseChannel } from './scripts/release-channel.mjs';
+          const version = process.env.REQUESTED_VERSION || (process.env.GITHUB_REF_TYPE === 'tag'
+            ? process.env.GITHUB_REF_NAME.replace(/^v/, '')
+            : JSON.parse(fs.readFileSync('package.json')).version);
+          const response = await fetch('https://registry.npmjs.org/-/package/supergateway/dist-tags', {signal: AbortSignal.timeout(30000)});
+          if (!response.ok) throw new Error(`npm registry: ${response.status}`);
+          const channel = releaseChannel(version, await response.json(), process.env.REQUESTED_CHANNEL || 'auto');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nchannel=${channel}\n`);
+          NODE
+
+      - name: Download the exact published package
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          node scripts/pack-release.mjs "$VERSION"
+          node --input-type=module -e 'import fs from "node:fs"; fs.appendFileSync(process.env.GITHUB_ENV, `PACKAGE_SHA256=${JSON.parse(fs.readFileSync(".release/manifest.json")).sha256}\n`);'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -47,33 +85,20 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version
-        id: ver
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-
-      - name: Docker meta
-        id: docker_meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ env.GHCR_REGISTRY }}/supergateway
-            ${{ env.DOCKERHUB_REGISTRY }}/supergateway
-          labels: |
-            org.opencontainers.image.title=Supergateway
-            org.opencontainers.image.version=${{ steps.ver.outputs.VERSION }}
-            org.opencontainers.image.source=${{ github.repository }}
-
       - name: Build & push (Bake)
         uses: docker/bake-action@v6
         env:
-          VERSION: ${{ steps.ver.outputs.VERSION }}
+          VERSION: ${{ steps.release.outputs.version }}
+          CHANNEL: ${{ steps.release.outputs.channel }}
         with:
           source: .
-          files: |
-            docker-bake.hcl
-            ${{ steps.docker_meta.outputs.bake-file }}
+          files: docker-bake.hcl
           push: true
           set: |
-            *.args.VERSION=${{ steps.ver.outputs.VERSION }}
+            *.args.VERSION=${{ steps.release.outputs.version }}
+            *.args.PACKAGE_SHA256=${{ env.PACKAGE_SHA256 }}
+            *.labels.org.opencontainers.image.title=Supergateway
+            *.labels.org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            *.labels.org.opencontainers.image.source=https://github.com/${{ github.repository }}
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max

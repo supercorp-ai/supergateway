@@ -2,7 +2,11 @@
 
 **Supergateway** runs **MCP stdio-based servers** over **SSE (Server-Sent Events)** or **WebSockets (WS)** with one command. This is useful for remote access, debugging, or connecting to clients when your MCP server only supports stdio.
 
-Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterface](https://superinterface.ai), and [Supercorp](https://supercorp.ai).
+Supported by:
+
+- [Supercov](https://supercov.com) — Coverage for coding agents and software factories 🌙
+- [Superinterface](https://superinterface.ai)
+- [Supercorp](https://supercorp.ai)
 
 ## Installation & Usage
 
@@ -193,10 +197,14 @@ Pull any of these pre-built Supergateway images for various dependencies you mig
 
 ### Building the Image Yourself
 
-Use provided Dockerfile:
+Build from this checkout:
 
 ```bash
-docker build -f docker/base.Dockerfile -t supergateway .
+npm ci
+npm run pack:release
+docker build -f docker/base.Dockerfile -t supergateway \
+  --build-arg VERSION="$(node -p "require('./.release/manifest.json').version")" \
+  --build-arg PACKAGE_SHA256="$(node -p "require('./.release/manifest.json').sha256")" .
 
 docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
 ```
@@ -297,6 +305,7 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@zaggash](https://github.com/zaggash)
 - [@0xt3ch](https://github.com/0xt3ch)
 - [@werebear73](https://github.com/werebear73)
 - [@move-hoon](https://github.com/move-hoon)

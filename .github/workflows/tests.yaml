@@ -339,22 +339,19 @@ jobs:
 
   # Build with the supported SDK toolchain, then install the exact tarball with
   # each consumer's npm and run its CLI with that consumer's Node. A loopback
-  # registry exercises shrinkwrap resolution, which differs from local tarballs
-  # on older npm. No publication is involved.
+  # registry exercises normal dependency resolution and preview/stable tags.
+  # No publication is involved.
   package:
     name: Package on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Windows fresh/warm installs plus cache cleanup can exceed 15 minutes.
+    # Individual commands retain their bounded deadlines in test-package.mjs.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: ['20', '22', '24', '26']
-        include:
-          - os: windows-latest
-            node: '20'
-          - os: windows-latest
-            node: '24'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -371,6 +368,9 @@ jobs:
       - run: npm ci
       - name: Verify fresh npx installation and protocol/lifecycle behavior
         run: npm run test:package
+        env:
+          npm_config_loglevel: ${{ runner.os == 'Windows' && 'http' || 'notice' }}
+          npm_config_timing: ${{ runner.os == 'Windows' && 'true' || 'false' }}
 
   # The libc the shipped image actually uses. The compat job covers glibc and
   # darwin; this covers musl, and checks that the compiled gateway starts,
@@ -436,9 +436,13 @@ jobs:
   # Not part of `npm test`: building three images takes minutes, and none of it
   # depends on the working tree the way the suite does.
   docker:
-    name: Published images
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Candidate images / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -449,10 +453,12 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build
-        run: npm run build
+      - uses: docker/setup-qemu-action@v3
+      - name: Pack exact package
+        run: npm run pack:release
       - name: Check the images
         timeout-minutes: 18
         env:
           RUN_DOCKER_TESTS: '1'
+          DOCKER_TEST_PLATFORM: linux/${{ matrix.arch }}
         run: npx tsx --test tests/dockerImages.test.ts

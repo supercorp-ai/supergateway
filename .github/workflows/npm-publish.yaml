@@ -77,13 +77,11 @@ jobs:
       - name: Publish through npm trusted publishing
         run: npm publish --tag "$CHANNEL"
 
-      - name: Wait for npm registry processing
+      - name: Wait for npm registry processing and verify the download
         run: node scripts/wait-for-npm-publication.mjs
 
       - name: Verify public package and channel
         run: |
-          node scripts/pack-release.mjs "$VERSION"
-          npm view supergateway dist-tags --json > "$RUNNER_TEMP/tags-after.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';

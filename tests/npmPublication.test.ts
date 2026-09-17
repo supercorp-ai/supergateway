@@ -96,3 +96,99 @@ test('npm publication tolerates registry throttling and temporary tag unavailabi
   })
   assert.equal(remote.calls(), 5)
 })
+
+test('npm publication waits until npm pack can download the visible version', async () => {
+  const remote = registry([
+    [200, metadata],
+    [200, { next: version }],
+    [200, metadata],
+    [200, { next: version }],
+  ])
+  let downloads = 0
+  let pauses = 0
+  const tags = await waitForPublication({
+    ...options,
+    request: remote.request,
+    downloadPackage: async () => {
+      if (++downloads === 1)
+        throw Object.assign(new Error('npm pack has stale metadata'), {
+          stdout: JSON.stringify({ error: { code: 'ETARGET' } }),
+        })
+      return { version, integrity }
+    },
+    sleep: async () => {
+      pauses++
+    },
+  })
+  assert.equal(downloads, 2)
+  assert.equal(pauses, 1)
+  assert.equal(remote.calls(), 4)
+  assert.deepEqual(tags, { next: version })
+})
+
+for (const code of ['ETARGET', 'E404'])
+  test(`npm publication bounds repeated ${code} download failures`, async () => {
+    const remote = registry(
+      Array.from({ length: 3 }, () => [
+        [200, metadata],
+        [200, { next: version }],
+      ]).flat() as Array<[number, object]>,
+    )
+    let downloads = 0
+    let pauses = 0
+    await assert.rejects(
+      waitForPublication({
+        ...options,
+        request: remote.request,
+        downloadPackage: async () => {
+          downloads++
+          throw Object.assign(new Error('not visible'), {
+            stdout: JSON.stringify({ error: { code } }),
+          })
+        },
+        sleep: async () => {
+          pauses++
+        },
+      }),
+      /after 3 checks/,
+    )
+    assert.equal(downloads, 3)
+    assert.equal(pauses, 2)
+  })
+
+test('npm publication fails immediately for corrupt bytes, wrong versions and non-visibility download errors', async () => {
+  for (const result of [
+    { version, integrity: 'sha512-other-bytes' },
+    { version: 'wrong-version', integrity },
+    Object.assign(new Error('auth'), {
+      stdout: JSON.stringify({ error: { code: 'E401' } }),
+    }),
+    Object.assign(new Error('corrupt'), {
+      stdout: JSON.stringify({ error: { code: 'EINTEGRITY' } }),
+    }),
+    Object.assign(new Error('unexpected'), { stdout: 'not JSON' }),
+  ]) {
+    const remote = registry([
+      [200, metadata],
+      [200, { next: version }],
+    ])
+    let downloads = 0
+    let pauses = 0
+    await assert.rejects(
+      waitForPublication({
+        ...options,
+        request: remote.request,
+        downloadPackage: async () => {
+          downloads++
+          if (result instanceof Error) throw result
+          return result
+        },
+        sleep: async () => {
+          pauses++
+        },
+      }),
+    )
+    assert.equal(downloads, 1)
+    assert.equal(pauses, 0)
+  }
+})

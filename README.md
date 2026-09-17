@@ -2,7 +2,11 @@
 
 **Supergateway** runs **MCP stdio-based servers** over **SSE (Server-Sent Events)** or **WebSockets (WS)** with one command. This is useful for remote access, debugging, or connecting to clients when your MCP server only supports stdio.
 
-Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterface](https://superinterface.ai), and [Supercorp](https://supercorp.ai).
+Supported by:
+
+- [Supercov](https://supercov.com) — Coverage for coding agents and software factories 🌙
+- [Superinterface](https://superinterface.ai)
+- [Supercorp](https://supercorp.ai)
 
 ## Installation & Usage
 

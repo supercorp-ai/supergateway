@@ -8,7 +8,7 @@ import {
 
 const prefix = '[supergateway] '
 const banner =
-  'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai'
+  'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com'
 
 // Each case names the announcement family it cares about (`select`) and the
 // complete line that family must contain (`expect`). Selecting the family and

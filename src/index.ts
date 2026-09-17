@@ -166,7 +166,7 @@ async function main() {
 
   logger.info('Starting...')
   logger.info(
-    'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai',
+    'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 

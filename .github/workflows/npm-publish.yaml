@@ -1,0 +1,99 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version in package.json to publish
+        required: true
+        type: string
+      channel:
+        description: npm dist-tag
+        required: true
+        type: choice
+        options: [next, latest]
+        default: next
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Require the requested version and passing main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/tests.yaml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/test-runs.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json'));
+          assert.equal(pkg.name, 'supergateway');
+          assert.equal(pkg.version, process.env.VERSION, 'Requested version differs from package.json');
+          assert.ok(['next', 'latest'].includes(process.env.CHANNEL));
+          if (process.env.CHANNEL === 'latest') {
+            assert.match(pkg.version, /^\d+\.\d+\.\d+$/, 'Prereleases must not use latest');
+          }
+          const runs = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/test-runs.json`)).workflow_runs;
+          const run = runs.find(r => r.head_sha === process.env.GITHUB_SHA && r.event === 'push' && r.head_branch === 'main');
+          assert.ok(run, 'No main CI run exists for this commit');
+          assert.equal(run.status, 'completed', 'Main CI has not finished');
+          assert.equal(run.conclusion, 'success', 'Main CI did not pass');
+          console.log(`Publishing ${pkg.version} to ${process.env.CHANNEL}; CI run ${run.id} passed`);
+          NODE
+
+      - run: npm ci
+
+      - name: Build and record the package
+        run: |
+          npm run pack:release
+          cp .release/manifest.json "$RUNNER_TEMP/local-manifest.json"
+          npm view supergateway dist-tags --json > "$RUNNER_TEMP/tags-before.json"
+
+      - name: Publish through npm trusted publishing
+        run: npm publish --tag "$CHANNEL"
+
+      - name: Verify public package and channel
+        run: |
+          node scripts/pack-release.mjs "$VERSION"
+          npm view supergateway dist-tags --json > "$RUNNER_TEMP/tags-after.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const read = path => JSON.parse(fs.readFileSync(path));
+          const built = read(`${process.env.RUNNER_TEMP}/local-manifest.json`);
+          const published = read('.release/manifest.json');
+          assert.equal(published.integrity, built.integrity, 'Published package differs from the build');
+          const before = read(`${process.env.RUNNER_TEMP}/tags-before.json`);
+          const after = read(`${process.env.RUNNER_TEMP}/tags-after.json`);
+          assert.equal(after[process.env.CHANNEL], process.env.VERSION);
+          for (const [tag, version] of Object.entries(before)) {
+            if (tag !== process.env.CHANNEL) assert.equal(after[tag], version, `${tag} unexpectedly moved`);
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `Published **supergateway@${process.env.VERSION}** to **${process.env.CHANNEL}**.\n\nSHA-256: \`${published.sha256}\`\n`);
+          NODE

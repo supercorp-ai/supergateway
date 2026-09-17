@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { packRelease } from './pack-release.mjs'
 
 // npm can accept a publish before its public metadata and dist-tag are visible.
 export async function waitForPublication({
@@ -11,6 +12,7 @@ export async function waitForPublication({
   attempts = 40,
   intervalMs = 5000,
   request = fetch,
+  downloadPackage,
   sleep = delay,
 }) {
   const read = async (url) => {
@@ -41,7 +43,29 @@ export async function waitForPublication({
       const tags = await read(
         'https://registry.npmjs.org/-/package/supergateway/dist-tags',
       )
-      if (tags?.[channel] === version) return
+      if (tags?.[channel] === version) {
+        try {
+          if (downloadPackage) {
+            const packed = await downloadPackage()
+            assert.equal(packed.version, version)
+            assert.equal(
+              packed.integrity,
+              integrity,
+              'Published package differs from the build',
+            )
+          }
+          return tags
+        } catch (error) {
+          // npm pack reads different metadata from the version/tag endpoints.
+          // Only missing-publication errors are transient; integrity, auth and
+          // all other failures must remain visible immediately.
+          let code
+          try {
+            code = JSON.parse(error.stdout).error?.code
+          } catch {}
+          if (!['ETARGET', 'E404'].includes(code)) throw error
+        }
+      }
     }
     if (attempt + 1 < attempts) await sleep(intervalMs)
   }
@@ -57,11 +81,16 @@ if (
   const manifest = JSON.parse(
     readFileSync(`${process.env.RUNNER_TEMP}/local-manifest.json`),
   )
-  await waitForPublication({
+  const tags = await waitForPublication({
     version: process.env.VERSION,
     channel: process.env.CHANNEL,
     integrity: manifest.integrity,
+    downloadPackage: () => packRelease(process.env.VERSION),
   })
+  writeFileSync(
+    `${process.env.RUNNER_TEMP}/tags-after.json`,
+    JSON.stringify(tags) + '\n',
+  )
   console.log(
     `supergateway@${process.env.VERSION} is visible on ${process.env.CHANNEL}`,
   )

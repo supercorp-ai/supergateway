@@ -192,10 +192,22 @@ test(
       { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
     )
     const exited = once(child, 'exit')
-    t.after(async () => {
-      if (child.connected) child.send('stop')
-      await exited
-    })
+    // The exit event can precede IPC disconnect. Reuse one shutdown operation
+    // so the after hook never sends again through a stale `connected` flag.
+    let closing: Promise<unknown[]> | undefined
+    const close = () =>
+      (closing ??= (async () => {
+        if (
+          child.connected &&
+          child.exitCode === null &&
+          child.signalCode === null
+        )
+          await new Promise<void>((resolve, reject) => {
+            child.send('stop', (error) => (error ? reject(error) : resolve()))
+          })
+        return await exited
+      })())
+    t.after(close)
     const [message] = (await once(child, 'message')) as [{ pids: number[] }]
     assert.equal(message.pids.length, 9)
     const query = () => {
@@ -212,8 +224,7 @@ test(
     assert.ok(found.length > 8, 'the real fixture exceeds the leak budget')
     for (const pid of message.pids)
       assert.ok(found.includes(pid), `missing child ${pid}`)
-    child.send('stop')
-    assert.deepEqual(await exited, [0, null])
+    assert.deepEqual(await close(), [0, null])
     assert.deepEqual(query(), [])
   },
 )

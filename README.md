@@ -91,6 +91,8 @@ Supports legacy MCP and **2026-07-28** when the client and stdio server support 
 
 `--stateful` preserves legacy sessions. MCP 2026-07-28 uses independent requests and does not create a transport session.
 
+Each MCP 2026-07-28 request runs the stdio server for that request. When the server asks the client for more input, the same server process stays running for up to five minutes waiting for the client's next round, so state the server signed is still valid when it comes back. At most 64 such servers wait at once; the oldest is released to admit a newer one.
+
 ### Stateless mode
 
 ```bash

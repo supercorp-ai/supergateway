@@ -16,6 +16,11 @@ import {
 import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { OwnedStdioTransport } from './ownedStdioTransport.js'
+import {
+  CONTINUATION_TIMEOUT,
+  RETAINED_CHILD_LIMIT,
+  RetainedChildren,
+} from './retainedChildren.js'
 
 export function createModernHttp(args: {
   stdioCmd: string
@@ -24,9 +29,15 @@ export function createModernHttp(args: {
 }) {
   const { stdioCmd, children, logger } = args
   const active = new Set<() => Promise<void>>()
+  const retained = new RetainedChildren({
+    idleMs: CONTINUATION_TIMEOUT,
+    limit: RETAINED_CHILD_LIMIT,
+    logger,
+  })
   return {
     async close() {
       await Promise.all([...active].map((stop) => stop()))
+      await retained.close()
     },
     async handle(req: Request, res: Response): Promise<boolean> {
       const value = (name: string) => {
@@ -87,7 +98,23 @@ export function createModernHttp(args: {
       const transport = new PerRequestHTTPServerTransport({
         classification: route.classification,
       })
-      const child = new OwnedStdioTransport(stdioCmd, children, logger)
+      // A continuation echoes the opaque state its backend minted. Route it
+      // back to that backend while it is retained; otherwise start afresh.
+      const continuation =
+        route.messageKind === 'request'
+          ? continuationToken(route.message)
+          : undefined
+      const reused =
+        continuation === undefined
+          ? undefined
+          : await retained.take(continuation)
+      const child =
+        reused ?? new OwnedStdioTransport(stdioCmd, children, logger)
+      // The token this exchange leaves the child retained under: a reused
+      // child keeps its own until this exchange consumes it, and any
+      // `input_required` reply retains the child under the state it minted.
+      let retainAs = reused ? continuation : undefined
+      let parked: (() => void) | undefined
       let pending:
         | {
             id: string
@@ -111,8 +138,11 @@ export function createModernHttp(args: {
                 await transport.close()
               } finally {
                 try {
-                  await child.close()
+                  if (retainAs !== undefined && !failed)
+                    retained.keep(retainAs, child)
+                  else await child.close()
                 } finally {
+                  parked?.()
                   active.delete(stop)
                 }
               }
@@ -179,6 +209,14 @@ export function createModernHttp(args: {
                 ? 400
                 : 200
         }
+        if (
+          'result' in message &&
+          route.messageKind === 'request' &&
+          message.id === route.message.id
+        ) {
+          retainAs = mintedState(message.result)
+          if (retainAs !== undefined) parked ??= retained.reserve(retainAs)
+        }
         // Preserve discovery, opaque continuation state, errors and extensions.
         // No protocol Client/Server is inserted to renegotiate or rewrite them.
         void transport
@@ -198,10 +236,13 @@ export function createModernHttp(args: {
         dispatched = (async () => {
           if (stopped || children.closing)
             throw new Error('Gateway is shutting down')
-          await child.start()
-          if (stopped) {
-            await child.close()
-            return
+          if (!reused) {
+            await child.start()
+            if (stopped) {
+              // Cleanup ran before the process existed; release it now.
+              await child.close()
+              return
+            }
           }
           if (
             route.messageKind === 'request' &&
@@ -240,6 +281,8 @@ export function createModernHttp(args: {
             validateToolHeaders(schema, params.arguments, value)
           }
           if (stopped) return
+          // From here the child's continuation state is spent either way.
+          retainAs = undefined
           await child.send(message)
           if (route.messageKind === 'notification') await child.finish()
         })().catch(fail)
@@ -295,4 +338,19 @@ export function createModernHttp(args: {
       return true
     },
   }
+}
+
+function continuationToken(message: {
+  params?: Record<string, unknown>
+}): string | undefined {
+  const state = message.params?.requestState
+  return typeof state === 'string' ? state : undefined
+}
+
+function mintedState(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) return undefined
+  const { resultType, requestState } = result as Record<string, unknown>
+  return resultType === 'input_required' && typeof requestState === 'string'
+    ? requestState
+    : undefined
 }

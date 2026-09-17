@@ -205,7 +205,150 @@ test('progress and the final result retain their wire payloads and order', async
       .map((line: string) => JSON.parse(line.slice(5))),
     [notification, result],
   )
+  // The child minted continuation state, so it waits for the next round
+  // instead of exiting with this exchange. Shutdown releases it.
+  assert.equal(s.closes, 0)
+  await s.bridge.close()
   assert.equal(s.closes, 1)
+})
+
+const TOKEN = 'v1.opaque/+=signed-by-the-child'
+function continuationSetup() {
+  const s = setup()
+  s.request.body.method = 'tools/call'
+  s.request.headers['mcp-method'] = 'tools/call'
+  s.request.headers['mcp-name'] = 'roots'
+  s.request.body.params.name = 'roots'
+  s.request.body.params.arguments = {}
+  s.send = async (message: any) => {
+    if (message.method === 'tools/list')
+      s.child.onmessage({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { tools: [{ name: 'roots', inputSchema: { properties: {} } }] },
+      })
+    else
+      s.child.onmessage({
+        jsonrpc: '2.0',
+        id: message.id,
+        result:
+          typeof message.params.requestState === 'string'
+            ? { resultType: 'complete', content: [] }
+            : {
+                resultType: 'input_required',
+                inputRequests: {},
+                requestState: TOKEN,
+              },
+      })
+  }
+  s.nextRound = (id: number, extra: Record<string, unknown> = {}) => {
+    s.request = {
+      ...s.request,
+      body: {
+        ...s.request.body,
+        id,
+        params: {
+          ...s.request.body.params,
+          inputResponses: { locations: { roots: [] } },
+          requestState: TOKEN,
+          ...extra,
+        },
+      },
+    }
+  }
+  return s
+}
+
+test('the child that minted continuation state serves the next round without restarting', async () => {
+  const s = continuationSetup()
+  await s.open()
+  assert.equal(JSON.parse(s.body).result.requestState, TOKEN)
+  assert.equal(s.starts, 1)
+  assert.equal(s.closes, 0)
+  s.nextRound(1)
+  await s.open()
+  assert.deepEqual(JSON.parse(s.body), {
+    jsonrpc: '2.0',
+    id: 1,
+    result: { resultType: 'complete', content: [] },
+  })
+  assert.equal(s.starts, 1, 'no second child was started')
+  assert.equal(
+    s.sent[3],
+    s.request.body,
+    'the echoed state reaches the child untouched',
+  )
+  assert.equal(s.closes, 1, 'the completed operation releases its child')
+  assert.equal(s.response.listenerCount('close'), 0)
+})
+
+test('a continuation token nobody retained starts a fresh child', async () => {
+  const s = continuationSetup()
+  s.nextRound(1, { requestState: 'never minted here' })
+  await s.open()
+  assert.equal(s.starts, 1)
+  assert.equal(s.sent[1].params.requestState, 'never minted here')
+  assert.equal(s.closes, 1)
+})
+
+test('a failed round releases the retained child instead of keeping it', async () => {
+  const s = continuationSetup()
+  await s.open()
+  assert.equal(s.closes, 0)
+  const send = s.send
+  s.send = async (message: any) => {
+    if (message.method === 'tools/call')
+      throw new Error('private write failure')
+    await send(message)
+  }
+  s.nextRound(1)
+  await s.open()
+  assert.equal(JSON.parse(s.body).error.code, -32603)
+  assert.equal(s.closes, 1)
+  s.send = send
+  s.nextRound(2)
+  await s.open()
+  assert.equal(s.starts, 2, 'the released child is not reused')
+})
+
+test('a round that disconnects before dispatch leaves the child waiting for a retry', async () => {
+  const s = continuationSetup()
+  await s.open()
+  s.nextRound(1)
+  s.response.destroyed = true
+  await s.open()
+  assert.equal(s.closes, 0)
+  assert.equal(s.sent.length, 2, 'nothing was sent to the child')
+  s.response.destroyed = false
+  s.nextRound(2)
+  await s.open()
+  assert.equal(JSON.parse(s.body).result.resultType, 'complete')
+  assert.equal(s.starts, 1)
+  assert.equal(s.closes, 1)
+})
+
+test('a notification carrying continuation state never claims a retained child', async () => {
+  const s = continuationSetup()
+  await s.open()
+  const retainedChild = s.child
+  s.nextRound(1)
+  delete s.request.body.id
+  s.request.body.method = 'notifications/cancelled'
+  s.request.headers['mcp-method'] = 'notifications/cancelled'
+  delete s.request.headers['mcp-name']
+  s.request.body.params = {
+    _meta: s.request.body.params._meta,
+    requestId: 0,
+    requestState: TOKEN,
+  }
+  s.send = async () => {}
+  await s.open()
+  assert.equal(s.httpStatus, 202)
+  assert.equal(s.starts, 2, 'the notification runs its own child')
+  assert.notEqual(s.child, retainedChild)
+  assert.equal(s.closes, 1, 'only the notification child exits')
+  await s.bridge.close()
+  assert.equal(s.closes, 2)
 })
 
 for (const failure of [

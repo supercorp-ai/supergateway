@@ -1,6 +1,10 @@
 # Changelog
 
-## 4.0.0-rc.0
+## Unreleased
+
+### Improvements and fixes
+
+- Keep the stdio server running between rounds of an MCP 2026-07-28 operation that asks the client for input, so state the server signed still verifies when the client continues.
 
 ### Breaking changes
 

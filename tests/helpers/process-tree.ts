@@ -42,16 +42,24 @@ export function descendantsOf(
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks.ToString() } else { '0' }) }",
           ],
           options,
         )
       : query('ps', ['-eo', 'pid=,ppid='], options)
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
+  const created = new Map<number, bigint>()
   for (const line of table.trim().split(/\r?\n/)) {
-    assert.match(line.trim(), /^\d+\s+\d+$/, 'Invalid process table row')
-    const [child, parent] = line.trim().split(/\s+/).map(Number)
+    assert.match(
+      line.trim(),
+      platform === 'win32' ? /^\d+\s+\d+\s+\d+$/ : /^\d+\s+\d+$/,
+      'Invalid process table row',
+    )
+    const [childText, parentText, ticks] = line.trim().split(/\s+/)
+    const child = Number(childText)
+    const parent = Number(parentText)
+    if (platform === 'win32') created.set(child, BigInt(ticks))
     if (child === 0) continue // Windows System Idle Process is its own parent.
     children.set(parent, [...(children.get(parent) ?? []), child])
   }
@@ -60,6 +68,17 @@ export function descendantsOf(
     for (const child of children.get(root) ?? []) {
       // A snapshot can contain recycled PIDs; never loop through a parent cycle.
       if (child === pid || found.has(child)) continue
+      if (platform === 'win32' && created.has(root)) {
+        const parentCreated = created.get(root)!
+        const childCreated = created.get(child)!
+        assert.ok(
+          parentCreated > 0n && childCreated > 0n,
+          'Process creation time unavailable for ancestry check',
+        )
+        // ParentProcessId survives the creator's exit on Windows. Reject edges
+        // to a newer process that reused its PID, including the entire false subtree.
+        if (childCreated < parentCreated) continue
+      }
       found.add(child)
       walk(child)
     }

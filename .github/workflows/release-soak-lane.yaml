@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 210
     strategy:
-      fail-fast: false
+      fail-fast: true
       max-parallel: 12
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]

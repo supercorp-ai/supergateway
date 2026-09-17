@@ -1,12 +1,11 @@
 # Changelog
 
-## Unreleased
+## 4.0.0-rc.1
 
-### Improvements and fixes
+- Keep interactive operations isolated when servers return identical continuation state.
+- Preserve signed multi-round operations and explicit continuation retries after completion.
 
-- Keep concurrent interactive operations isolated and support explicit continuation retries after completion.
-
-- Keep the stdio server running between rounds of an MCP 2026-07-28 operation that asks the client for input, so state the server signed still verifies when the client continues.
+## 4.0.0-rc.0
 
 ### Breaking changes
 

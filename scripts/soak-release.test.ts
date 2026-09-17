@@ -31,6 +31,15 @@ const emit = (row: object) =>
     report,
     JSON.stringify({ time: new Date().toISOString(), ...row }) + '\n',
   )
+const cleanup = new Set<() => Promise<void>>()
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.once(signal, () => {
+    emit({ phase: 'interrupted', signal })
+    void Promise.allSettled([...cleanup].map((close) => close())).then(() =>
+      process.exit(1),
+    )
+  })
+
 // Keep only a bounded diagnostic tail: the observer must not grow for six hours.
 function launchGateway(
   t: TestContext,
@@ -52,24 +61,29 @@ function launchGateway(
     child.once('exit', () => resolve())
   })
   emit({ phase: 'gateway-start', pid: child.pid, args })
-  t.after(async () => {
-    const owned = descendantsOf(child.pid!)
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill('SIGTERM')
-    await Promise.race([exited, delay(7000, undefined, { ref: false })])
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill('SIGKILL')
-    await exited
-    for (const pid of owned) {
-      const { processInfo } = await import('../tests/helpers/process-tree.js')
-      assert.equal(
-        processInfo(pid).alive,
-        false,
-        `owned descendant ${pid} survived shutdown`,
-      )
-    }
-    emit({ phase: 'gateway-stopped', pid: child.pid, diagnostics: tail })
-  })
+  let closing: Promise<void> | undefined
+  const close = () =>
+    (closing ??= (async () => {
+      const owned = descendantsOf(child.pid!)
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill('SIGTERM')
+      await Promise.race([exited, delay(7000, undefined, { ref: false })])
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill('SIGKILL')
+      await exited
+      for (const pid of owned) {
+        const { processInfo } = await import('../tests/helpers/process-tree.js')
+        assert.equal(
+          processInfo(pid).alive,
+          false,
+          `owned descendant ${pid} survived shutdown`,
+        )
+      }
+      emit({ phase: 'gateway-stopped', pid: child.pid, diagnostics: tail })
+      cleanup.delete(close)
+    })())
+  cleanup.add(close)
+  t.after(close)
   return {
     child,
     ready: async () => {

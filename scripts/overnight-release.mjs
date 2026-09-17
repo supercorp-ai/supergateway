@@ -29,7 +29,6 @@ const events = (event) => {
   appendFileSync(resolve(root, 'events.jsonl'), JSON.stringify(row) + '\n')
   console.log(JSON.stringify(row))
 }
-const running = new Set()
 let failed = false
 const env = { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry }
 async function run(name, args, timeout, extra = {}) {
@@ -38,7 +37,6 @@ async function run(name, args, timeout, extra = {}) {
     env: { ...env, ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  running.add(child)
   child.stdout.pipe(log, { end: false })
   child.stderr.pipe(log, { end: false })
   events({ phase: 'start-command', name, pid: child.pid })
@@ -55,7 +53,6 @@ async function run(name, args, timeout, extra = {}) {
   })
   clearTimeout(timer)
   clearTimeout(hardTimer)
-  running.delete(child)
   await new Promise((ok) => log.end(ok))
   events({ phase: 'end-command', name, ...result, timedOut })
   if (result.code !== 0 || timedOut) {
@@ -163,7 +160,7 @@ if (process.platform !== 'win32' && process.env.SOAK_SKIP_RESOURCE !== '1')
   jobs.push(
     run(
       'resources',
-      ['--import', 'tsx', '--test', 'scripts/soak-release.test.ts'],
+      ['--import', 'tsx', 'scripts/soak-release.test.ts'],
       (seconds + 180) * 1000,
       { SOAK_REPORT: resolve(root, 'resources.jsonl') },
     ),

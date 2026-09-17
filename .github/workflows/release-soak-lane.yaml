@@ -33,6 +33,14 @@ jobs:
       SOAK_DIRECTORY: .release/overnight
       SOAK_PACKAGE_VERSION: 4.0.0-rc.1
       SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
+      # Both soaks so far died to a Windows gateway that was still running and
+      # had written nothing after eight seconds, on a runner the poll counter
+      # showed was being scheduled about five times slower than it asked for.
+      # Give only that platform room to absorb the stall; the failure message
+      # still reports how long the gateway took and how badly it was scheduled,
+      # so a raised budget hides nothing. Group test timeouts follow it through
+      # gatewayTimeout().
+      SUPERGATEWAY_TEST_READY_TIMEOUT: ${{ matrix.os == 'windows-latest' && '30000' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

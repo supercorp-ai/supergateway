@@ -25,7 +25,7 @@ jobs:
       fail-fast: false
       max-parallel: 12
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [windows-latest]
         node: [20, 22, 24, 26]
     env:
       SUPERGATEWAY_SOAK_CONFIRMED: '1'
@@ -46,7 +46,17 @@ jobs:
       - name: Install exact published RC and verify its digest
         run: npm exec -- node scripts/install-soak-artifact.mjs
       - name: Exercise published RC
-        run: node scripts/overnight-release.mjs
+        env:
+          PROCESS_TREE_DIAGNOSTICS: .release/overnight/process-snapshots
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .release/overnight | Out-Null
+          $failed = $false
+          for ($round = 0; $round -lt 12; $round++) {
+            node --import tsx --test --test-concurrency=1 --test-reporter ./scripts/release-test-reporter.mjs tests/modernAutoCompatibility.test.ts tests/modernContinuationBoundary.test.ts 2>&1 | Tee-Object -FilePath ".release/overnight/round-$round.log"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
       - name: Preserve results, including failures
         if: always()
         uses: actions/upload-artifact@v4

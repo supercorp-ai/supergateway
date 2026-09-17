@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * Live descendants of a process, by walking the ppid table.
@@ -33,7 +35,9 @@ export function descendantsOf(
     timeout: platform === 'win32' ? 30000 : 10000,
     stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
   }
-  const table =
+  const diagnosticDirectory = process.env.PROCESS_TREE_DIAGNOSTICS
+  const diagnostic = platform === 'win32' && diagnosticDirectory
+  const raw =
     platform === 'win32'
       ? query(
           'powershell.exe',
@@ -42,11 +46,21 @@ export function descendantsOf(
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+            diagnostic
+              ? "$ErrorActionPreference = 'Stop'; @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; parent=$_.ParentProcessId; created=if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks.ToString() } else { '0' }; name=$_.Name } }) | ConvertTo-Json -Compress"
+              : "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
           ],
           options,
         )
       : query('ps', ['-eo', 'pid=,ppid='], options)
+  const snapshot = diagnostic ? JSON.parse(raw) : undefined
+  const table = snapshot
+    ? snapshot
+        .map(
+          (row: { pid: number; parent: number }) => `${row.pid} ${row.parent}`,
+        )
+        .join('\n')
+    : raw
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
   for (const line of table.trim().split(/\r?\n/)) {
@@ -65,6 +79,18 @@ export function descendantsOf(
     }
   }
   walk(pid)
+  if (diagnostic) {
+    mkdirSync(diagnosticDirectory, { recursive: true })
+    appendFileSync(
+      join(diagnosticDirectory, `processes-${process.pid}.jsonl`),
+      JSON.stringify({
+        time: new Date().toISOString(),
+        root: pid,
+        found: [...found],
+        snapshot,
+      }) + '\n',
+    )
+  }
   return [...found]
 }
 

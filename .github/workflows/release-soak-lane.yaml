@@ -1,0 +1,52 @@
+name: Published release soak lane
+
+on:
+  workflow_call:
+    inputs:
+      seconds:
+        required: true
+        type: number
+      label:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  exercise:
+    name: ${{ inputs.label }} / Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22, 24]
+    env:
+      SUPERGATEWAY_SOAK_CONFIRMED: '1'
+      SOAK_SECONDS: ${{ inputs.seconds }}
+      SOAK_DIRECTORY: .release/overnight
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Install exact published RC and verify its digest
+        run: npm exec -- node scripts/install-soak-artifact.mjs
+      - name: Exercise published RC
+        run: node scripts/overnight-release.mjs
+      - name: Preserve results, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ inputs.label }}-${{ matrix.os }}-node${{ matrix.node }}
+          path: |
+            .release/overnight/
+            .release/public-soak/package-lock.json
+          retention-days: 14
+          if-no-files-found: warn

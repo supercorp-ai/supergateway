@@ -1,0 +1,36 @@
+name: Published release soak
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/release-overnight-soak]
+    paths:
+      - '.github/workflows/release-soak*.yaml'
+      - 'scripts/*soak*'
+      - 'scripts/overnight-release.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 60
+      label: canary
+
+  first:
+    needs: canary
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[soak]')
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: first-three-hours
+
+  second:
+    needs: first
+    if: ${{ !cancelled() && needs.first.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: second-three-hours

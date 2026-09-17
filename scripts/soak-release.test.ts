@@ -4,14 +4,15 @@
 // node --import tsx --test scripts/soak-release.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
+import { unusedPort } from '../tests/helpers/gateway-process.js'
+import type { TestContext } from 'node:test'
 import { descendantsOf } from '../tests/helpers/process-tree.js'
 
 assert.equal(
@@ -28,6 +29,61 @@ const emit = (row: object) =>
     report,
     JSON.stringify({ time: new Date().toISOString(), ...row }) + '\n',
   )
+// Keep only a bounded diagnostic tail: the observer must not grow for six hours.
+function launchGateway(
+  t: TestContext,
+  args: string[],
+  env: Record<string, string>,
+) {
+  const child = spawn(
+    process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+    [process.env.SUPERGATEWAY_TEST_ENTRY!, ...args],
+    { stdio: 'pipe', detached: true, env: { ...process.env, ...env } },
+  )
+  let tail = ''
+  for (const stream of [child.stdout, child.stderr])
+    stream.setEncoding('utf8').on('data', (chunk) => {
+      tail = (tail + chunk).slice(-65536)
+    })
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', () => resolve())
+  })
+  emit({ phase: 'gateway-start', pid: child.pid, args })
+  t.after(async () => {
+    const owned = descendantsOf(child.pid!)
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill('SIGTERM')
+    await Promise.race([exited, delay(7000, undefined, { ref: false })])
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill('SIGKILL')
+    await exited
+    for (const pid of owned) {
+      const { processInfo } = await import('../tests/helpers/process-tree.js')
+      assert.equal(
+        processInfo(pid).alive,
+        false,
+        `owned descendant ${pid} survived shutdown`,
+      )
+    }
+    emit({ phase: 'gateway-stopped', pid: child.pid })
+  })
+  return {
+    child,
+    ready: async () => {
+      const deadline = Date.now() + 15000
+      while (!/Listening on port/.test(tail)) {
+        assert.ok(
+          child.exitCode === null &&
+            child.signalCode === null &&
+            Date.now() < deadline,
+          tail,
+        )
+        await delay(25)
+      }
+    },
+  }
+}
 const modernVersion = '2026-07-28'
 test(
   'installed release candidate: calls, reconnects, cancellations and idle resource recovery',
@@ -86,7 +142,12 @@ test(
           children: descendantsOf(pid).length,
         }
       })
-      emit({ phase, round, rows })
+      emit({
+        phase,
+        round,
+        rows,
+        observerRssKiB: Math.round(process.memoryUsage().rss / 1024),
+      })
       return rows
     }
     let id = 0,
@@ -105,6 +166,11 @@ test(
               'mcp-protocol-version': modernVersion,
               'mcp-method': 'tools/call',
               'mcp-name': name,
+              ...(name === 'echo'
+                ? {
+                    'mcp-param-value': `=?base64?${Buffer.from(`soak Unicode 🌙 漢字 \u2028 ${id + 1}`).toString('base64')}?=`,
+                  }
+                : {}),
             },
             body: JSON.stringify({
               jsonrpc: '2.0',
@@ -112,7 +178,7 @@ test(
               method: 'tools/call',
               params: {
                 name,
-                arguments: {},
+                arguments: { value: `soak Unicode 🌙 漢字 \u2028 ${id}` },
                 _meta: {
                   'io.modelcontextprotocol/protocolVersion': modernVersion,
                   'io.modelcontextprotocol/clientInfo': {
@@ -125,11 +191,22 @@ test(
               },
             }),
           })
-        const result = await post('identity', AbortSignal.timeout(5000))
-        assert.equal(result.status, 200)
+        const expected = `soak Unicode 🌙 漢字 \u2028 ${id + 1}`
+        const result = await post('echo', AbortSignal.timeout(10000))
         const body = await result.text()
-        assert.match(body, /"content"/)
+        assert.equal(result.status, 200, body)
+        const messages = body
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => JSON.parse(line.slice(5)))
+        const message =
+          messages.find((message) => message.result) ?? JSON.parse(body)
+        assert.deepEqual(message.result.content, [
+          { type: 'text', text: expected },
+        ])
+        assert.deepEqual(message.result.structuredContent, { value: expected })
         const abort = new AbortController()
+        const timer = setTimeout(() => abort.abort(), 10000)
         try {
           const waiting = await post('wait', abort.signal)
           assert.equal(waiting.status, 200)
@@ -143,6 +220,7 @@ test(
           await reader.cancel().catch(() => {})
           cancellations++
         } finally {
+          clearTimeout(timer)
           abort.abort()
         }
         calls++
@@ -174,19 +252,46 @@ test(
         await client.close()
       }
     }
+    emit({
+      phase: 'start',
+      seconds,
+      entry: process.env.SUPERGATEWAY_TEST_ENTRY,
+      runtime: process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+    })
     const baseline = sample('baseline', 0)
     const deadline = Date.now() + seconds * 1000
     let round = 0
     const activeSamples: ReturnType<typeof sample>[] = []
     while (Date.now() < deadline) {
-      await Promise.all(
+      const concurrency = round % 120 >= 100 ? 4 : 2
+      const work = Promise.all(
         gateways.map(async (gateway) => {
           // Repeated independent connections exercise setup and teardown; calls within
           // each stateful connection must retain its session until explicit DELETE.
-          await Promise.all([roundTrip(gateway), roundTrip(gateway)])
+          await Promise.all(
+            Array.from({ length: concurrency }, () => roundTrip(gateway)),
+          )
         }),
       )
+      let timer: NodeJS.Timeout | undefined
+      try {
+        await Promise.race([
+          work,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(Error('Soak round exceeded 60 seconds')),
+              60000,
+            )
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
       await delay(1000)
+      if (round > 0 && round % 120 === 0) {
+        await delay(10000)
+        emit({ phase: 'idle-window', round, calls, cancellations, connections })
+      }
       if (++round % 10 === 0) {
         const rows = sample('active', round)
         activeSamples.push(rows)

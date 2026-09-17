@@ -266,11 +266,28 @@ test(
           const waiting = await post('wait', abort.signal)
           assert.equal(waiting.status, 200)
           const reader = waiting.body!.getReader()
-          const first = await reader.read()
-          assert.match(
-            new TextDecoder().decode(first.value),
-            /notifications\/progress/,
-          )
+          const decoder = new TextDecoder()
+          let first = ''
+          while (!first.includes('\n\n') && !first.includes('\r\n\r\n')) {
+            const chunk = await reader.read()
+            assert.equal(
+              chunk.done,
+              false,
+              'Progress stream ended before its first frame',
+            )
+            first += decoder.decode(chunk.value, { stream: true })
+            assert.ok(
+              first.length <= 65536,
+              'Progress frame exceeded fixture budget',
+            )
+          }
+          const notification = first
+            .split(/\r?\n/)
+            .find((line) => line.startsWith('data:'))
+          assert.ok(notification, first)
+          const progress = JSON.parse(notification.slice(5))
+          assert.equal(progress.method, 'notifications/progress')
+          assert.equal(progress.params.progress, 1)
           abort.abort()
           await reader.cancel().catch(() => {})
           cancellations++

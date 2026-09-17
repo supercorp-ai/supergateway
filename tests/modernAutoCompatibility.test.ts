@@ -5,7 +5,11 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  launchGateway,
+  unusedPort,
+  gatewayTimeout,
+} from './helpers/gateway-process.js'
 
 // These clients already work against main through automatic legacy fallback.
 // State and roots assertions hold the existing gateway compatibility contract,
@@ -53,7 +57,7 @@ for (const mode of ['auto', 'legacy'] as const) {
 
   test(
     `${mode} client preserves state across calls with --stateful`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { client } = await connect(t, 'modern-bridge-peer')
       const first = await client.callTool(
@@ -82,7 +86,7 @@ for (const mode of ['auto', 'legacy'] as const) {
 
   test(
     `${mode} client follows negotiated logging rules without a requested log level`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { client, logs } = await connect(t, 'reverse-peer')
       const result = await client.callTool(
@@ -102,7 +106,7 @@ for (const mode of ['auto', 'legacy'] as const) {
 
   test(
     `${mode} client answers a backend roots request`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { client } = await connect(t, 'reverse-peer')
       const result = await client.callTool(

@@ -17,6 +17,7 @@ import {
   unusedPort,
   initialize,
   rpc,
+  gatewayTimeout,
 } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
@@ -143,7 +144,7 @@ for (const stateful of [true, false]) {
   const label = stateful ? 'stateful' : 'stateless'
   test(
     `${label}: modern discovery, tool schemas and all advertised request surfaces work`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const client = await connect(t, url, 'auto')
@@ -232,7 +233,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: malformed modern metadata and headers cannot dispatch a tool or damage a legacy session`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const legacy = await rpc(url, initialize())
@@ -279,7 +280,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: mismatched tool parameter header is rejected before dispatch`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const badTool = await post(
@@ -299,7 +300,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: concurrent modern calls own separate children and preserve request IDs`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const replies = await Promise.all(
@@ -331,7 +332,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: client abort releases the active child and other requests remain usable`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const controller = new AbortController()
@@ -373,7 +374,7 @@ for (const stateful of [true, false]) {
   for (const collect of [false, true])
     test(
       `${label}: progress arrives before cancellation and the blocked child is reaped${collect ? ' after garbage collection' : ''}`,
-      { timeout: 20000 },
+      { timeout: gatewayTimeout(20000) },
       async (t) => {
         const { url, trace, gateway } = await setup(
           t,
@@ -430,7 +431,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: disconnect during discovery reaps the unfinished child`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful, 'wait-init')
       const controller = new AbortController()
@@ -452,7 +453,7 @@ for (const stateful of [true, false]) {
   for (const ending of ['disconnect', 'shutdown'] as const) {
     test(
       `${label}: modern ${ending} reaps a TERM-resistant child and descendant`,
-      { timeout: 20000, skip: process.platform === 'win32' },
+      { timeout: gatewayTimeout(20000), skip: process.platform === 'win32' },
       async (t) => {
         const { url, trace, gateway } = await setup(t, stateful, 'stubborn')
         const controller = new AbortController()
@@ -493,7 +494,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: child exit and reverse requests settle without losing the gateway`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url } = await setup(t, stateful)
       const crashed = await post(url, 'tools/call', {
@@ -524,7 +525,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: custom requests preserve extension results and unknown-method errors`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { url } = await setup(t, stateful)
       const custom = await post(url, 'custom/echo', {
@@ -550,7 +551,7 @@ for (const stateful of [true, false]) {
 
   test(
     `${label}: tool schemas pass through without fetching or compiling remote references`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       let requests = 0
       const endpoint = createServer((_req, res) => {
@@ -605,7 +606,7 @@ for (const stateful of [true, false]) {
   for (const mode of ['exit-init']) {
     test(
       `${label}: ${mode} fails promptly and releases its child`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const { url, trace } = await setup(t, stateful, mode)
         const reply = await post(url, 'server/discover')
@@ -627,7 +628,7 @@ for (const stateful of [true, false]) {
 for (const stateful of [true, false]) {
   test(
     `modern notification is delivered before EOF cleanup (${stateful})`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       const response = await fetch(url, {
@@ -665,7 +666,7 @@ for (const stateful of [true, false]) {
   )
   test(
     `modern schema lookup failure and repeated pagination do not dispatch tools (${stateful})`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful, 'repeat-cursor')
       const response = await post(url, 'tools/call', {
@@ -695,7 +696,7 @@ for (const stateful of [true, false]) {
 for (const stateful of [false, true])
   test(
     `HTTP validation and errors after SSE starts (${stateful})`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const { url, trace } = await setup(t, stateful)
       for (const [header, status] of [

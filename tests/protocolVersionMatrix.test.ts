@@ -7,6 +7,7 @@ import {
   launchGateway,
   unusedPort,
   peerCommand,
+  gatewayTimeout,
 } from './helpers/gateway-process.js'
 
 // Package tests may exercise a separately installed SDK version. Resolve the
@@ -116,7 +117,7 @@ async function afterInitialize(
 for (const mode of MODES) {
   test(
     `${mode.label}: every protocol version in the initialize body negotiates`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       for (const version of [
         ...SUPPORTED_PROTOCOL_VERSIONS,
@@ -141,7 +142,7 @@ for (const mode of MODES) {
 
   test(
     `${mode.label}: a supported protocol version in the header is accepted`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       for (const header of [undefined, ...SUPPORTED_PROTOCOL_VERSIONS]) {
         const url = await gateway(t, mode.args)
@@ -158,7 +159,7 @@ for (const mode of MODES) {
 
   test(
     `${mode.label}: unsupported protocol headers are rejected`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       for (const header of [
         ...FUTURE_VERSIONS.filter((version) => version !== '2026-07-28'),
@@ -185,7 +186,7 @@ for (const mode of MODES) {
 
   test(
     `${mode.label}: a future proposal remains usable with the negotiated legacy version`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const url = await gateway(t, mode.args)
       const { response, session, body } = await initialize(url, '2026-07-28')
@@ -206,7 +207,7 @@ for (const mode of MODES) {
 
 test(
   'stateful: an unsupported header does not destroy the established session',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const url = await gateway(t, ['--stateful'])
     const affected = await initialize(url, '2025-06-18')
@@ -262,7 +263,7 @@ test(
 
 test(
   'stateful: a duplicate SSE GET preserves the session and its in-flight stream',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const url = await gateway(t, ['--stateful'])
     const initial = await initialize(url, '2025-06-18')

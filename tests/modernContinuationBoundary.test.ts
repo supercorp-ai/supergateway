@@ -8,7 +8,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  launchGateway,
+  unusedPort,
+  gatewayTimeout,
+} from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
 const ROOTS = { roots: [{ uri: 'file:///scratch', name: 'scratch' }] }
@@ -118,7 +122,7 @@ async function eventually(check: () => boolean, description: string) {
 for (const stateful of [false, true]) {
   test(
     `review ${stateful}: three equal backend tokens retain separate process ownership`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, pids } = await setup(t, stateful, {
         CONTINUATION_CONSTANT_STATE: '1',
@@ -149,7 +153,7 @@ for (const stateful of [false, true]) {
 
   test(
     `missing state ${stateful}: retry restores absence, not the gateway handle`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, trace, pids } = await setup(t, stateful, {
         CONTINUATION_NO_STATE: '1',
@@ -174,7 +178,7 @@ for (const stateful of [false, true]) {
 
   test(
     `review ${stateful}: explicit retry after final response keeps backend acceptance`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, pids } = await setup(t, stateful)
       const first = await post(url, 1, {})
@@ -201,7 +205,7 @@ for (const stateful of [false, true]) {
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 test(
   'direct stdio control accepts the same signed continuation after a final response',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const transport = new StdioClientTransport({
       command: process.execPath,

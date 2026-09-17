@@ -1,15 +1,9 @@
 // Repeated checks of an installed public artifact. No publication or credentials.
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import {
-  appendFileSync,
-  createWriteStream,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { createSoakCommandGroup } from './soak-command-group.mjs'
 
 assert.equal(process.env.SUPERGATEWAY_SOAK_CONFIRMED, '1')
 const seconds = Number(process.env.SOAK_SECONDS ?? 10800)
@@ -36,37 +30,11 @@ const events = (event) => {
   appendFileSync(resolve(root, 'events.jsonl'), JSON.stringify(row) + '\n')
   console.log(JSON.stringify(row))
 }
-let failed = false
 const env = { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry }
-async function run(name, args, timeout, extra = {}) {
-  const log = createWriteStream(resolve(root, `${name}.log`))
-  const child = spawn(process.execPath, args, {
-    env: { ...env, ...extra },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  child.stdout.pipe(log, { end: false })
-  child.stderr.pipe(log, { end: false })
-  events({ phase: 'start-command', name, pid: child.pid })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    child.kill('SIGTERM')
-  }, timeout)
-  // A hung subprocess is a failure, not an unbounded overnight wait.
-  const hardTimer = setTimeout(() => child.kill('SIGKILL'), timeout + 15000)
-  const result = await new Promise((ok) => {
-    child.once('error', (error) => ok({ code: null, error: String(error) }))
-    child.once('close', (code, signal) => ok({ code, signal }))
-  })
-  clearTimeout(timer)
-  clearTimeout(hardTimer)
-  await new Promise((ok) => log.end(ok))
-  events({ phase: 'end-command', name, ...result, timedOut })
-  if (result.code !== 0 || timedOut) {
-    failed = true
-    throw Error(`${name} failed; inspect ${root}/${name}.log`)
-  }
-}
+const commands = createSoakCommandGroup({ root, events, env })
+const { run } = commands
+for (const signal of ['SIGINT', 'SIGTERM'])
+  process.once(signal, () => commands.cancel(signal))
 const modern = [
   'modernProtocol',
   'modernTransparency',
@@ -122,7 +90,7 @@ async function batteries() {
   let cycle = 0
   do {
     for (let index = 0; index < groups.length; index++) {
-      if (failed) return
+      if (commands.failed) return
       // Always complete one scenario pass, even in a short harness canary.
       if (cycle > 0 && Date.now() >= deadline) return
       await run(
@@ -141,7 +109,7 @@ async function batteries() {
     }
     if (process.platform !== 'win32') {
       for (const old of [false, true]) {
-        if (failed) return
+        if (commands.failed) return
         await run(
           `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}`,
           ['tests/clients/run-battery.mjs', 'node'],
@@ -162,8 +130,12 @@ async function batteries() {
       }
     }
     events({ phase: 'cycle-complete', cycle: cycle++ })
-    await delay(Math.min(60000, Math.max(0, deadline - Date.now())))
-  } while (Date.now() < deadline && !failed)
+    await delay(
+      Math.min(60000, Math.max(0, deadline - Date.now())),
+      undefined,
+      { signal: commands.signal },
+    )
+  } while (Date.now() < deadline && !commands.failed)
 }
 // One finite default-lifetime check per lane/phase, against the installed CLI.
 let preflightError
@@ -184,9 +156,9 @@ try {
   preflightError = String(error)
 }
 deadline = Date.now() + seconds * 1000
-const jobs = failed ? [] : [batteries()]
+const jobs = commands.failed ? [] : [batteries()]
 if (
-  !failed &&
+  !commands.failed &&
   process.platform !== 'win32' &&
   process.env.SOAK_SKIP_RESOURCE !== '1'
 )
@@ -204,7 +176,7 @@ const errors = results
   .map((result) => String(result.reason))
 if (preflightError) errors.unshift(preflightError)
 const summary = {
-  status: errors.length ? 'failed' : 'passed',
+  status: errors.length || commands.failed ? 'failed' : 'passed',
   seconds,
   elapsedSeconds: Math.round((Date.now() - started) / 1000),
   errors,
@@ -214,4 +186,4 @@ writeFileSync(
   JSON.stringify(summary, null, 2) + '\n',
 )
 events({ phase: 'complete', ...summary })
-process.exitCode = errors.length ? 1 : 0
+process.exitCode = summary.status === 'failed' ? 1 : 0

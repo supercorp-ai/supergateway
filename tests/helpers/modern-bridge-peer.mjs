@@ -1,7 +1,6 @@
 // A wire peer with observable process identity and deterministic faults.
 // Legacy by default; safety tests opt into modern request envelopes.
 // The separate SDK-backed fixture still supplies the real implementation control.
-import readline from 'node:readline'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { appendFileSync } from 'node:fs'
@@ -61,7 +60,21 @@ const tools = [
   }),
 ]
 let reverseId
-for await (const line of readline.createInterface({ input: process.stdin })) {
+// MCP stdio is LF-delimited. Node readline also splits U+2028/U+2029,
+// which are legal characters inside JSON strings.
+async function* lines() {
+  process.stdin.setEncoding('utf8')
+  let buffered = ''
+  for await (const chunk of process.stdin) {
+    buffered += chunk
+    let end
+    while ((end = buffered.indexOf('\n')) !== -1) {
+      yield buffered.slice(0, end)
+      buffered = buffered.slice(end + 1)
+    }
+  }
+}
+for await (const line of lines()) {
   if (!line.trim()) continue
   const request = JSON.parse(line)
   trace({ event: 'message', message: request })

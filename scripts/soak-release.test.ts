@@ -8,6 +8,8 @@ import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { once } from 'node:events'
+import { WebSocket } from 'ws'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -66,7 +68,7 @@ function launchGateway(
         `owned descendant ${pid} survived shutdown`,
       )
     }
-    emit({ phase: 'gateway-stopped', pid: child.pid })
+    emit({ phase: 'gateway-stopped', pid: child.pid, diagnostics: tail })
   })
   return {
     child,
@@ -94,7 +96,7 @@ test(
       'Select the installed artifact explicitly',
     )
     const gateways = []
-    for (const mode of ['sse', 'stateful', 'stateless', 'modern']) {
+    for (const mode of ['sse', 'ws', 'stateful', 'stateless', 'modern']) {
       const port = await unusedPort()
       const gateway = launchGateway(
         t,
@@ -104,7 +106,7 @@ test(
             ? 'node tests/helpers/modern-bridge-peer.mjs'
             : 'node tests/helpers/mock-mcp-server.js stdio',
           '--outputTransport',
-          mode === 'sse' ? 'sse' : 'streamableHttp',
+          mode === 'sse' || mode === 'ws' ? mode : 'streamableHttp',
           '--port',
           String(port),
           ...(mode === 'stateful' ? ['--stateful'] : []),
@@ -115,7 +117,7 @@ test(
       gateways.push({
         mode,
         gateway,
-        url: `http://127.0.0.1:${port}/${mode === 'sse' ? 'sse' : 'mcp'}`,
+        url: `${mode === 'ws' ? 'ws' : 'http'}://127.0.0.1:${port}/${mode === 'sse' ? 'sse' : mode === 'ws' ? 'message' : 'mcp'}`,
       })
     }
     function sample(phase: string, round: number) {
@@ -137,6 +139,7 @@ test(
                 .filter((line) => /^f\d/.test(line)).length
         return {
           mode,
+          pid,
           rssKiB,
           descriptors,
           children: descendantsOf(pid).length,
@@ -155,6 +158,43 @@ test(
       cancellations = 0,
       connections = 0
     async function roundTrip({ mode, url }: (typeof gateways)[number]) {
+      if (mode === 'ws') {
+        const socket = new WebSocket(url)
+        const timeout = setTimeout(() => socket.terminate(), 10000)
+        const request = async (method: string, params: object) => {
+          const requestId = ++id
+          const reply = once(socket, 'message')
+          socket.send(
+            JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }),
+          )
+          const message = JSON.parse(String((await reply)[0]))
+          assert.equal(message.id, requestId)
+          assert.equal(message.error, undefined)
+          return message.result
+        }
+        try {
+          await once(socket, 'open')
+          await request('initialize', {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: { name: 'soak-ws', version: '1' },
+          })
+          connections++
+          assert.equal((await request('tools/list', {})).tools[0].name, 'add')
+          const result = await request('tools/call', {
+            name: 'add',
+            arguments: { a: 19, b: 23 },
+          })
+          assert.deepEqual(result.content, [
+            { type: 'text', text: 'The sum of 19 and 23 is 42.' },
+          ])
+          calls++
+        } finally {
+          clearTimeout(timeout)
+          socket.terminate()
+        }
+        return
+      }
       if (mode === 'modern') {
         const post = (name: string, signal: AbortSignal) =>
           fetch(url, {
@@ -201,6 +241,7 @@ test(
           .map((line) => JSON.parse(line.slice(5)))
         const message =
           messages.find((message) => message.result) ?? JSON.parse(body)
+        assert.ok(message.result, body)
         assert.deepEqual(message.result.content, [
           { type: 'text', text: expected },
         ])
@@ -252,6 +293,16 @@ test(
         await client.close()
       }
     }
+    // One stateful session stays open for the entire run, including idle windows.
+    const stateful = gateways.find((gateway) => gateway.mode === 'stateful')!
+    const durableClient = new Client({ name: 'soak-continuity', version: '1' })
+    const durableTransport = new StreamableHTTPClientTransport(
+      new URL(stateful.url),
+    )
+    await durableClient.connect(durableTransport)
+    const durableSession = durableTransport.sessionId
+    assert.ok(durableSession)
+    t.after(() => durableClient.close())
     emit({
       phase: 'start',
       seconds,
@@ -263,7 +314,18 @@ test(
     let round = 0
     const activeSamples: ReturnType<typeof sample>[] = []
     while (Date.now() < deadline) {
-      const concurrency = round % 120 >= 100 ? 4 : 2
+      const concurrency = round % 12 >= 10 ? 4 : 2
+      assert.equal(durableTransport.sessionId, durableSession)
+      assert.deepEqual(
+        (
+          await durableClient.callTool({
+            name: 'add',
+            arguments: { a: 20, b: 22 },
+          })
+        ).content,
+        [{ type: 'text', text: 'The sum of 20 and 22 is 42.' }],
+      )
+      calls++
       const work = Promise.all(
         gateways.map(async (gateway) => {
           // Repeated independent connections exercise setup and teardown; calls within
@@ -297,11 +359,14 @@ test(
         activeSamples.push(rows)
         for (const row of rows)
           assert.ok(
-            row.children <= (row.mode === 'sse' ? 2 : 0),
+            row.children <=
+              baseline.find((item) => item.mode === row.mode)!.children,
             `${row.mode}: children failed to settle`,
           )
       }
     }
+    await durableTransport.terminateSession()
+    await durableClient.close()
     const settled = []
     for (let n = 0; n < 6; n++) {
       await delay(5000)
@@ -310,7 +375,7 @@ test(
     for (const [index, row] of settled.at(-1)!.entries()) {
       assert.equal(
         row.children,
-        row.mode === 'sse' ? baseline[index].children : 0,
+        row.mode === 'sse' || row.mode === 'ws' ? baseline[index].children : 0,
       )
       assert.ok(
         row.descriptors <= baseline[index].descriptors + 8,
@@ -318,7 +383,8 @@ test(
       )
       // RSS includes allocator retention. Compare a warmed-up sample to the final
       // idle sample; retain all observations for longer-run trend review.
-      const warm = activeSamples[Math.floor(activeSamples.length / 2)]?.[index]
+      const warm =
+        activeSamples[Math.min(10, activeSamples.length - 1)]?.[index]
       if (warm)
         assert.ok(
           row.rssKiB <= warm.rssKiB * 1.2 + 16 * 1024,

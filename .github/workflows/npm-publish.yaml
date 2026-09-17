@@ -77,6 +77,9 @@ jobs:
       - name: Publish through npm trusted publishing
         run: npm publish --tag "$CHANNEL"
 
+      - name: Wait for npm registry processing
+        run: node scripts/wait-for-npm-publication.mjs
+
       - name: Verify public package and channel
         run: |
           node scripts/pack-release.mjs "$VERSION"

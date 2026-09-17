@@ -366,6 +366,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Verify native process enumeration and leak detection
+        run: node --import tsx --test tests/processTree.test.ts
       - name: Verify fresh npx installation and protocol/lifecycle behavior
         run: npm run test:package
         env:

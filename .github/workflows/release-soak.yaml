@@ -1,0 +1,43 @@
+name: Published release soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha256:
+        description: Verified SHA-256 of the published 4.0.0-rc.1 tarball
+        required: true
+        type: string
+      duration:
+        description: Run canaries only, or the approved six-hour campaign
+        type: choice
+        options: [canary, six-hours]
+        default: canary
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 60
+      label: canary
+      sha256: ${{ inputs.sha256 }}
+
+  first:
+    needs: canary
+    if: inputs.duration == 'six-hours'
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: first-three-hours
+      sha256: ${{ inputs.sha256 }}
+
+  second:
+    needs: first
+    if: ${{ !cancelled() && needs.first.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: second-three-hours
+      sha256: ${{ inputs.sha256 }}

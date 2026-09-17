@@ -81,8 +81,7 @@ for (const termination of ['DELETE', 'idle-expiry']) {
           'streamableHttp',
           '--port',
           String(port),
-          '--sessionTimeout',
-          '500',
+          ...(termination === 'idle-expiry' ? ['--sessionTimeout', '500'] : []),
         ],
         { FAULT_IGNORE_TERM: '1' },
       )

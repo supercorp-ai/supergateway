@@ -1,4 +1,4 @@
-// Opt-in regression review of merged PR198; these assertions currently fail.
+// Regression controls for repeated state and explicit retries after completion.
 // A 2026-07-28 operation that asks the client for input spans HTTP exchanges.
 // The stdio server signs its continuation state with a process-local key, so
 // the client's next round has to reach the process that minted it.
@@ -8,11 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import {
-  Client,
-  StreamableHTTPClientTransport,
-} from '@modelcontextprotocol/client'
-import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
+import { launchGateway, unusedPort } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
 const ROOTS = { roots: [{ uri: 'file:///scratch', name: 'scratch' }] }
@@ -65,30 +61,6 @@ async function setup(
       .filter((entry) => entry.event === event)
       .map((entry) => entry.pid)
   return { gateway, url: `http://127.0.0.1:${port}/mcp`, trace, pids }
-}
-
-async function connect(t: TestContext, url: string) {
-  const client = new Client(
-    { name: 'continuation', version: '1' },
-    {
-      capabilities: { roots: {} },
-      versionNegotiation: { mode: { pin: VERSION } },
-    },
-  )
-  client.setRequestHandler('roots/list', async () => ROOTS)
-  t.after(() => client.close())
-  await client.connect(new StreamableHTTPClientTransport(new URL(url)), {
-    timeout: 5000,
-  })
-  return client
-}
-
-async function callRoots(client: Client, rounds = 1) {
-  const result = await client.callTool(
-    { name: 'roots', arguments: { rounds } },
-    { timeout: 10000 },
-  )
-  return JSON.parse((result.content as any[])[0].text)
 }
 
 // The raw client controls when, and whether, the next round is sent.
@@ -145,7 +117,7 @@ async function eventually(check: () => boolean, description: string) {
 
 for (const stateful of [false, true]) {
   test(
-    `review ${stateful}: a third identical token must not make a known collision routable`,
+    `review ${stateful}: three equal backend tokens retain separate process ownership`,
     { timeout: 20000 },
     async (t) => {
       const { url, pids } = await setup(t, stateful, {
@@ -153,13 +125,12 @@ for (const stateful of [false, true]) {
       })
       const a = await post(url, 1, {})
       const b = await post(url, 2, {})
-      assert.equal(a.message.result.requestState, b.message.result.requestState)
-      await eventually(
-        () => pids('mint').every((pid) => !alive(pid)),
-        'the first collision releases both processes',
-      )
       const c = await post(url, 3, {})
-      assert.equal(c.message.result.requestState, a.message.result.requestState)
+      const handles = [a, b, c].map(
+        (reply) => reply.message.result.requestState,
+      )
+      assert.equal(new Set(handles).size, 3)
+      assert.ok(pids('mint').every(alive))
       const result = await post(
         url,
         4,
@@ -167,18 +138,37 @@ for (const stateful of [false, true]) {
       )
       assert.equal(result.status, 200)
       assert.equal(result.message.error, undefined)
-      console.log(
-        JSON.stringify({
-          case: 'third-collision',
-          stateful,
-          minted: pids('mint'),
-          resumed: pids('resume'),
-        }),
+      assert.equal(
+        pids('resume')[0],
+        pids('mint')[0],
+        'the first caller resumes on its own process',
       )
-      assert.ok(
-        !pids('mint').includes(pids('resume')[0]),
-        "the first caller must not resume in the third caller\'s process after a known token collision",
+      assert.equal(pids('start').length, 3)
+    },
+  )
+
+  test(
+    `missing state ${stateful}: retry restores absence, not the gateway handle`,
+    { timeout: 20000 },
+    async (t) => {
+      const { url, trace, pids } = await setup(t, stateful, {
+        CONTINUATION_NO_STATE: '1',
+      })
+      const first = await post(url, 1, {})
+      assert.match(first.message.result.requestState, /^sgw:/)
+      const result = await post(
+        url,
+        2,
+        continuation(first.message.result.requestState),
       )
+      assert.equal(result.message.error, undefined)
+      assert.deepEqual(
+        JSON.parse(result.message.result.content[0].text).roots,
+        ROOTS,
+      )
+      const resumed = trace().find((event) => event.event === 'resume') as any
+      assert.equal(Object.hasOwn(resumed.params, 'requestState'), false)
+      assert.equal(pids('start').length, 1)
     },
   )
 
@@ -192,21 +182,18 @@ for (const stateful of [false, true]) {
       const completed = await post(url, 2, params)
       assert.equal(completed.message.error, undefined)
       const retry = await post(url, 3, params)
-      console.log(
-        JSON.stringify({
-          case: 'retry-after-final',
-          stateful,
-          completed: completed.message,
-          retry: retry.message,
-          starts: pids('start'),
-        }),
-      )
       assert.equal(
         retry.message.error,
         undefined,
         'the same still-valid signed state works when the backend remains directly connected',
       )
       assert.deepEqual(retry.message.result, completed.message.result)
+      assert.equal(pids('start').length, 1)
+      assert.equal(
+        pids('resume').length,
+        2,
+        'the explicit retry reached the backend rather than a response cache',
+      )
     },
   )
 }

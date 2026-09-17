@@ -426,10 +426,16 @@ for (const reason of ['disconnect', 'shutdown'] as const) {
   test(`${reason} during startup releases a late child without dispatching`, async () => {
     const s = setup()
     let resume!: () => void
-    s.start = () =>
-      new Promise<void>((resolve) => {
+    let live = false
+    s.start = async () => {
+      await new Promise<void>((resolve) => {
         resume = resolve
       })
+      live = true
+    }
+    s.close = async () => {
+      live = false
+    }
     const pending = s.open()
     const rejected = assert.rejects(pending, /closed/i)
     await tick()
@@ -439,6 +445,7 @@ for (const reason of ['disconnect', 'shutdown'] as const) {
     resume()
     await rejected
     await tick()
+    assert.equal(live, false, 'the child that finished starting is released')
     assert.deepEqual(s.sent, [])
     assert.equal(s.response.listenerCount('close'), 0)
   })
@@ -569,18 +576,22 @@ test('late child messages cannot write to a completed response', async () => {
   const s = setup()
   const send = s.send
   let late!: (message: any) => void
+  let lateError!: (error: Error) => void
   s.send = async (message: any) => {
     late = s.child.onmessage
+    lateError = s.child.onerror
     await send(message)
   }
   await s.open()
   const body = s.body
   late({ jsonrpc: '2.0', id: 0, result: { late: true } })
+  lateError(new Error('late failure after completion'))
   assert.equal(s.child.onmessage, undefined)
   assert.equal(s.child.onerror, undefined)
   await tick()
   assert.equal(s.body, body)
   assert.equal(s.closes, 1)
+  assert.deepEqual(s.errors, [], 'a completed exchange cannot fail again')
 })
 
 test('cleanup rejection is logged and releases the response listener', async () => {
@@ -678,7 +689,7 @@ for (const id of [17, null, undefined])
     const s = setup()
     s.request.body.id = id
     delete s.request.headers['content-type']
-    await s.open()
+    assert.equal(await s.open(), true)
     assert.equal(s.httpStatus, 415)
     assert.equal(JSON.parse(s.body).id, id === 17 ? 17 : null)
   })
@@ -891,4 +902,33 @@ test('HTTP capacity retains 64 states and evicts the oldest on the next one', as
   await s.open()
   assert.equal(JSON.parse(s.body).result.resultType, 'complete')
   assert.equal(s.starts, 65)
+})
+
+test('an unexpected backend request sends only its protocol error', async (t) => {
+  const s = setup()
+  const original = sdk.PerRequestHTTPServerTransport.prototype.send
+  const outgoing: unknown[] = []
+  t.mock.method(
+    sdk.PerRequestHTTPServerTransport.prototype,
+    'send',
+    async function (
+      this: InstanceType<typeof sdk.PerRequestHTTPServerTransport>,
+      ...args: Parameters<typeof original>
+    ) {
+      outgoing.push(args[0])
+      await original.apply(this, args)
+    },
+  )
+  s.send = async () => {
+    s.child.onmessage({ jsonrpc: '2.0', id: 'reverse', method: 'roots/list' })
+  }
+  await s.open()
+  assert.deepEqual(outgoing, [
+    {
+      jsonrpc: '2.0',
+      id: 0,
+      error: { code: -32603, message: 'MCP server process failed' },
+    },
+  ])
+  assert.equal(s.closes, 1)
 })

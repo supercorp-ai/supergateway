@@ -197,10 +197,14 @@ Pull any of these pre-built Supergateway images for various dependencies you mig
 
 ### Building the Image Yourself
 
-Use provided Dockerfile:
+Build from this checkout:
 
 ```bash
-docker build -f docker/base.Dockerfile -t supergateway .
+npm ci
+npm run pack:release
+docker build -f docker/base.Dockerfile -t supergateway \
+  --build-arg VERSION="$(node -p "require('./.release/manifest.json').version")" \
+  --build-arg PACKAGE_SHA256="$(node -p "require('./.release/manifest.json').sha256")" .
 
 docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
 ```

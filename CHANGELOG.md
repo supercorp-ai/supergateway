@@ -14,6 +14,8 @@
 - Defaults stay the same: stdio input uses SSE output unless selected otherwise;
   Streamable HTTP uses stateless mode unless `--stateful` is supplied. Modern
   MCP requests do not create legacy transport sessions.
+- Container images use Node.js 24. Commands that run Node-based MCP servers
+  inside those images should be checked against Node 24 before upgrading.
 
 ### Fixes
 
@@ -29,6 +31,10 @@
   unsupported server-to-client requests without hanging.
 - Credential headers are redacted from diagnostic logs while configured headers
   continue to reach their destinations.
+- Reverse bridges preserve successful results containing error-named fields and
+  upstream error details. HTTP failures produce valid JSON-RPC error codes.
+- Invalid request envelopes receive invalid-request errors. Rejected protocol
+  headers or duplicate SSE streams no longer destroy an established HTTP session.
 - Container variants install the tested package. The Deno image includes a
   working Deno runtime; base and uvx variants are tested on AMD64 and ARM64 too.
 

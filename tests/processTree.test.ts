@@ -10,8 +10,13 @@ for (const platform of ['win32', 'linux', 'darwin'] as const) {
     let queried = false
     const result = descendantsOf(10, {
       platform,
-      query(command, args) {
+      query(command, args, options) {
         queried = true
+        assert.deepEqual(options, {
+          encoding: 'utf8',
+          timeout: platform === 'win32' ? 30000 : 10000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
         if (platform === 'win32') {
           assert.equal(command, 'powershell.exe')
           assert.deepEqual(args.slice(0, 4), [
@@ -41,7 +46,9 @@ for (const platform of ['win32', 'linux', 'darwin'] as const) {
   })
 
   test(`${platform}: a failed process query cannot pass as zero descendants`, () => {
-    const failure = new Error('process enumeration unavailable')
+    const failure = Object.assign(new Error('process enumeration timed out'), {
+      code: 'ETIMEDOUT',
+    })
     assert.throws(
       () =>
         descendantsOf(10, {
@@ -76,7 +83,8 @@ test('parent cycles cannot hang process enumeration', () => {
 
 test(
   'native process enumeration detects nine real descendants and their removal',
-  { timeout: 30000 },
+  // Two bounded Windows queries plus fixture startup and teardown.
+  { timeout: process.platform === 'win32' ? 90000 : 30000 },
   async (t) => {
     const child = spawn(
       process.execPath,
@@ -94,12 +102,22 @@ test(
     })
     const [message] = (await once(child, 'message')) as [{ pids: number[] }]
     assert.equal(message.pids.length, 9)
-    const found = descendantsOf(child.pid!)
+    const query = () => {
+      const started = performance.now()
+      try {
+        return descendantsOf(child.pid!)
+      } finally {
+        t.diagnostic(
+          `Native process query took ${Math.round(performance.now() - started)}ms`,
+        )
+      }
+    }
+    const found = query()
     assert.ok(found.length > 8, 'the real fixture exceeds the leak budget')
     for (const pid of message.pids)
       assert.ok(found.includes(pid), `missing child ${pid}`)
     child.send('stop')
     assert.deepEqual(await exited, [0, null])
-    assert.deepEqual(descendantsOf(child.pid!), [])
+    assert.deepEqual(query(), [])
   },
 )

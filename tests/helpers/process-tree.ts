@@ -9,31 +9,44 @@ import { execFileSync } from 'node:child_process'
  * a grandchild rather than a child; counting only direct children would miss
  * exactly the processes GW-015 is about.
  */
-type ProcessQuery = (command: string, args: string[]) => string
+type ProcessQuery = (
+  command: string,
+  args: string[],
+  options: {
+    encoding: 'utf8'
+    timeout: number
+    stdio: ['ignore', 'pipe', 'pipe']
+  },
+) => string
 
 export function descendantsOf(
   pid: number,
   {
     platform = process.platform,
-    query = (command, args) =>
-      execFileSync(command, args, {
-        encoding: 'utf8',
-        timeout: 10000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
+    query = (command, args, options) => execFileSync(command, args, options),
   }: { platform?: NodeJS.Platform; query?: ProcessQuery } = {},
 ): number[] {
   // Do not turn an unavailable process table into a successful zero-child check.
+  const options = {
+    encoding: 'utf8' as const,
+    // PowerShell/CIM cold startup exceeded 10 seconds on a hosted Windows runner.
+    timeout: platform === 'win32' ? 30000 : 10000,
+    stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+  }
   const table =
     platform === 'win32'
-      ? query('powershell.exe', [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
-        ])
-      : query('ps', ['-eo', 'pid=,ppid='])
+      ? query(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+          ],
+          options,
+        )
+      : query('ps', ['-eo', 'pid=,ppid='], options)
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
   for (const line of table.trim().split(/\r?\n/)) {

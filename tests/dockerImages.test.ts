@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { unusedPort } from './helpers/gateway-process.js'
 
-// Opt-in: verify the staged tarball in every shipping container variant.
+// Opt-in: verify the packed tarball in every shipping container variant.
 const ENABLED = process.env.RUN_DOCKER_TESTS === '1'
 const PLATFORM =
   process.env.DOCKER_TEST_PLATFORM ??
@@ -70,10 +70,14 @@ before(
 
 for (const variant of ['base', 'uvx', 'deno'])
   test(
-    `docker: ${variant} runs the exact staged package as its entrypoint`,
+    `docker: ${variant} runs the exact packed package as its entrypoint`,
     { skip: !ENABLED, timeout: 120000 },
     () => {
-      const help = docker(['run', '--rm', `${TAG}:base`])
+      const help = docker(['run', '--rm', `${TAG}:${variant}`])
+      assert.equal(
+        docker(['run', '--rm', `${TAG}:${variant}`, '--version']).trim(),
+        manifest().version,
+      )
       assert.match(help, /--stdio/)
       assert.match(help, /--outputTransport/)
     },

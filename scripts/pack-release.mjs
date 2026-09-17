@@ -1,4 +1,4 @@
-// Build once; subsequent consumer and image checks take this exact tarball.
+// Pack local code for tests, or download an exact published version for images.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -17,13 +17,24 @@ const npm =
       ? 'node_modules/npm/bin/npm-cli.js'
       : '../lib/node_modules/npm/bin/npm-cli.js',
   )
+const publishedVersion = process.argv[2]
+if (publishedVersion)
+  assert.match(publishedVersion, /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/)
 const [packed] = JSON.parse(
   execFileSync(
     process.execPath,
-    [npm, 'pack', '--json', '--pack-destination', output],
+    [
+      npm,
+      'pack',
+      ...(publishedVersion ? [`supergateway@${publishedVersion}`] : []),
+      '--json',
+      '--pack-destination',
+      output,
+    ],
     { cwd: root, encoding: 'utf8' },
   ),
 )
+if (publishedVersion) assert.equal(packed.version, publishedVersion)
 for (const file of packed.files)
   assert.match(
     file.path,
@@ -36,6 +47,7 @@ const manifest = {
   filename: packed.filename,
   integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64'),
   sha256: createHash('sha256').update(bytes).digest('hex'),
+  publishedVersion: publishedVersion ?? null,
   sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf8',

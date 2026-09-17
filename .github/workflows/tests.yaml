@@ -368,6 +368,9 @@ jobs:
       - run: npm ci
       - name: Verify fresh npx installation and protocol/lifecycle behavior
         run: npm run test:package
+        env:
+          npm_config_loglevel: ${{ runner.os == 'Windows' && 'http' || 'notice' }}
+          npm_config_timing: ${{ runner.os == 'Windows' && 'true' || 'false' }}
 
   # The libc the shipped image actually uses. The compat job covers glibc and
   # darwin; this covers musl, and checks that the compiled gateway starts,
@@ -451,8 +454,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - uses: docker/setup-qemu-action@v3
-      - name: Stage exact package
-        run: npm run stage:release
+      - name: Pack exact package
+        run: npm run pack:release
       - name: Check the images
         timeout-minutes: 18
         env:

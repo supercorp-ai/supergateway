@@ -1,5 +1,13 @@
 variable "VERSION" {
-  default = "4.0.0"
+  default = "DEV"
+}
+
+variable "CHANNEL" {
+  default = "next"
+  validation {
+    condition = contains(["latest", "next"], CHANNEL)
+    error_message = "CHANNEL must be latest or next."
+  }
 }
 
 variable "PACKAGE_SHA256" {
@@ -19,10 +27,15 @@ group "default" {
 target "base" {
   inherits   = ["common"]
   dockerfile = "docker/base.Dockerfile"
-  tags = [
-    "supercorp/supergateway:${VERSION}-candidate",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate"
-  ]
+  tags = concat([
+    "supercorp/supergateway:${CHANNEL}",
+    "supercorp/supergateway:${VERSION}",
+    "ghcr.io/supercorp-ai/supergateway:${CHANNEL}",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}"
+  ], CHANNEL == "latest" ? [
+    "supercorp/supergateway:base",
+    "ghcr.io/supercorp-ai/supergateway:base"
+  ] : [])
 }
 
 target "uvx" {
@@ -31,8 +44,10 @@ target "uvx" {
   dockerfile = "docker/uvx.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:${VERSION}-candidate-uvx",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate-uvx"
+    "supercorp/supergateway:${CHANNEL == "latest" ? "uvx" : "next-uvx"}",
+    "supercorp/supergateway:${VERSION}-uvx",
+    "ghcr.io/supercorp-ai/supergateway:${CHANNEL == "latest" ? "uvx" : "next-uvx"}",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-uvx"
   ]
 }
 
@@ -42,7 +57,9 @@ target "deno" {
   dockerfile = "docker/deno.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:${VERSION}-candidate-deno",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate-deno"
+    "supercorp/supergateway:${CHANNEL == "latest" ? "deno" : "next-deno"}",
+    "supercorp/supergateway:${VERSION}-deno",
+    "ghcr.io/supercorp-ai/supergateway:${CHANNEL == "latest" ? "deno" : "next-deno"}",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-deno"
   ]
 }

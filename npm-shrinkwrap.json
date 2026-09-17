@@ -1,12 +1,12 @@
 {
   "name": "supergateway",
-  "version": "4.0.0",
+  "version": "4.0.0-rc.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "supergateway",
-      "version": "4.0.0",
+      "version": "4.0.0-rc.0",
       "dependencies": {
         "@modelcontextprotocol/client": "2.0.0",
         "@modelcontextprotocol/node": "2.0.0",

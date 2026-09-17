@@ -111,7 +111,7 @@ try {
   )
   assert.equal(oldResponse.status, 200)
   const oldPackage = await oldResponse.json()
-  let latest = pkg.version
+  let latest = '3.4.3'
   let registry
   // Exercise registry installation: older npm handles a local tarball's
   // shrinkwrap differently from the registry's _hasShrinkwrap manifest.
@@ -125,7 +125,7 @@ try {
       res.end(
         JSON.stringify({
           name: pkg.name,
-          'dist-tags': { latest },
+          'dist-tags': { latest, next: pkg.version },
           versions: {
             '3.4.3': oldPackage,
             [pkg.version]: {
@@ -216,6 +216,12 @@ try {
   assert.ok(
     cachedVersions.includes('3.4.3'),
     'warm cache actually contains the released package',
+  )
+  assert.equal((await npxRun('supergateway@next')).trim(), pkg.version)
+  assert.equal((await npxRun('supergateway@latest')).trim(), 'unknown')
+  assert.equal((await npxRun('supergateway')).trim(), 'unknown')
+  console.log(
+    'Next selects the candidate; latest and bare npx still select released 3.4.3',
   )
   latest = pkg.version
   const implicit = (await npxRun('supergateway')).trim()

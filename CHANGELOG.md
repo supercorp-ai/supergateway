@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.0.0 — release candidate
+## 4.0.0-rc.0 — next
 
 ### Compatibility
 

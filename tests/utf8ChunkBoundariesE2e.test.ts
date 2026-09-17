@@ -12,7 +12,6 @@ import {
   launchGateway,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 const expected = { content: [{ type: 'text', text: 'ą€🙂漢' }] }
 const call = {
@@ -42,11 +41,9 @@ test(
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   for (const split of [false, true]) {
-    // GW-031: each gateway decodes individual Buffers with toString('utf8'),
-    // replacing incomplete code points before the next chunk can complete them.
-    // The identical fixture passes direct streaming decoding and whole writes.
-    const run = split ? knownBugTest.bind(undefined, 'GW-031') : test
-    run(
+    // GW-031: streaming decoding must preserve scalars across pipe chunks.
+    // Direct streaming and whole writes remain paired controls.
+    test(
       `${mode} preserves Unicode with ${split ? 'split' : 'whole'} UTF-8 characters on child stdout`,
       { timeout: 15000 },
       async (t) => {

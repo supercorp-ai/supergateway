@@ -20,6 +20,7 @@ import {
   CONTINUATION_TIMEOUT,
   RETAINED_CHILD_LIMIT,
   RetainedChildren,
+  isContinuationHandle,
 } from './retainedChildren.js'
 
 export function createModernHttp(args: {
@@ -36,8 +37,9 @@ export function createModernHttp(args: {
   })
   return {
     async close() {
+      const closing = retained.close()
       await Promise.all([...active].map((stop) => stop()))
-      await retained.close()
+      await closing
     },
     async handle(req: Request, res: Response): Promise<boolean> {
       const value = (name: string) => {
@@ -98,23 +100,38 @@ export function createModernHttp(args: {
       const transport = new PerRequestHTTPServerTransport({
         classification: route.classification,
       })
-      // A continuation echoes the opaque state its backend minted. Route it
-      // back to that backend while it is retained; otherwise start afresh.
       const continuation =
         route.messageKind === 'request'
-          ? continuationToken(route.message)
+          ? route.message.params!.requestState
           : undefined
-      const reused =
-        continuation === undefined
-          ? undefined
-          : await retained.take(continuation)
+      const waiting = new AbortController()
+      const cancelled = () => waiting.abort()
+      res.once('close', cancelled)
+      if (res.destroyed) waiting.abort()
+      const reused = isContinuationHandle(continuation)
+        ? await retained.take(continuation, waiting.signal)
+        : undefined
+      res.off('close', cancelled)
+      if (isContinuationHandle(continuation) && !reused) {
+        await transport.close()
+        if (!res.destroyed)
+          return reject(
+            400,
+            -32602,
+            'Continuation expired or backend unavailable',
+          )
+        return true
+      }
       const child =
-        reused ?? new OwnedStdioTransport(stdioCmd, children, logger)
-      // The token this exchange leaves the child retained under: a reused
-      // child keeps its own until this exchange consumes it, and any
-      // `input_required` reply retains the child under the state it minted.
-      let retainAs = reused ? continuation : undefined
-      let parked: (() => void) | undefined
+        reused?.child ?? new OwnedStdioTransport(stdioCmd, children, logger)
+      let awaitingReply = false
+      let message = route.message
+      if (reused) {
+        message = { ...route.message, params: { ...route.message.params } }
+        delete message.params!.requestState
+        if (reused.state !== undefined)
+          message.params!.requestState = reused.state
+      }
       let pending:
         | {
             id: string
@@ -138,11 +155,9 @@ export function createModernHttp(args: {
                 await transport.close()
               } finally {
                 try {
-                  if (retainAs !== undefined && !failed)
-                    retained.keep(retainAs, child)
-                  else await child.close()
+                  if (!failed && !awaitingReply) await retained.release(child)
+                  else await retained.discard(child)
                 } finally {
-                  parked?.()
                   active.delete(stop)
                 }
               }
@@ -210,14 +225,25 @@ export function createModernHttp(args: {
                 : 200
         }
         if (
-          'result' in message &&
+          'id' in message &&
           route.messageKind === 'request' &&
           message.id === route.message.id
         ) {
-          retainAs = mintedState(message.result)
-          if (retainAs !== undefined) parked ??= retained.reserve(retainAs)
+          awaitingReply = false
+          if ('result' in message) {
+            const state = mintedState(message.result)
+            if (state) {
+              message = {
+                ...message,
+                result: {
+                  ...message.result,
+                  requestState: retained.retain(state.value, child),
+                },
+              }
+            }
+          }
         }
-        // Preserve discovery, opaque continuation state, errors and extensions.
+        // The backend state is restored on retry; other payloads stay unchanged.
         // No protocol Client/Server is inserted to renegotiate or rewrite them.
         void transport
           .send(message, {
@@ -232,7 +258,6 @@ export function createModernHttp(args: {
         void stop()
       }
       transport.onmessage = () => {
-        const message = route.message
         dispatched = (async () => {
           if (stopped || children.closing)
             throw new Error('Gateway is shutting down')
@@ -281,8 +306,7 @@ export function createModernHttp(args: {
             validateToolHeaders(schema, params.arguments, value)
           }
           if (stopped) return
-          // From here the child's continuation state is spent either way.
-          retainAs = undefined
+          awaitingReply = route.messageKind === 'request'
           await child.send(message)
           if (route.messageKind === 'notification') await child.finish()
         })().catch(fail)
@@ -340,17 +364,12 @@ export function createModernHttp(args: {
   }
 }
 
-function continuationToken(message: {
-  params?: Record<string, unknown>
-}): string | undefined {
-  const state = message.params?.requestState
-  return typeof state === 'string' ? state : undefined
-}
-
-function mintedState(result: unknown): string | undefined {
-  if (typeof result !== 'object' || result === null) return undefined
+function mintedState(
+  result: Record<string, unknown>,
+): { value: string | undefined } | undefined {
   const { resultType, requestState } = result as Record<string, unknown>
-  return resultType === 'input_required' && typeof requestState === 'string'
-    ? requestState
+  return resultType === 'input_required' &&
+    (requestState === undefined || typeof requestState === 'string')
+    ? { value: requestState as string | undefined }
     : undefined
 }

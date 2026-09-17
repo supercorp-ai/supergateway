@@ -9,28 +9,63 @@ import { execFileSync } from 'node:child_process'
  * a grandchild rather than a child; counting only direct children would miss
  * exactly the processes GW-015 is about.
  */
-export function descendantsOf(pid: number): number[] {
-  let table: string
-  try {
-    table = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
-  } catch {
-    return [] // no ps: report nothing rather than fail a test for the wrong reason
+type ProcessQuery = (
+  command: string,
+  args: string[],
+  options: {
+    encoding: 'utf8'
+    timeout: number
+    stdio: ['ignore', 'pipe', 'pipe']
+  },
+) => string
+
+export function descendantsOf(
+  pid: number,
+  {
+    platform = process.platform,
+    query = (command, args, options) => execFileSync(command, args, options),
+  }: { platform?: NodeJS.Platform; query?: ProcessQuery } = {},
+): number[] {
+  // Do not turn an unavailable process table into a successful zero-child check.
+  const options = {
+    encoding: 'utf8' as const,
+    // PowerShell/CIM cold startup exceeded 10 seconds on a hosted Windows runner.
+    timeout: platform === 'win32' ? 30000 : 10000,
+    stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
   }
+  const table =
+    platform === 'win32'
+      ? query(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+          ],
+          options,
+        )
+      : query('ps', ['-eo', 'pid=,ppid='], options)
+  assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
-  for (const line of table.split('\n')) {
+  for (const line of table.trim().split(/\r?\n/)) {
+    assert.match(line.trim(), /^\d+\s+\d+$/, 'Invalid process table row')
     const [child, parent] = line.trim().split(/\s+/).map(Number)
-    if (!child || Number.isNaN(parent)) continue
+    if (child === 0) continue // Windows System Idle Process is its own parent.
     children.set(parent, [...(children.get(parent) ?? []), child])
   }
-  const found: number[] = []
+  const found = new Set<number>()
   const walk = (root: number) => {
     for (const child of children.get(root) ?? []) {
-      found.push(child)
+      // A snapshot can contain recycled PIDs; never loop through a parent cycle.
+      if (child === pid || found.has(child)) continue
+      found.add(child)
       walk(child)
     }
   }
   walk(pid)
-  return found
+  return [...found]
 }
 
 export function processInfo(pid: number) {

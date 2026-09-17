@@ -344,9 +344,9 @@ jobs:
   package:
     name: Package on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Windows fresh/warm installs plus cache cleanup can exceed 15 minutes.
-    # Individual commands retain their bounded deadlines in test-package.mjs.
-    timeout-minutes: 20
+    # Windows cold installs and unpacking can consume most of a 20-minute job.
+    # Keep separate bounded deadlines for installs and behavioral checks.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -366,6 +366,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Verify native process enumeration and leak detection
+        run: node --import tsx --test tests/processTree.test.ts
       - name: Verify fresh npx installation and protocol/lifecycle behavior
         run: npm run test:package
         env:

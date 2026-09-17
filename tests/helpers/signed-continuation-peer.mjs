@@ -20,6 +20,7 @@ const trace = (event) => {
 // Unsigned, constant state is a control: any process can resume it, so two
 // backends mint identical tokens.
 const constant = process.env.CONTINUATION_CONSTANT_STATE === '1'
+const absent = process.env.CONTINUATION_NO_STATE === '1'
 const codec = createRequestStateCodec({
   key:
     process.env.CONTINUATION_SHARED_TEST_KEY === '1'
@@ -49,25 +50,29 @@ serveStdio(() => {
   }))
   server.setRequestHandler('tools/call', async (request, context) => {
     const rounds = request.params.arguments?.rounds ?? 1
-    const previous = constant
-      ? context.mcpReq.requestState()
-      : context.mcpReq.requestState()
+    const previous = context.mcpReq.requestState()
     const round =
-      previous === undefined
-        ? 0
-        : constant
-          ? Number(String(previous).split(':')[1])
-          : previous.round
+      absent && context.mcpReq.inputResponses?.locations
+        ? 1
+        : previous === undefined
+          ? 0
+          : constant
+            ? Number(String(previous).split(':')[1])
+            : previous.round
     if (!context.mcpReq.inputResponses?.locations) {
       trace({ event: 'mint', round: 1 })
       return inputRequired({
         inputRequests: { locations: inputRequired.listRoots() },
-        requestState: constant
-          ? 'constant:1'
-          : await codec.mint({
-              value: 'backend-owned signed state',
-              pid: process.pid,
-              round: 1,
+        ...(absent
+          ? {}
+          : {
+              requestState: constant
+                ? 'constant:1'
+                : await codec.mint({
+                    value: 'backend-owned signed state',
+                    pid: process.pid,
+                    round: 1,
+                  }),
             }),
       })
     }

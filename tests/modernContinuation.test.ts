@@ -149,7 +149,7 @@ for (const stateful of [false, true]) {
     `${label}: signed continuation state resumes on the process that minted it`,
     { timeout: 20000 },
     async (t) => {
-      const { url, pids } = await setup(t, stateful)
+      const { gateway, url, pids } = await setup(t, stateful)
       const client = await connect(t, url)
       // Connecting ran discovery in its own short-lived process.
       const discovered = pids('start').length
@@ -163,9 +163,11 @@ for (const stateful of [false, true]) {
       )
       assert.deepEqual(pids('resume'), pids('mint'))
       assert.equal(value.state.pid, pids('mint')[0])
+      gateway.signal('SIGTERM')
+      await gateway.exited
       await eventually(
         () => pids('start').every((pid) => !alive(pid)),
-        'the process exits once its operation completes',
+        'shutdown releases the completed continuation',
       )
     },
   )
@@ -174,7 +176,7 @@ for (const stateful of [false, true]) {
     `${label}: every round of a longer operation reaches the same process`,
     { timeout: 20000 },
     async (t) => {
-      const { url, pids, trace } = await setup(t, stateful)
+      const { gateway, url, pids, trace } = await setup(t, stateful)
       const client = await connect(t, url)
       const discovered = pids('start').length
       const value = await callRoots(client, 3)
@@ -194,9 +196,11 @@ for (const stateful of [false, true]) {
         ],
       )
       assert.equal(new Set(rounds.map((event) => event.pid)).size, 1)
+      gateway.signal('SIGTERM')
+      await gateway.exited
       await eventually(
         () => pids('start').every((pid) => !alive(pid)),
-        'the process exits once its operation completes',
+        'shutdown releases the completed continuation',
       )
     },
   )
@@ -205,7 +209,7 @@ for (const stateful of [false, true]) {
     `${label}: concurrent operations each resume on their own process`,
     { timeout: 20000 },
     async (t) => {
-      const { url, pids } = await setup(t, stateful)
+      const { gateway, url, pids } = await setup(t, stateful)
       const clients = await Promise.all([connect(t, url), connect(t, url)])
       const discovered = pids('start').length
       const values = await Promise.all(
@@ -217,9 +221,11 @@ for (const stateful of [false, true]) {
       assert.equal(new Set(values.map((value) => value.state.pid)).size, 2)
       assert.deepEqual(new Set(pids('resume')), minted)
       assert.equal(pids('start').length - discovered, 2)
+      gateway.signal('SIGTERM')
+      await gateway.exited
       await eventually(
         () => pids('start').every((pid) => !alive(pid)),
-        'both processes exit once their operations complete',
+        'shutdown releases both completed continuations',
       )
     },
   )
@@ -246,29 +252,26 @@ for (const stateful of [false, true]) {
   )
 
   test(
-    `${label}: identical unsigned state from two processes routes to neither`,
+    `${label}: identical unsigned state from three processes stays isolated`,
     { timeout: 20000 },
     async (t) => {
       const { url, pids } = await setup(t, stateful, {
         CONTINUATION_CONSTANT_STATE: '1',
       })
-      const [a, b] = [await post(url, 1, {}), await post(url, 2, {})]
-      assert.equal(a.message.result.requestState, 'constant:1')
-      assert.equal(b.message.result.requestState, 'constant:1')
-      await eventually(
-        () => pids('mint').every((pid) => !alive(pid)),
-        'both processes are released when their tokens collide',
+      const replies = await Promise.all(
+        [1, 2, 3].map((id) => post(url, id, {})),
       )
-      const resumed = await post(url, 3, continuation('constant:1'))
-      assert.equal(resumed.status, 200)
-      const value = JSON.parse(resumed.message.result.content[0].text)
-      assert.deepEqual(value, {
-        state: { value: 'constant:1' },
-        round: 1,
-        roots: ROOTS,
-      })
+      const handles = replies.map((reply) => reply.message.result.requestState)
+      assert.equal(new Set(handles).size, 3)
+      const minted = pids('mint')
+      for (let i = 0; i < 3; i++) {
+        const resumed = await post(url, 10 + i, continuation(handles[i]))
+        assert.equal(resumed.status, 200)
+        const value = JSON.parse(resumed.message.result.content[0].text)
+        assert.equal(value.state.value, 'constant:1')
+      }
       assert.equal(pids('start').length, 3)
-      assert.ok(!pids('mint').includes(pids('resume')[0]))
+      assert.deepEqual(new Set(pids('resume')), new Set(minted))
     },
   )
 }

@@ -1,6 +1,7 @@
 import { test, mock, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { enableFakeTimers } from './helpers/fake-timers.js'
 const sdk = await import('../src/lib/modernSdk.js')
 let b: any
 mock.module(new URL('../src/lib/modernSdk.js', import.meta.url).href, {
@@ -198,13 +199,21 @@ test('progress and the final result retain their wire payloads and order', async
   }
   await s.open()
   assert.equal(s.contentType, 'text/event-stream')
-  assert.deepEqual(
-    s.body
-      .split('\n')
-      .filter((line: string) => line.startsWith('data:'))
-      .map((line: string) => JSON.parse(line.slice(5))),
-    [notification, result],
-  )
+  const records = s.body
+    .split('\n')
+    .filter((line: string) => line.startsWith('data:'))
+    .map((line: string) => JSON.parse(line.slice(5)))
+  assert.match(records[1].result.requestState, /^sgw:/)
+  assert.deepEqual(records, [
+    notification,
+    {
+      ...result,
+      result: {
+        ...result.result,
+        requestState: records[1].result.requestState,
+      },
+    },
+  ])
   // The child minted continuation state, so it waits for the next round
   // instead of exiting with this exchange. Shutdown releases it.
   assert.equal(s.closes, 0)
@@ -242,6 +251,7 @@ function continuationSetup() {
       })
   }
   s.nextRound = (id: number, extra: Record<string, unknown> = {}) => {
+    s.handle ??= JSON.parse(s.body || '{}').result?.requestState ?? TOKEN
     s.request = {
       ...s.request,
       body: {
@@ -250,7 +260,7 @@ function continuationSetup() {
         params: {
           ...s.request.body.params,
           inputResponses: { locations: { roots: [] } },
-          requestState: TOKEN,
+          requestState: s.handle,
           ...extra,
         },
       },
@@ -262,7 +272,7 @@ function continuationSetup() {
 test('the child that minted continuation state serves the next round without restarting', async () => {
   const s = continuationSetup()
   await s.open()
-  assert.equal(JSON.parse(s.body).result.requestState, TOKEN)
+  assert.match(JSON.parse(s.body).result.requestState, /^sgw:/)
   assert.equal(s.starts, 1)
   assert.equal(s.closes, 0)
   s.nextRound(1)
@@ -273,12 +283,17 @@ test('the child that minted continuation state serves the next round without res
     result: { resultType: 'complete', content: [] },
   })
   assert.equal(s.starts, 1, 'no second child was started')
+  assert.deepEqual(s.sent[3], {
+    ...s.request.body,
+    params: { ...s.request.body.params, requestState: TOKEN },
+  })
   assert.equal(
-    s.sent[3],
-    s.request.body,
-    'the echoed state reaches the child untouched',
+    s.closes,
+    0,
+    'explicit retries retain their backend within the idle window',
   )
-  assert.equal(s.closes, 1, 'the completed operation releases its child')
+  await s.bridge.close()
+  assert.equal(s.closes, 1)
   assert.equal(s.response.listenerCount('close'), 0)
 })
 
@@ -308,7 +323,12 @@ test('a failed round releases the retained child instead of keeping it', async (
   s.send = send
   s.nextRound(2)
   await s.open()
-  assert.equal(s.starts, 2, 'the released child is not reused')
+  assert.equal(
+    s.starts,
+    1,
+    'an expired gateway handle cannot start another backend',
+  )
+  assert.equal(JSON.parse(s.body).error.code, -32602)
 })
 
 test('a round that disconnects before dispatch leaves the child waiting for a retry', async () => {
@@ -324,7 +344,7 @@ test('a round that disconnects before dispatch leaves the child waiting for a re
   await s.open()
   assert.equal(JSON.parse(s.body).result.resultType, 'complete')
   assert.equal(s.starts, 1)
-  assert.equal(s.closes, 1)
+  assert.equal(s.closes, 0)
 })
 
 test('a notification carrying continuation state never claims a retained child', async () => {
@@ -339,7 +359,7 @@ test('a notification carrying continuation state never claims a retained child',
   s.request.body.params = {
     _meta: s.request.body.params._meta,
     requestId: 0,
-    requestState: TOKEN,
+    requestState: s.handle,
   }
   s.send = async () => {}
   await s.open()
@@ -406,10 +426,16 @@ for (const reason of ['disconnect', 'shutdown'] as const) {
   test(`${reason} during startup releases a late child without dispatching`, async () => {
     const s = setup()
     let resume!: () => void
-    s.start = () =>
-      new Promise<void>((resolve) => {
+    let live = false
+    s.start = async () => {
+      await new Promise<void>((resolve) => {
         resume = resolve
       })
+      live = true
+    }
+    s.close = async () => {
+      live = false
+    }
     const pending = s.open()
     const rejected = assert.rejects(pending, /closed/i)
     await tick()
@@ -419,6 +445,7 @@ for (const reason of ['disconnect', 'shutdown'] as const) {
     resume()
     await rejected
     await tick()
+    assert.equal(live, false, 'the child that finished starting is released')
     assert.deepEqual(s.sent, [])
     assert.equal(s.response.listenerCount('close'), 0)
   })
@@ -547,13 +574,24 @@ for (const fails of [false, true])
   })
 test('late child messages cannot write to a completed response', async () => {
   const s = setup()
+  const send = s.send
+  let late!: (message: any) => void
+  let lateError!: (error: Error) => void
+  s.send = async (message: any) => {
+    late = s.child.onmessage
+    lateError = s.child.onerror
+    await send(message)
+  }
   await s.open()
   const body = s.body
-  s.child.onmessage({ jsonrpc: '2.0', id: 0, result: { late: true } })
-  s.child.onerror(new Error('late error'))
+  late({ jsonrpc: '2.0', id: 0, result: { late: true } })
+  lateError(new Error('late failure after completion'))
+  assert.equal(s.child.onmessage, undefined)
+  assert.equal(s.child.onerror, undefined)
   await tick()
   assert.equal(s.body, body)
   assert.equal(s.closes, 1)
+  assert.deepEqual(s.errors, [], 'a completed exchange cannot fail again')
 })
 
 test('cleanup rejection is logged and releases the response listener', async () => {
@@ -564,7 +602,7 @@ test('cleanup rejection is logged and releases the response listener', async () 
   }
   await s.open()
   assert.equal(s.response.listenerCount('close'), 0)
-  assert.deepEqual(s.errors, [['Modern request cleanup failed:', error]])
+  assert.deepEqual(s.errors, [['Failed to close retained MCP child:', error]])
   await s.bridge.close()
   assert.equal(s.closes, 1)
 })
@@ -651,7 +689,7 @@ for (const id of [17, null, undefined])
     const s = setup()
     s.request.body.id = id
     delete s.request.headers['content-type']
-    await s.open()
+    assert.equal(await s.open(), true)
     assert.equal(s.httpStatus, 415)
     assert.equal(JSON.parse(s.body).id, id === 17 ? 17 : null)
   })
@@ -719,3 +757,178 @@ for (const body of [null, undefined])
     assert.equal(JSON.parse(s.body).id, null)
     assert.equal(s.starts, 0)
   })
+
+test(
+  'cancelling a queued continuation releases its listener without claiming the backend',
+  { timeout: 10000 },
+  async (t) => {
+    const { RetainedChildren } = await import('../src/lib/retainedChildren.js')
+    const original = RetainedChildren.prototype.release
+    const s = continuationSetup()
+    let finish!: () => void
+    let arrived!: () => void
+    const reached = new Promise<void>((resolve) => {
+      arrived = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    let held = true
+    t.mock.method(
+      RetainedChildren.prototype,
+      'release',
+      async function (this: InstanceType<typeof RetainedChildren>, child: any) {
+        if (held) {
+          held = false
+          arrived()
+          await gate
+        }
+        await original.call(this, child)
+      },
+    )
+    const first = s.open()
+    try {
+      await reached
+      await tick()
+      s.nextRound(1)
+      const response = Object.assign(new EventEmitter(), {
+        destroyed: false,
+        status: s.response.status,
+        json: s.response.json,
+      })
+      const cancelled = s.bridge.handle(s.request, response)
+      await tick()
+      assert.equal(response.listenerCount('close'), 1)
+      response.destroyed = true
+      response.emit('close')
+      assert.equal(await cancelled, true)
+      assert.equal(response.listenerCount('close'), 0)
+      assert.equal(s.starts, 1)
+      assert.equal(s.sent.length, 2, 'the cancelled request never dispatched')
+    } finally {
+      finish()
+      await first
+    }
+    s.nextRound(2)
+    await s.open()
+    assert.equal(s.starts, 1)
+    assert.equal(JSON.parse(s.body).result.resultType, 'complete')
+  },
+)
+
+test('cleanup-stage failure is logged after releasing the backend and response listener', async (t) => {
+  const { RetainedChildren } = await import('../src/lib/retainedChildren.js')
+  const original = RetainedChildren.prototype.release
+  const s = setup()
+  const failure = new Error('cleanup stage failure')
+  t.mock.method(
+    RetainedChildren.prototype,
+    'release',
+    async function (this: InstanceType<typeof RetainedChildren>, child: any) {
+      await original.call(this, child)
+      throw failure
+    },
+  )
+  await s.open()
+  assert.equal(s.closes, 1)
+  assert.equal(s.response.listenerCount('close'), 0)
+  assert.deepEqual(s.errors, [['Modern request cleanup failed:', failure]])
+})
+
+test('invalid backend continuation state is not promoted to a gateway handle', async () => {
+  const s = setup()
+  s.send = async () =>
+    s.child.onmessage({
+      jsonrpc: '2.0',
+      id: 0,
+      result: { resultType: 'input_required', requestState: 7 },
+    })
+  await s.open()
+  assert.deepEqual(JSON.parse(s.body).result, {
+    resultType: 'input_required',
+    requestState: 7,
+  })
+  assert.equal(s.closes, 1)
+})
+
+test('SDK parsing rejects non-object results and modern requests without params before dispatch', async () => {
+  for (const result of [null, 1, []])
+    assert.throws(() =>
+      sdk.parseJSONRPCMessage({ jsonrpc: '2.0', id: 1, result }),
+    )
+  const s = setup()
+  delete s.request.body.params
+  await s.open()
+  assert.equal(s.httpStatus, 400)
+  assert.equal(s.starts, 0)
+  assert.equal(s.child, undefined)
+})
+
+test('HTTP continuations expire after the documented five minutes of inactivity', async (t) => {
+  enableFakeTimers(t)
+  const s = continuationSetup()
+  await s.open()
+  s.nextRound(1)
+  t.mock.timers.tick(299_999)
+  assert.equal(s.closes, 0)
+  t.mock.timers.tick(1)
+  assert.equal(s.closes, 1)
+  await s.open()
+  assert.equal(s.httpStatus, 400)
+  assert.equal(JSON.parse(s.body).error.code, -32602)
+  assert.equal(s.starts, 1, 'expiry does not route a handle to another child')
+})
+
+test('HTTP capacity retains 64 states and evicts the oldest on the next one', async () => {
+  const s = continuationSetup()
+  const handles: string[] = []
+  for (let i = 0; i < 64; i++) {
+    s.request.body.id = i
+    await s.open()
+    handles.push(JSON.parse(s.body).result.requestState)
+  }
+  assert.equal(s.starts, 64)
+  assert.equal(s.closes, 0)
+  s.request.body.id = 64
+  await s.open()
+  const newest = JSON.parse(s.body).result.requestState
+  assert.equal(s.closes, 1)
+  s.handle = handles[0]
+  s.nextRound(65)
+  await s.open()
+  assert.equal(JSON.parse(s.body).error.code, -32602)
+  s.handle = newest
+  s.nextRound(66)
+  await s.open()
+  assert.equal(JSON.parse(s.body).result.resultType, 'complete')
+  assert.equal(s.starts, 65)
+})
+
+test('an unexpected backend request sends only its protocol error', async (t) => {
+  const s = setup()
+  const original = sdk.PerRequestHTTPServerTransport.prototype.send
+  const outgoing: unknown[] = []
+  t.mock.method(
+    sdk.PerRequestHTTPServerTransport.prototype,
+    'send',
+    async function (
+      this: InstanceType<typeof sdk.PerRequestHTTPServerTransport>,
+      ...args: Parameters<typeof original>
+    ) {
+      outgoing.push(args[0])
+      await original.apply(this, args)
+    },
+  )
+  s.send = async () => {
+    s.child.onmessage({ jsonrpc: '2.0', id: 'reverse', method: 'roots/list' })
+  }
+  await s.open()
+  assert.deepEqual(outgoing, [
+    {
+      jsonrpc: '2.0',
+      id: 0,
+      error: { code: -32603, message: 'MCP server process failed' },
+    },
+  ])
+  assert.equal(s.closes, 1)
+})

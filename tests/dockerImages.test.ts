@@ -37,7 +37,7 @@ before(
     // wires them, so an image built here is the image the registry would get.
     docker([
       'build',
-      '-q',
+      '--progress=plain',
       '--platform',
       PLATFORM,
       '--build-arg',
@@ -53,7 +53,7 @@ before(
     for (const variant of ['uvx', 'deno'])
       docker([
         'build',
-        '-q',
+        '--progress=plain',
         '--platform',
         PLATFORM,
         '-f',

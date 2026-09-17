@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { StringDecoder } from 'node:string_decoder'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -222,9 +223,10 @@ export async function stdioToStatefulStreamableHttp(
         handleChildFailure()
       })
 
+      const decoder = new StringDecoder('utf8')
       let buffer = ''
       child.stdout.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
+        buffer += decoder.write(chunk)
         const lines = buffer.split(/\r?\n/)
         // `split` always returns at least one element, so `pop()` is never
         // undefined here — the fallback it replaced could not be taken.

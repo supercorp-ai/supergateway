@@ -1,8 +1,17 @@
 variable "VERSION" {
-  default = "DEV"
+  default = "4.0.0"
+}
+
+variable "IMAGE_TAG" {
+  default = "4.0.0-candidate"
+}
+
+variable "PACKAGE_SHA256" {
+  default = ""
 }
 
 target "common" {
+  args = { VERSION = VERSION, PACKAGE_SHA256 = PACKAGE_SHA256 }
   context   = "."
   platforms = ["linux/amd64", "linux/arm64"]
 }
@@ -15,12 +24,8 @@ target "base" {
   inherits   = ["common"]
   dockerfile = "docker/base.Dockerfile"
   tags = [
-    "supercorp/supergateway:latest",
-    "supercorp/supergateway:base",
-    "supercorp/supergateway:${VERSION}",
-    "ghcr.io/supercorp-ai/supergateway:latest",
-    "ghcr.io/supercorp-ai/supergateway:base",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}"
+    "supercorp/supergateway:${IMAGE_TAG}",
+    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}"
   ]
 }
 
@@ -30,10 +35,8 @@ target "uvx" {
   dockerfile = "docker/uvx.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:uvx",
-    "supercorp/supergateway:${VERSION}-uvx",
-    "ghcr.io/supercorp-ai/supergateway:uvx",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}-uvx"
+    "supercorp/supergateway:${IMAGE_TAG}-uvx",
+    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}-uvx"
   ]
 }
 
@@ -43,9 +46,7 @@ target "deno" {
   dockerfile = "docker/deno.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:deno",
-    "supercorp/supergateway:${VERSION}-deno",
-    "ghcr.io/supercorp-ai/supergateway:deno",
-    "ghcr.io/supercorp-ai/supergateway:${VERSION}-deno"
+    "supercorp/supergateway:${IMAGE_TAG}-deno",
+    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}-deno"
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "supergateway",
-  "version": "3.4.3",
+  "version": "4.0.0",
   "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
   "repository": {
     "type": "git",
@@ -31,7 +31,8 @@
     "prepare": "husky",
     "prepack": "npm run build",
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "test:package": "node scripts/test-package.mjs"
+    "test:package": "node scripts/test-package.mjs",
+    "stage:release": "node scripts/stage-release.mjs"
   },
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"

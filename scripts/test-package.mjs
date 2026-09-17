@@ -2,10 +2,15 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createServer as createPortProbe } from 'node:net'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
+  writeFileSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
 } from 'node:fs'
@@ -73,23 +78,40 @@ async function run(executable, args, cwd, env, capture = false) {
 }
 let server
 try {
-  const packed = JSON.parse(
-    await run(
-      process.execPath,
-      [buildNpm, 'pack', '--json', '--pack-destination', temporary],
-      root,
-      process.env,
-      true,
-    ),
-  )[0]
+  const staged = process.env.SUPERGATEWAY_PACKAGE_MANIFEST
+  const packed = staged
+    ? JSON.parse(readFileSync(staged, 'utf8'))
+    : JSON.parse(
+        await run(
+          process.execPath,
+          [buildNpm, 'pack', '--json', '--pack-destination', temporary],
+          root,
+          process.env,
+          true,
+        ),
+      )[0]
   for (const file of packed.files)
     assert.match(
       file.path,
       /^(dist\/|package\.json$|npm-shrinkwrap\.json$|README\.md$|LICENSE$)/,
     )
   assert.ok(packed.files.some((file) => file.path === 'npm-shrinkwrap.json'))
-  console.log(`Packed ${packed.files.length} files (${packed.size} bytes)`)
-  const tarball = readFileSync(join(temporary, packed.filename))
+  assert.equal(packed.version, pkg.version)
+  console.log(
+    `Testing ${packed.files.length} files from ${staged ?? 'fresh pack'}`,
+  )
+  const tarball = readFileSync(
+    join(staged ? dirname(resolve(staged)) : temporary, packed.filename),
+  )
+  const integrity =
+    'sha512-' + createHash('sha512').update(tarball).digest('base64')
+  assert.equal(integrity, packed.integrity)
+  const oldResponse = await fetch(
+    'https://registry.npmjs.org/supergateway/3.4.3',
+  )
+  assert.equal(oldResponse.status, 200)
+  const oldPackage = await oldResponse.json()
+  let latest = pkg.version
   let registry
   // Exercise registry installation: older npm handles a local tarball's
   // shrinkwrap differently from the registry's _hasShrinkwrap manifest.
@@ -103,16 +125,15 @@ try {
       res.end(
         JSON.stringify({
           name: pkg.name,
-          'dist-tags': { latest: pkg.version },
+          'dist-tags': { latest },
           versions: {
+            '3.4.3': oldPackage,
             [pkg.version]: {
               ...pkg,
               _hasShrinkwrap: true,
               dist: {
                 tarball: registry + '/supergateway/-/candidate.tgz',
-                integrity:
-                  'sha512-' +
-                  createHash('sha512').update(tarball).digest('base64'),
+                integrity: integrity,
               },
             },
           },
@@ -152,6 +173,196 @@ try {
   )
   assert.match(output, /--outputTransport/)
   console.log('Fresh npx install and CLI help succeeded')
+  const npx = resolve(dirname(runtimeNpm), 'npx-cli.js')
+  const project = join(temporary, 'existing project with spaces')
+  mkdirSync(project)
+  const projectBytes =
+    JSON.stringify({ name: 'existing-client', private: true }) + '\n'
+  writeFileSync(join(project, 'package.json'), projectBytes)
+  writeFileSync(join(project, '.npmrc'), 'fund=false\n')
+  const warmCache = join(temporary, 'warm-cache')
+  const npxRun = (spec, selectedCache = warmCache) =>
+    run(
+      runtime,
+      [
+        npx,
+        '--yes',
+        '--engine-strict',
+        '--cache',
+        selectedCache,
+        '--registry',
+        registry,
+        spec,
+        '--version',
+      ],
+      project,
+      runtimeEnv,
+      true,
+    )
+  latest = '3.4.3'
+  // Published 3.4.3 prints `unknown` outside its repository; identify it by metadata.
+  assert.equal((await npxRun('supergateway')).trim(), 'unknown')
+  const cachedVersions = readdirSync(join(warmCache, '_npx')).map((name) => {
+    const path = join(
+      warmCache,
+      '_npx',
+      name,
+      'node_modules/supergateway/package.json',
+    )
+    return existsSync(path)
+      ? JSON.parse(readFileSync(path, 'utf8')).version
+      : null
+  })
+  assert.ok(
+    cachedVersions.includes('3.4.3'),
+    'warm cache actually contains the released package',
+  )
+  latest = pkg.version
+  const implicit = (await npxRun('supergateway')).trim()
+  assert.ok([pkg.version, 'unknown'].includes(implicit))
+  console.log(
+    `Warm bare npx selected ${implicit === 'unknown' ? 'cached 3.4.3 (npm cache reuse)' : pkg.version}`,
+  )
+  assert.equal((await npxRun('supergateway@latest')).trim(), pkg.version)
+  assert.equal(
+    (await npxRun(`supergateway@${pkg.version}`)).trim(),
+    pkg.version,
+  )
+  assert.equal(
+    (await npxRun('supergateway', join(temporary, 'bare-fresh-cache'))).trim(),
+    pkg.version,
+  )
+  assert.equal(
+    readFileSync(join(project, 'package.json'), 'utf8'),
+    projectBytes,
+  )
+  assert.equal(readFileSync(join(project, '.npmrc'), 'utf8'), 'fund=false\n')
+  assert.equal(existsSync(join(project, 'package-lock.json')), false)
+  assert.equal(existsSync(join(project, 'node_modules')), false)
+  // A typical client launcher supplies argv and a working directory. Exercise
+  // that exact shape, including a quoted subprocess filename containing spaces.
+  writeFileSync(
+    join(project, 'server file.mjs'),
+    `
+import readline from 'node:readline';
+for await (const line of readline.createInterface({input: process.stdin})) {
+  const r = JSON.parse(line); if (r.id === undefined) continue;
+  const result = r.method === 'initialize'
+    ? {protocolVersion: '2024-11-05', capabilities: {tools: {}}, serverInfo: {name: 'cwd-peer', version: '1'}}
+    : {content: [{type: 'text', text: process.cwd()}]};
+  process.stdout.write(JSON.stringify({jsonrpc: '2.0', id: r.id, result}) + '\\n');
+}
+`,
+  )
+  const probe = createPortProbe()
+  await new Promise((ok) => probe.listen(0, ok))
+  const port = probe.address().port
+  await new Promise((ok) => probe.close(ok))
+  const launch = spawn(
+    runtime,
+    [
+      npx,
+      '--yes',
+      '--engine-strict',
+      '--cache',
+      cache,
+      '--registry',
+      registry,
+      `supergateway@${pkg.version}`,
+      '--stdio',
+      `"${runtime}" "server file.mjs"`,
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+      '--port',
+      String(port),
+    ],
+    {
+      cwd: project,
+      env: runtimeEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+  let diagnostics = ''
+  launch.stdout.on('data', (c) => (diagnostics += c))
+  launch.stderr.on('data', (c) => (diagnostics += c))
+  const exited = new Promise((ok, reject) => {
+    launch.once('error', reject)
+    launch.once('exit', ok)
+  })
+  try {
+    const deadline = Date.now() + 30000
+    while (!diagnostics.includes('Listening on port')) {
+      assert.ok(Date.now() < deadline && launch.exitCode === null, diagnostics)
+      await delay(50)
+    }
+    const headers = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    }
+    const request = (body) =>
+      fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      })
+    const initialized = await request({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'launcher', version: '1' },
+      },
+    })
+    assert.equal(initialized.status, 200)
+    headers['mcp-session-id'] = initialized.headers.get('mcp-session-id')
+    assert.ok(headers['mcp-session-id'])
+    await initialized.text()
+    const response = await request({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'cwd', arguments: {} },
+    })
+    assert.equal(response.status, 200)
+    const wire = await response.text()
+    const message = JSON.parse(
+      wire
+        .split('\n')
+        .find((line) => line.startsWith('data:'))
+        .slice(5),
+    )
+    assert.equal(
+      realpathSync(message.result.content[0].text),
+      realpathSync(project),
+    )
+    const closed = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'DELETE',
+      headers,
+      signal: AbortSignal.timeout(10000),
+    })
+    assert.equal(closed.status, 200)
+    await closed.text()
+    launch.stdin.end()
+    assert.equal(
+      await Promise.race([exited, delay(10000).then(() => 'timeout')]),
+      0,
+      diagnostics,
+    )
+  } finally {
+    launch.stdin.end()
+    if (launch.exitCode === null) launch.kill()
+  }
+  console.log(
+    'Actual npx launcher preserves working directory, quoted command and session cleanup',
+  )
+  console.log(
+    'Actual npx: fresh and explicit latest with 3.4.3-warm cache select the candidate; existing project unchanged',
+  )
+
   const entry = readdirSync(join(cache, '_npx'))
     .map((name) =>
       join(cache, '_npx', name, 'node_modules/supergateway/dist/index.js'),
@@ -163,6 +374,8 @@ try {
   )
   assert.equal(installed.version, pkg.version)
   assert.equal(installed.engines.node, pkg.engines.node)
+  if (process.env.SUPERGATEWAY_INSTALLED_ENTRY_FILE)
+    writeFileSync(process.env.SUPERGATEWAY_INSTALLED_ENTRY_FILE, entry + '\n')
   await run(
     process.execPath,
     [
@@ -190,5 +403,7 @@ try {
     server.closeAllConnections()
     await new Promise((resolve) => server.close(resolve))
   }
-  rmSync(temporary, { recursive: true, force: true })
+  if (process.env.SUPERGATEWAY_KEEP_PACKAGE === '1')
+    console.log(`Retained package installation: ${temporary}`)
+  else rmSync(temporary, { recursive: true, force: true })
 }

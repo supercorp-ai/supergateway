@@ -1,0 +1,5 @@
+**
+!.release
+!.release/supergateway.tgz
+!docker
+!docker/*.Dockerfile

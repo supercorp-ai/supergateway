@@ -2,10 +2,6 @@ variable "VERSION" {
   default = "4.0.0"
 }
 
-variable "IMAGE_TAG" {
-  default = "4.0.0-candidate"
-}
-
 variable "PACKAGE_SHA256" {
   default = ""
 }
@@ -24,8 +20,8 @@ target "base" {
   inherits   = ["common"]
   dockerfile = "docker/base.Dockerfile"
   tags = [
-    "supercorp/supergateway:${IMAGE_TAG}",
-    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}"
+    "supercorp/supergateway:${VERSION}-candidate",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate"
   ]
 }
 
@@ -35,8 +31,8 @@ target "uvx" {
   dockerfile = "docker/uvx.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:${IMAGE_TAG}-uvx",
-    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}-uvx"
+    "supercorp/supergateway:${VERSION}-candidate-uvx",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate-uvx"
   ]
 }
 
@@ -46,7 +42,7 @@ target "deno" {
   dockerfile = "docker/deno.Dockerfile"
   contexts = { base = "target:base" }
   tags = [
-    "supercorp/supergateway:${IMAGE_TAG}-deno",
-    "ghcr.io/supercorp-ai/supergateway:${IMAGE_TAG}-deno"
+    "supercorp/supergateway:${VERSION}-candidate-deno",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-candidate-deno"
   ]
 }

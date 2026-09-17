@@ -34,6 +34,30 @@ jobs:
           path: .release/
           include-hidden-files: true
 
+  source:
+    needs: stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run build
+      - name: Full suite and structural coverage
+        run: npx -y supercov@0.0.53 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
+        env:
+          TS_NODE_TRANSPILE_ONLY: 'true'
+      - name: Enforce per-file coverage
+        run: >-
+          npx -y supercov@0.0.53 runs check --per-file
+          --min-lines 100 --min-statements 100 --min-functions 100
+          --min-branches 100 --min-mcdc 100
+
   package:
     needs: stage
     runs-on: ${{ matrix.os }}
@@ -102,7 +126,7 @@ jobs:
 
   publish-architecture:
     if: inputs.publish_images
-    needs: [stage, package, images]
+    needs: [stage, source, package, images]
     runs-on: ubuntu-latest
     permissions:
       contents: read

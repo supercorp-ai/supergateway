@@ -449,7 +449,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
       - name: Stage exact package
         run: npm run stage:release
       - name: Check the images

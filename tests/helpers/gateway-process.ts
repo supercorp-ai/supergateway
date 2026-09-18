@@ -10,8 +10,30 @@ import { watchGateway, forgetGateway } from './leak-check.js'
 // exists so a loaded runner can be given headroom without editing this file —
 // raising it hides nothing, because the failure message now reports how long
 // the gateway actually took and whether it ever ran at all.
-const readyTimeout = () =>
-  Number(process.env.SUPERGATEWAY_TEST_READY_TIMEOUT ?? 8000)
+const readyTimeout = () => {
+  // A workflow that sets this per-platform hands every other platform an empty
+  // string, and `??` does not fall back on one — `Number('')` is 0, which would
+  // silently give every gateway a zero-millisecond budget. Only a positive
+  // number overrides the default.
+  const configured = Number(process.env.SUPERGATEWAY_TEST_READY_TIMEOUT)
+  return Number.isFinite(configured) && configured > 0 ? configured : 8000
+}
+
+// A test has to outlive its own readiness wait. node:test kills the test at its
+// timeout and reports only that it timed out, so a per-test timeout below the
+// readiness budget throws away the diagnosis the wait exists to produce — and
+// the two are written in different files, so they invert silently. Deriving one
+// from the other keeps a raised budget from blinding the tests it is meant to
+// help.
+export const gatewayTimeout = (ms: number) =>
+  Math.max(ms, readyTimeout() + 7000)
+
+// A stalled gateway that writes nothing cannot, by itself, tell a stuck gateway
+// from a host that could not have started any process. Timing a bare Node start
+// at the moment of failure can: it is tens of milliseconds on a healthy runner,
+// so a second or more is the host, not the gateway. Kept short so it fits
+// inside what the test has left.
+const controlBudget = 2000
 
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
@@ -123,6 +145,34 @@ export function launchGateway(
       `${Date.now() - spawnedAt}ms since spawn`,
     ].join('; ')
   }
+  const controlStart = async () => {
+    const probeStart = Date.now()
+    const probe = spawn(
+      process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+      ['-e', 'process.stdout.write("up")'],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+    const outcome = await Promise.race([
+      new Promise<string>((resolve) => {
+        probe.stdout.once('data', () => resolve(`${Date.now() - probeStart}ms`))
+        probe.once('error', (error) =>
+          resolve(`could not spawn (${error.message})`),
+        )
+        probe.once('exit', () =>
+          resolve(`silent, exited after ${Date.now() - probeStart}ms`),
+        )
+      }),
+      delay(controlBudget, undefined, { ref: false }).then(
+        () => `still silent after ${controlBudget}ms`,
+      ),
+    ])
+    try {
+      probe.kill('SIGKILL')
+    } catch {
+      // Already gone; the measurement is what matters.
+    }
+    return outcome
+  }
   const waitFor = async (predicate: () => boolean, description: string) => {
     const startedAt = Date.now()
     const budget = readyTimeout()
@@ -140,9 +190,10 @@ export function launchGateway(
         spawnError ||
         Date.now() > deadline
       ) {
-        const elapsed = Date.now() - startedAt
+        const state = describe(Date.now() - startedAt, polls, budget)
+        const control = await controlStart()
         throw Error(
-          `Gateway did not ${description} [${describe(elapsed, polls, budget)}]:\n${output}\n${errors}`,
+          `Gateway did not ${description} [${state}; bare node start took ${control}]:\n${output}\n${errors}`,
         )
       }
       polls++

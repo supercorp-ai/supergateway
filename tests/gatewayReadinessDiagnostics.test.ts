@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { launchGateway } from './helpers/gateway-process.js'
+import { launchGateway, gatewayTimeout } from './helpers/gateway-process.js'
 
 /**
  * What a readiness failure has to tell us.
@@ -101,4 +101,58 @@ test('a failed spawn is reported promptly rather than after the full budget', as
     Date.now() - startedAt < 500,
     'a spawn failure should not wait for the readiness budget',
   )
+})
+
+test('a readiness failure times a bare node start to implicate the host or the gateway', async (t) => {
+  const message = await readyFailure(t, ['-e', 'setTimeout(() => {}, 60000)'])
+  // The gateway's own silence cannot tell a stuck gateway from a host that
+  // could not start anything; this number can, and it is the datum both soak
+  // failures lacked.
+  const control = /bare node start took (\d+)ms/.exec(message)
+  assert.ok(control, `expected a control measurement, got: ${message}`)
+  assert.ok(
+    Number(control[1]) < 2000,
+    'a healthy host starts node well inside the probe budget',
+  )
+})
+
+test('a test timeout can never expire before the readiness budget it wraps', () => {
+  const previous = process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+  try {
+    process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = '30000'
+    // Otherwise node:test kills the test first and reports only that it timed
+    // out, discarding the readiness diagnosis entirely.
+    assert.ok(gatewayTimeout(15000) > 30000)
+    assert.equal(gatewayTimeout(90000), 90000)
+    delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+    assert.equal(gatewayTimeout(20000), 20000)
+  } finally {
+    if (previous === undefined)
+      delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+    else process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = previous
+  }
+})
+
+test('a per-platform empty override does not zero the readiness budget', async (t) => {
+  const previous = process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+  process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = ''
+  try {
+    const startedAt = Date.now()
+    const gateway = launchGateway(t, [], undefined, [
+      '-e',
+      'setTimeout(() => {}, 60000)',
+    ])
+    const error = await gateway.ready().then(
+      () => null,
+      (reason: Error) => reason,
+    )
+    assert.ok(error)
+    // An empty string must fall back to 8000, not to Number('') === 0.
+    assert.match(error.message, /of 8000ms/)
+    assert.ok(Date.now() - startedAt > 4000, 'the budget was not zeroed')
+  } finally {
+    if (previous === undefined)
+      delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+    else process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = previous
+  }
 })

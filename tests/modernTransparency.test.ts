@@ -6,7 +6,11 @@ import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  launchGateway,
+  unusedPort,
+  gatewayTimeout,
+} from './helpers/gateway-process.js'
 
 async function client(
   t: TestContext,
@@ -60,7 +64,7 @@ async function client(
 for (const modernOnly of [false, true]) {
   test(
     `direct official SDK control: ${modernOnly ? 'modern-only' : 'dual'} backend completes roots round trip`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const direct = await client(t, false, false, modernOnly)
       const reply = await direct.callTool({ name: 'roots', arguments: {} })
@@ -81,7 +85,7 @@ for (const modernOnly of [false, true])
   for (const stateful of [false, true]) {
     test(
       `modern transport preserves direct behavior: backend=${modernOnly ? 'modern-only' : 'dual'} gateway=${stateful ? 'stateful' : 'stateless'}`,
-      { timeout: 20000 },
+      { timeout: gatewayTimeout(20000) },
       async (t) => {
         const direct = await client(t, false, stateful, modernOnly)
         const through = await client(t, true, stateful, modernOnly)
@@ -125,7 +129,7 @@ for (const modernOnly of [false, true])
 for (const wrapped of [false, true]) {
   test(
     `${wrapped ? 'wrapped' : 'direct'} official SDK: opt-in logs and subscription notifications survive`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const peer = await client(t, wrapped, true, true)
       const logs: unknown[] = []

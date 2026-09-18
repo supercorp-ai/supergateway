@@ -225,6 +225,9 @@ export function launchGateway(
     signal,
     dispose,
     waitFor,
+    // Callers that count descendants need this to date the walk once the
+    // gateway has exited; see descendantsOf's `since`.
+    spawnedAt,
     output: () => output,
     errors: () => errors,
     ready: () =>

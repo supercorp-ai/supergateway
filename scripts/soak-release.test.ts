@@ -46,6 +46,8 @@ function launchGateway(
   args: string[],
   env: Record<string, string>,
 ) {
+  // Dates the descendant walk once this gateway has exited; see descendantsOf.
+  const spawnedAt = Date.now()
   const child = spawn(
     process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
     [process.env.SUPERGATEWAY_TEST_ENTRY!, ...args],
@@ -64,7 +66,7 @@ function launchGateway(
   let closing: Promise<void> | undefined
   const close = () =>
     (closing ??= (async () => {
-      const owned = descendantsOf(child.pid!)
+      const owned = descendantsOf(child.pid!, { since: spawnedAt })
       if (child.exitCode === null && child.signalCode === null)
         child.kill('SIGTERM')
       await Promise.race([exited, delay(7000, undefined, { ref: false })])
@@ -86,6 +88,7 @@ function launchGateway(
   t.after(close)
   return {
     child,
+    spawnedAt,
     ready: async () => {
       const deadline = Date.now() + 15000
       while (!/Listening on port/.test(tail)) {
@@ -165,7 +168,7 @@ test(
           pid,
           rssKiB,
           descriptors,
-          children: descendantsOf(pid).length,
+          children: descendantsOf(pid, { since: gateway.spawnedAt }).length,
         }
       })
       emit({

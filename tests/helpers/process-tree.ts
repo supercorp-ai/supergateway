@@ -88,6 +88,21 @@ export function descendantsOf(
   // it has exited — and an exited ancestor can still have real living children.
   const rootCreated =
     created.get(pid) ?? (since === undefined ? undefined : ticksFrom(since))
+  // An absent root has exited, and on Windows its ParentProcessId edges outlive
+  // it while the PID gets recycled. Without a spawn time there is nothing left
+  // to date them against, and the walk silently returns whoever holds the PID
+  // now — 128 processes in soak run 35305652456, four in 35309815902. Refuse,
+  // the way this file already refuses an unreadable table, rather than answer
+  // with a number nobody can trust.
+  // Only when something actually claims the absent root: a pid with no
+  // claimants has no descendants on any reading, and refusing there would turn
+  // an ordinary empty answer into an error.
+  assert.ok(
+    platform !== 'win32' ||
+      rootCreated !== undefined ||
+      (children.get(pid)?.length ?? 0) === 0,
+    'Root creation time unavailable for ancestry check: pass `since` for a root that may have exited',
+  )
   const walk = (root: number) => {
     for (const child of children.get(root) ?? []) {
       // A snapshot can contain recycled PIDs; never loop through a parent cycle.

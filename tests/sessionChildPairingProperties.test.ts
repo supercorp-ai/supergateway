@@ -72,7 +72,9 @@ test(
             const settled = async (expected: number) => {
               const deadline = Date.now() + 4000
               for (;;) {
-                const live = descendantsOf(gateway.child.pid!).length
+                const live = descendantsOf(gateway.child.pid!, {
+                  since: gateway.spawnedAt,
+                }).length
                 const ok =
                   expected === 0
                     ? live === 0

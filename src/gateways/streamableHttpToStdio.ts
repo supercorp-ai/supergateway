@@ -14,6 +14,7 @@ import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
+import { relayClientMessage } from '../lib/relayClientMessage.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -234,8 +235,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {
-      logger.info('Streamable HTTP → Stdio:', message)
-      process.stdout.write(JSON.stringify(message) + '\n')
+      await relayClientMessage({
+        message,
+        send: mcpClient ? (relayed) => mcpTransport.send(relayed) : undefined,
+        label: 'Streamable HTTP',
+        logger,
+      })
     }
   }
 

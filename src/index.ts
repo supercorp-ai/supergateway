@@ -34,6 +34,10 @@ import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreama
 
 type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
 
+// Idle lifetime of a stateful session when the flag is absent. See where it is
+// used for why "never" was the wrong default.
+const defaultSessionTimeout = 30 * 60 * 1000
+
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .version(getVersion())
@@ -125,7 +129,7 @@ async function main() {
     .option('sessionTimeout', {
       type: 'number',
       description:
-        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. If not set, the session will only be deleted when client transport explicitly terminates the session.',
+        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. Defaults to 30 minutes of idleness; a client that disconnects without terminating its session used to keep its child process alive forever.',
     })
     .option('protocolVersion', {
       type: 'string',
@@ -212,7 +216,14 @@ async function main() {
 
             sessionTimeout = argv.sessionTimeout
           } else {
-            sessionTimeout = null
+            // A stateful session owns a child process, and the only thing that
+            // used to release it was the client explicitly deleting the
+            // session. A client that crashes, is force-quit, or simply closes
+            // its transport never sends that, so every such disconnect leaked a
+            // process for the lifetime of the gateway. Thirty minutes is far
+            // longer than any gap between calls in a live session and still
+            // bounds what a vanished client can strand.
+            sessionTimeout = defaultSessionTimeout
           }
 
           await stdioToStatefulStreamableHttp({

@@ -54,12 +54,14 @@ const cases = [
     expect: () => '  - Session timeout: 250ms',
   },
   {
+    // Was "disabled", which meant a client that vanished without deleting its
+    // session stranded that session's child process for the life of the gateway.
     name: 'stateful without timeout',
     input: ['--stdio', peerCommand],
     output: 'streamableHttp',
     extra: ['--outputTransport', 'streamableHttp', '--stateful'],
     select: '  - Session timeout:',
-    expect: () => '  - Session timeout: disabled',
+    expect: () => '  - Session timeout: 1800000ms',
   },
   {
     name: 'stateless explicit',

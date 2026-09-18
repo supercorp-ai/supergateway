@@ -8,6 +8,7 @@ import {
   unusedPort,
   peerCommand,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Package tests may exercise a separately installed SDK version. Resolve the
@@ -60,7 +61,7 @@ const post = (url: string, body: unknown, extra: Record<string, string> = {}) =>
       ...extra,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(requestTimeout(10000)),
   })
 
 /** Parse a JSON response or a single SSE result. */
@@ -279,7 +280,7 @@ test(
     assert.equal(first.status, 200)
     const duplicate = await fetch(url, {
       headers,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(duplicate.status, 409)
     assert.match(await duplicate.text(), /Only one SSE stream/)

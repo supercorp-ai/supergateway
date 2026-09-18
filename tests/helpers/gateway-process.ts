@@ -25,8 +25,27 @@ const readyTimeout = () => {
 // the two are written in different files, so they invert silently. Deriving one
 // from the other keeps a raised budget from blinding the tests it is meant to
 // help.
+// Capped so that one hung test cannot eat the twelve-minute budget the soak
+// gives a whole group: past this point the group timeout is the better backstop.
+const maxTestTimeout = 240000
+
 export const gatewayTimeout = (ms: number) =>
-  Math.max(ms, readyTimeout() + 7000)
+  Math.max(
+    Math.min(Math.round(ms * slowHostFactor()), maxTestTimeout),
+    readyTimeout() + 7000,
+  )
+
+// How much slower this platform is assumed to be, taken from the one knob a
+// workflow already sets. A runner that needs four times as long to get a
+// gateway listening needs the same slack for the requests that follow it, and
+// deriving both from one signal stops them drifting apart.
+const slowHostFactor = () => readyTimeout() / 8000
+
+// A client request budget inside a test. These are setup, not assertions: the
+// tests carrying them check which protocol era is negotiated or what a response
+// contains, never how fast the round trip was. Three campaigns have now been
+// lost to one of them firing on a transient stall.
+export const requestTimeout = (ms: number) => Math.round(ms * slowHostFactor())
 
 // A stalled gateway that writes nothing cannot, by itself, tell a stuck gateway
 // from a host that could not have started any process. Timing a bare Node start

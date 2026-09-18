@@ -12,6 +12,7 @@ import {
   launchGateway,
   unusedPort,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
@@ -71,7 +72,7 @@ async function setup(
 async function post(url: string, id: number, params: Record<string, unknown>) {
   const res = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(requestTimeout(5000)),
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',

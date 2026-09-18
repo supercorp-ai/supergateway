@@ -10,6 +10,7 @@ import {
   launchGateway,
   unusedPort,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 async function client(
@@ -26,7 +27,7 @@ async function client(
       capabilities: { roots: {} },
       versionNegotiation: {
         mode: { pin: '2026-07-28' },
-        probe: { timeoutMs: 3000, maxRetries: 0 },
+        probe: { timeoutMs: requestTimeout(3000), maxRetries: 0 },
       },
     },
   )
@@ -50,12 +51,12 @@ async function client(
       new StreamableHTTPClientTransport(
         new URL(`http://127.0.0.1:${port}/mcp`),
       ),
-      { timeout: 5000 },
+      { timeout: requestTimeout(5000) },
     )
   } else {
     await result.connect(
       new StdioClientTransport({ command: 'node', args: [peer, ...args] }),
-      { timeout: 5000 },
+      { timeout: requestTimeout(5000) },
     )
   }
   return result
@@ -142,7 +143,7 @@ for (const wrapped of [false, true]) {
           arguments: {},
           _meta: { 'io.modelcontextprotocol/logLevel': 'info' },
         },
-        { timeout: 3000 },
+        { timeout: requestTimeout(3000) },
       )
       assert.deepEqual(logged.content, [{ type: 'text', text: 'logged' }])
       assert.deepEqual(logs, ['visible log'])
@@ -153,7 +154,7 @@ for (const wrapped of [false, true]) {
       )
       const subscription = await peer.listen(
         { toolsListChanged: true },
-        { timeout: 3000 },
+        { timeout: requestTimeout(3000) },
       )
       t.after(() => subscription.close())
       assert.deepEqual(subscription.honoredFilter, { toolsListChanged: true })
@@ -180,7 +181,7 @@ for (const wrapped of [false, true]) {
         (
           await peer.readResource(
             { uri: 'note://still-healthy' },
-            { timeout: 3000 },
+            { timeout: requestTimeout(3000) },
           )
         ).contents,
         [{ uri: 'note://still-healthy', text: 'resource body' }],

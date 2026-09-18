@@ -5,10 +5,11 @@ import {
   launchGateway,
   unusedPort,
   peerCommand,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
-const options = { timeout: 20000 }
+const options = { timeout: requestTimeout(20000) }
 const modes = [
   { label: 'stateful', args: ['--stateful'] },
   { label: 'stateless', args: [] },
@@ -32,7 +33,12 @@ async function clientFor(
   const exchanges: Exchange[] = []
   const client = new Client(
     { name: 'protocol-regression', version: '1.0.0' },
-    { versionNegotiation: { mode, probe: { timeoutMs: 5000, maxRetries: 0 } } },
+    {
+      versionNegotiation: {
+        mode,
+        probe: { timeoutMs: requestTimeout(5000), maxRetries: 0 },
+      },
+    },
   )
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     fetch: async (input, init) => {
@@ -103,9 +109,12 @@ for (const mode of ['auto', { pin: VERSION }] as const) {
     async (t) => {
       const url = await modernServer(t)
       const { client, transport, exchanges } = await clientFor(t, url, mode)
-      await client.connect(transport, { timeout: 5000 })
+      await client.connect(transport, { timeout: requestTimeout(5000) })
       assert.equal(client.getProtocolEra(), 'modern')
-      const tools = await client.listTools({}, { timeout: 5000 })
+      const tools = await client.listTools(
+        {},
+        { timeout: requestTimeout(5000) },
+      )
       assert.deepEqual(
         tools.tools.map((tool) => tool.name),
         ['probe'],
@@ -113,7 +122,7 @@ for (const mode of ['auto', { pin: VERSION }] as const) {
       const result = await client.callTool(
         { name: 'probe' },
         {
-          timeout: 5000,
+          timeout: requestTimeout(5000),
         },
       )
       assert.deepEqual(result.content, [
@@ -147,16 +156,19 @@ for (const mode of modes) {
     async (t) => {
       const url = await gateway(t, mode.args)
       const { client, transport, exchanges } = await clientFor(t, url, 'legacy')
-      await client.connect(transport, { timeout: 5000 })
+      await client.connect(transport, { timeout: requestTimeout(5000) })
       assert.equal(client.getProtocolEra(), 'legacy')
-      const tools = await client.listTools({}, { timeout: 5000 })
+      const tools = await client.listTools(
+        {},
+        { timeout: requestTimeout(5000) },
+      )
       assert.deepEqual(
         tools.tools.map((tool) => tool.name),
         ['add'],
       )
       const result = await client.callTool(
         { name: 'add', arguments: { a: 2, b: 3 } },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       assert.deepEqual(result.content, [
         { type: 'text', text: 'The sum of 2 and 3 is 5.' },
@@ -182,7 +194,7 @@ for (const mode of modes) {
         pin: VERSION,
       })
       await assert.rejects(
-        client.connect(transport, { timeout: 5000 }),
+        client.connect(transport, { timeout: requestTimeout(5000) }),
         /protocol|method|modern|support/i,
       )
       assert.deepEqual(
@@ -205,15 +217,18 @@ for (const mode of modes) {
         'node tests/helpers/modern-sdk-peer.mjs',
       )
       const { client, transport } = await clientFor(t, url, { pin: VERSION })
-      await client.connect(transport, { timeout: 5000 })
+      await client.connect(transport, { timeout: requestTimeout(5000) })
       assert.equal(client.getProtocolEra(), 'modern')
       assert.deepEqual(
-        (await client.listTools({}, { timeout: 5000 })).tools.map(
-          (tool) => tool.name,
-        ),
+        (
+          await client.listTools({}, { timeout: requestTimeout(5000) })
+        ).tools.map((tool) => tool.name),
         ['probe'],
       )
-      const result = await client.callTool({ name: 'probe' }, { timeout: 5000 })
+      const result = await client.callTool(
+        { name: 'probe' },
+        { timeout: requestTimeout(5000) },
+      )
       assert.deepEqual(result.content, [
         { type: 'text', text: 'official SDK stdio result' },
       ])

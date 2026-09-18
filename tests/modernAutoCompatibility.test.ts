@@ -9,6 +9,7 @@ import {
   launchGateway,
   unusedPort,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // These clients already work against main through automatic legacy fallback.
@@ -33,7 +34,10 @@ for (const mode of ['auto', 'legacy'] as const) {
     const client = new Client(
       { name: 'existing-client', version: '1' },
       {
-        versionNegotiation: { mode, probe: { timeoutMs: 3000, maxRetries: 0 } },
+        versionNegotiation: {
+          mode,
+          probe: { timeoutMs: requestTimeout(3000), maxRetries: 0 },
+        },
         capabilities: { roots: { listChanged: true } },
       },
     )
@@ -49,7 +53,7 @@ for (const mode of ['auto', 'legacy'] as const) {
       new StreamableHTTPClientTransport(
         new URL(`http://127.0.0.1:${port}/mcp`),
       ),
-      { timeout: 5000 },
+      { timeout: requestTimeout(5000) },
     )
     t.diagnostic(`negotiated protocol: ${client.getProtocolEra()}`)
     return { client, logs }
@@ -62,11 +66,11 @@ for (const mode of ['auto', 'legacy'] as const) {
       const { client } = await connect(t, 'modern-bridge-peer')
       const first = await client.callTool(
         { name: 'identity' },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       const second = await client.callTool(
         { name: 'identity' },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       assert.equal(first.content[0].type, 'text')
       assert.equal(second.content[0].type, 'text')
@@ -91,7 +95,7 @@ for (const mode of ['auto', 'legacy'] as const) {
       const { client, logs } = await connect(t, 'reverse-peer')
       const result = await client.callTool(
         { name: 'log', arguments: {} },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       assert.deepEqual(result.content, [{ type: 'text', text: 'logged' }])
       await delay(500)
@@ -111,7 +115,7 @@ for (const mode of ['auto', 'legacy'] as const) {
       const { client } = await connect(t, 'reverse-peer')
       const result = await client.callTool(
         { name: 'roots', arguments: {} },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       assert.deepEqual(result.content, [
         { type: 'text', text: 'roots:file:///tmp/root-a' },

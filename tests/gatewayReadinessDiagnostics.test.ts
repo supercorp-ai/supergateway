@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { launchGateway, gatewayTimeout } from './helpers/gateway-process.js'
+import {
+  launchGateway,
+  gatewayTimeout,
+  requestTimeout,
+} from './helpers/gateway-process.js'
 
 /**
  * What a readiness failure has to tell us.
@@ -123,9 +127,11 @@ test('a test timeout can never expire before the readiness budget it wraps', () 
     // Otherwise node:test kills the test first and reports only that it timed
     // out, discarding the readiness diagnosis entirely.
     assert.ok(gatewayTimeout(15000) > 30000)
-    assert.equal(gatewayTimeout(90000), 90000)
+    // Scaled, but never so far that one hung test outlives the group budget.
+    assert.equal(gatewayTimeout(90000), 240000)
     delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
     assert.equal(gatewayTimeout(20000), 20000)
+    assert.equal(gatewayTimeout(90000), 90000)
   } finally {
     if (previous === undefined)
       delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
@@ -150,6 +156,33 @@ test('a per-platform empty override does not zero the readiness budget', async (
     // An empty string must fall back to 8000, not to Number('') === 0.
     assert.match(error.message, /of 8000ms/)
     assert.ok(Date.now() - startedAt > 4000, 'the budget was not zeroed')
+  } finally {
+    if (previous === undefined)
+      delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+    else process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = previous
+  }
+})
+
+test('client request budgets scale with the same knob as the readiness budget', () => {
+  const previous = process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+  try {
+    // Unset, the default platform is unchanged to the millisecond. Three
+    // campaigns were lost one tight timeout at a time; they move together now,
+    // but only where a workflow says the host is slow.
+    delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT
+    assert.equal(requestTimeout(3000), 3000)
+    assert.equal(requestTimeout(5000), 5000)
+    assert.equal(gatewayTimeout(15000), 15000)
+
+    process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = '30000'
+    assert.equal(requestTimeout(3000), 11250)
+    assert.equal(requestTimeout(5000), 18750)
+    // A request budget must still fit inside the test that carries it.
+    assert.ok(gatewayTimeout(15000) > requestTimeout(5000) + 30000)
+
+    // A junk value must not collapse every budget to zero.
+    process.env.SUPERGATEWAY_TEST_READY_TIMEOUT = ''
+    assert.equal(requestTimeout(5000), 5000)
   } finally {
     if (previous === undefined)
       delete process.env.SUPERGATEWAY_TEST_READY_TIMEOUT

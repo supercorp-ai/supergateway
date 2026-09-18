@@ -4,6 +4,7 @@ import {
   launchGateway,
   unusedPort,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Release-blocking checks for the transparent-relay experiment. These exercise
@@ -70,7 +71,7 @@ for (const [label, method, params, headers, status, code] of [
         if (value === '') requestHeaders.delete(name)
       const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
         headers: requestHeaders,
         body: JSON.stringify({
           jsonrpc: '2.0',

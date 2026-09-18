@@ -18,6 +18,7 @@ import {
   initialize,
   rpc,
   gatewayTimeout,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
@@ -73,11 +74,13 @@ async function connect(
 ) {
   const client = new Client(
     { name: 'safety-client', version: '1' },
-    { versionNegotiation: { mode, probe: { timeoutMs: 5000 } } },
+    {
+      versionNegotiation: { mode, probe: { timeoutMs: requestTimeout(5000) } },
+    },
   )
   t.after(() => client.close())
   await client.connect(new StreamableHTTPClientTransport(new URL(url)), {
-    timeout: 5000,
+    timeout: requestTimeout(5000),
   })
   return client
 }
@@ -86,7 +89,7 @@ async function post(
   method: string,
   params: Record<string, unknown> = {},
   headers: Record<string, string> = {},
-  signal = AbortSignal.timeout(5000),
+  signal = AbortSignal.timeout(requestTimeout(5000)),
 ) {
   const res = await fetch(url, {
     method: 'POST',
@@ -159,7 +162,10 @@ for (const stateful of [true, false]) {
         completions: {},
         logging: {},
       })
-      const tools = await client.listTools({}, { timeout: 5000 })
+      const tools = await client.listTools(
+        {},
+        { timeout: requestTimeout(5000) },
+      )
       assert.deepEqual(
         tools.tools.map((tool) => tool.name),
         ['identity', 'wait', 'crash', 'reverse', 'echo'],
@@ -177,33 +183,43 @@ for (const stateful of [true, false]) {
       const value = 'héllo 世界 🌍'
       const result = await client.callTool(
         { name: 'echo', arguments: { value } },
-        { timeout: 5000 },
+        { timeout: requestTimeout(5000) },
       )
       assert.deepEqual(result.content, [{ type: 'text', text: value }])
       assert.deepEqual(result.structuredContent, { value })
       assert.deepEqual(
-        (await client.listResources({}, { timeout: 5000 })).resources,
+        (await client.listResources({}, { timeout: requestTimeout(5000) }))
+          .resources,
         [{ uri: 'note://alpha', name: 'Alpha' }],
       )
       assert.deepEqual(
-        (await client.listResourceTemplates({}, { timeout: 5000 }))
-          .resourceTemplates,
+        (
+          await client.listResourceTemplates(
+            {},
+            { timeout: requestTimeout(5000) },
+          )
+        ).resourceTemplates,
         [{ uriTemplate: 'note://{name}', name: 'Notes' }],
       )
       assert.deepEqual(
-        (await client.readResource({ uri: 'note://alpha' }, { timeout: 5000 }))
-          .contents,
+        (
+          await client.readResource(
+            { uri: 'note://alpha' },
+            { timeout: requestTimeout(5000) },
+          )
+        ).contents,
         [{ uri: 'note://alpha', text: 'alpha-body' }],
       )
       assert.deepEqual(
-        (await client.listPrompts({}, { timeout: 5000 })).prompts,
+        (await client.listPrompts({}, { timeout: requestTimeout(5000) }))
+          .prompts,
         [{ name: 'greet', arguments: [{ name: 'who', required: true }] }],
       )
       assert.deepEqual(
         (
           await client.getPrompt(
             { name: 'greet', arguments: { who: 'Ada' } },
-            { timeout: 5000 },
+            { timeout: requestTimeout(5000) },
           )
         ).messages,
         [{ role: 'user', content: { type: 'text', text: 'hello Ada' } }],
@@ -215,7 +231,7 @@ for (const stateful of [true, false]) {
               ref: { type: 'ref/prompt', name: 'greet' },
               argument: { name: 'who', value: 'al' },
             },
-            { timeout: 5000 },
+            { timeout: requestTimeout(5000) },
           )
         ).completion,
         { values: ['alice', 'albert'], total: 2, hasMore: false },
@@ -398,7 +414,7 @@ for (const stateful of [true, false]) {
           { name: 'wait', arguments: {} },
           {
             signal: controller.signal,
-            timeout: 10000,
+            timeout: requestTimeout(10000),
             onprogress: (value) => progress.push(value),
           },
         )
@@ -633,7 +649,7 @@ for (const stateful of [true, false]) {
       const { url, trace } = await setup(t, stateful)
       const response = await fetch(url, {
         method: 'POST',
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(requestTimeout(10000)),
         headers: {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
@@ -711,7 +727,7 @@ for (const stateful of [false, true])
       assert.equal(trace().length, 0, 'invalid HTTP metadata starts no child')
       const response = await fetch(url, {
         method: 'POST',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
         headers: {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',

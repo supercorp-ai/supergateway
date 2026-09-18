@@ -128,13 +128,26 @@ test('Windows creation times preserve tick precision and reject unavailable ance
       /Process creation time unavailable/,
     )
   }
-  // An exited ancestor can still have real living children on Windows.
+  // An exited ancestor can still have real living children on Windows, and
+  // dating them against when it was spawned is what keeps them. Real ticks
+  // here, because `since` is a wall-clock time and has to be comparable.
+  const spawnedAt = 1_700_000_000_000
+  const ticks = (ms: number) =>
+    (BigInt(ms) * 10000n + 621355968000000000n).toString()
+  const exitedAncestor = () =>
+    `11 10 ${ticks(spawnedAt + 1000)}\n12 11 ${ticks(spawnedAt + 2000)}`
   assert.deepEqual(
     descendantsOf(10, {
       platform: 'win32',
-      query: () => '11 10 1000\n12 11 1001',
+      query: exitedAncestor,
+      since: spawnedAt,
     }),
     [11, 12],
+  )
+  // Without that evidence the answer is whoever holds the PID now, so refuse.
+  assert.throws(
+    () => descendantsOf(10, { platform: 'win32', query: exitedAncestor }),
+    /Root creation time unavailable/,
   )
 })
 
@@ -182,6 +195,12 @@ test(
   // Two bounded Windows queries plus fixture startup and teardown.
   { timeout: process.platform === 'win32' ? 90000 : 30000 },
   async (t) => {
+    // The second query runs after the fixture has exited, so the walk needs to
+    // know when this root was spawned. Soak run 35309815902 failed here with
+    // four processes that could not have been the fixture's — it kills its nine
+    // children and awaits every exit before exiting itself — but were still
+    // claiming its recycled PID as their parent.
+    const spawnedAt = Date.now()
     const child = spawn(
       process.execPath,
       [
@@ -213,7 +232,7 @@ test(
     const query = () => {
       const started = performance.now()
       try {
-        return descendantsOf(child.pid!)
+        return descendantsOf(child.pid!, { since: spawnedAt })
       } finally {
         t.diagnostic(
           `Native process query took ${Math.round(performance.now() - started)}ms`,
@@ -225,6 +244,8 @@ test(
     for (const pid of message.pids)
       assert.ok(found.includes(pid), `missing child ${pid}`)
     assert.deepEqual(await close(), [0, null])
+    // The fixture awaits all nine exits before its own, so anything still here
+    // is not its child.
     assert.deepEqual(query(), [])
   },
 )
@@ -266,9 +287,12 @@ test('an exited Windows root does not inherit the process tree of whoever held i
     ),
     [3001, 3002],
   )
-  // Without that evidence there is nothing to reject with, and the phantom
-  // subtree comes back — which is what the soak reported.
-  assert.ok(descendantsOf(736, { platform: 'win32', query }).length > 100)
+  // Without that evidence the phantom subtree is all there is to report, so the
+  // walk refuses instead of returning it.
+  assert.throws(
+    () => descendantsOf(736, { platform: 'win32', query }),
+    /Root creation time unavailable/,
+  )
 })
 
 test('a Windows root spawn time tolerates clock granularity rather than hiding children', () => {

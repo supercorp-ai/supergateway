@@ -78,6 +78,16 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         headers: {},
       })
     }
+    // A non-request frame that arrives before the upstream client exists has
+    // nowhere to go. It must be reported rather than thrown, and above all must
+    // not be written back down stdout to the client that just sent it.
+    await stdio.onmessage({
+      jsonrpc: '2.0' as const,
+      method: 'notifications/cancelled',
+    })
+    // map: pre-connect-frame
+    assert.deepEqual(upstream, [], 'nothing is sent before the client connects')
+    assert.equal(writes.length, 0, 'and nothing is echoed back')
     // Establish the upstream client first; the fallback path a non-initialize
     // first frame would take is GW-001 and is covered as a TODO elsewhere.
     await stdio.onmessage(initialize(1))

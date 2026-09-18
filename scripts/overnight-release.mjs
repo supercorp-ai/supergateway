@@ -13,7 +13,7 @@ const pkg = JSON.parse(
   readFileSync(resolve(entry, '../../package.json'), 'utf8'),
 )
 assert.equal(pkg.name, 'supergateway')
-assert.equal(pkg.version, '4.0.0-rc.1')
+assert.equal(pkg.version, '4.0.0-rc.2')
 assert.equal(process.env.SOAK_PACKAGE_VERSION, pkg.version)
 const artifact = JSON.parse(
   readFileSync(resolve(entry, '../../../../artifact.json'), 'utf8'),

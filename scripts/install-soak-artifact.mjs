@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 
 const version = process.env.SOAK_PACKAGE_VERSION
 const digest = process.env.SOAK_PACKAGE_SHA256
-assert.equal(version, '4.0.0-rc.1', 'Select the RC.1 candidate explicitly')
+assert.equal(version, '4.0.0-rc.2', 'Select the RC.2 candidate explicitly')
 assert.match(
   digest ?? '',
   /^[a-f0-9]{64}$/,

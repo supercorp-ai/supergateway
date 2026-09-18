@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.0-rc.2
+
+- Deliver a client's notifications and replies to the server instead of returning them to the client.
+- Expire an idle stateful session after 30 minutes, so a client that disconnects without ending its session no longer strands the server process it was using.
+
 ## 4.0.0-rc.1
 
 - Keep interactive operations isolated when servers return identical continuation state.

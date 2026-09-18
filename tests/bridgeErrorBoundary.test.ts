@@ -29,12 +29,16 @@ for (const protocol of ['sse', 'streamableHttp'] as const) {
         throw rejection
       }
     }
+    const upstream: unknown[] = []
     class RemoteTransport {
       constructor(
         public url: URL,
         public options: unknown,
       ) {
         connections.push(this)
+      }
+      async send(message: unknown) {
+        upstream.push(message)
       }
     }
     class Server {
@@ -163,7 +167,11 @@ for (const protocol of ['sse', 'streamableHttp'] as const) {
       params: { level: 'info', data: 'ready' },
     }
     await stdio.onmessage(notification)
-    assert.deepEqual(JSON.parse(writes.pop()!), notification)
+    // A notification from the stdio client is destined for the server. It used
+    // to be written to stdout instead, handing the client back its own message
+    // while the server never saw it at all.
+    assert.deepEqual(upstream, [notification])
+    assert.equal(writes.length, 0, 'nothing is echoed back to the client')
     output.mock.restore()
   })
 }

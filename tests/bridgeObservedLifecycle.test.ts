@@ -167,9 +167,16 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       },
     )
     const notification = { jsonrpc: '2.0', method: 'notifications/initialized' }
+    const before = writes.length
     await stdio.onmessage(notification)
     // map: notification-diagnostic
-    assert.deepEqual(info.at(-1), [`${label} → Stdio:`, notification])
+    // `connect` already sent the server its own `notifications/initialized`, so
+    // the client's copy is absorbed rather than relayed — and it must not be
+    // written back down stdout, which returned the client its own message.
+    assert.deepEqual(info.at(-1), [
+      `Client initialized; ${label} handshake already sent one`,
+    ])
+    assert.equal(writes.length, before)
     const fault = new Error('upstream disconnected')
     remotes[0].onerror(fault)
     // map: transport-error

@@ -13,6 +13,7 @@ import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
+import { relayClientMessage } from '../lib/relayClientMessage.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -219,8 +220,12 @@ export async function sseToStdio(args: SseToStdioArgs) {
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else {
-      logger.info('SSE → Stdio:', message)
-      process.stdout.write(JSON.stringify(message) + '\n')
+      await relayClientMessage({
+        message,
+        send: sseClient ? (relayed) => sseTransport.send(relayed) : undefined,
+        label: 'SSE',
+        logger,
+      })
     }
   }
 

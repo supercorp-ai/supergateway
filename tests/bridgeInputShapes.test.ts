@@ -6,7 +6,7 @@ import { initialize } from './helpers/gateway-process.js'
 // it, and stamp a protocol version onto the reply they build. Neither decision
 // had been observed with a frame that omits the field it reads.
 for (const mode of ['sse', 'streamableHttp'] as const) {
-  test(`${mode} bridge defaults a missing jsonrpc version and passes non-request frames straight through`, async (t) => {
+  test(`${mode} bridge defaults a missing jsonrpc version and forwards non-request frames to the server`, async (t) => {
     const writes: string[] = []
     let stdio: any
     class Client {
@@ -21,11 +21,15 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         return { echoed: message.method }
       }
     }
+    const upstream: unknown[] = []
     class Remote {
       constructor(
         public url: URL,
         public options: any,
       ) {}
+      async send(message: unknown) {
+        upstream.push(message)
+      }
     }
     t.mock.module('@modelcontextprotocol/sdk/client/index.js', {
       namedExports: { Client },
@@ -80,8 +84,10 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     // A request is identified by method and id, so a frame that omits jsonrpc
     // is still forwarded, and the reply supplies the version the client left out.
     await stdio.onmessage({ id: 2, method: 'tools/list' })
-    // A frame with no method is not a request at all: the left side of the
-    // classification short-circuits and the frame is relayed untouched.
+    // A frame with no method is not a request at all — it is this client
+    // answering something the server asked of it, so it belongs upstream.
+    // Writing it to stdout, which is what the classification used to do,
+    // returned the client its own message and left the server waiting.
     const relayed = { jsonrpc: '2.0' as const, id: 3, result: { ok: true } }
     await stdio.onmessage(relayed)
     output.mock.restore()
@@ -94,9 +100,14 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     )
     // map: non-request-relayed
     assert.deepEqual(
-      framed[2],
-      relayed,
-      'a frame carrying no method is relayed verbatim rather than treated as a request',
+      upstream,
+      [relayed],
+      'a frame carrying no method is forwarded to the server rather than treated as a request',
+    )
+    assert.equal(
+      framed.length,
+      2,
+      'the client is not sent its own frame back down stdout',
     )
   })
 }

@@ -125,7 +125,7 @@ export function launchGateway(
       if (code !== 'ESRCH' && code !== 'EPERM') throw error
     }
   }
-  watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`)
+  watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`, spawnedAt)
   t.after(async () => {
     forgetGateway(child.pid)
     signal('SIGTERM')

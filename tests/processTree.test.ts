@@ -228,3 +228,70 @@ test(
     assert.deepEqual(query(), [])
   },
 )
+
+// Soak run 35305652456 lost a whole campaign in the canary preflight to
+// "gateway ... (pid 736) has 128 live descendants", thrown after the test's own
+// assertions had all passed — including that every continuation child was dead.
+// The preflight shuts its gateway down before finishing, so the leak check ran
+// against a root that had exited and was therefore absent from the table, which
+// left its edges with nothing to be dated against. Windows keeps
+// ParentProcessId after a parent dies and recycles low PIDs hard, so every
+// stale claimant of 736 was counted, subtrees included.
+test('an exited Windows root does not inherit the process tree of whoever held its PID', () => {
+  const ticks = (ms: number) =>
+    (BigInt(ms) * 10000n + 621355968000000000n).toString()
+  const spawnedAt = 1_700_000_000_000
+  const table = [
+    `4 0 ${ticks(1)}`,
+    // Claimants of pid 736 from long before this gateway existed, with a subtree.
+    ...Array.from(
+      { length: 128 },
+      (_, i) => `${2000 + i} 736 ${ticks(spawnedAt - 600_000 + i)}`,
+    ),
+    ...Array.from(
+      { length: 5 },
+      (_, i) => `${5000 + i} 2000 ${ticks(spawnedAt - 500_000 + i)}`,
+    ),
+    // Children this gateway really did spawn, still alive after it exited.
+    `3001 736 ${ticks(spawnedAt + 1000)}`,
+    `3002 3001 ${ticks(spawnedAt + 2000)}`,
+  ].join('\n')
+  const query = () => table
+
+  // Root 736 is absent: it has exited. Dated against our own spawn time, only
+  // the two processes we actually started survive the walk.
+  assert.deepEqual(
+    descendantsOf(736, { platform: 'win32', query, since: spawnedAt }).sort(
+      (a, b) => a - b,
+    ),
+    [3001, 3002],
+  )
+  // Without that evidence there is nothing to reject with, and the phantom
+  // subtree comes back — which is what the soak reported.
+  assert.ok(descendantsOf(736, { platform: 'win32', query }).length > 100)
+})
+
+test('a Windows root spawn time tolerates clock granularity rather than hiding children', () => {
+  const ticks = (ms: number) =>
+    (BigInt(ms) * 10000n + 621355968000000000n).toString()
+  const spawnedAt = 1_700_000_000_000
+  // A child the table dates a hair before our recorded spawn is still ours:
+  // Date.now() and CIM CreationDate are different reads of the same clock.
+  assert.deepEqual(
+    descendantsOf(736, {
+      platform: 'win32',
+      query: () => `11 736 ${ticks(spawnedAt - 500)}`,
+      since: spawnedAt,
+    }),
+    [11],
+  )
+  // Ten minutes earlier is not granularity, and must still be rejected.
+  assert.deepEqual(
+    descendantsOf(736, {
+      platform: 'win32',
+      query: () => `11 736 ${ticks(spawnedAt - 600_000)}`,
+      since: spawnedAt,
+    }),
+    [],
+  )
+})

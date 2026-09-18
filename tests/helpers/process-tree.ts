@@ -19,12 +19,31 @@ type ProcessQuery = (
   },
 ) => string
 
+// Win32_Process reports CreationDate in .NET ticks: 100ns units since year 1.
+const ticksAtUnixEpoch = 621355968000000000n
+// Date.now() and CIM CreationDate are both UTC wall clock on the same host, but
+// they are not the same clock read. Err toward counting a process rather than
+// dismissing one, so a real leak is never hidden by a rounding difference.
+const clockTolerance = 2000n
+const ticksFrom = (unixMs: number) =>
+  (BigInt(Math.floor(unixMs)) - clockTolerance) * 10000n + ticksAtUnixEpoch
+
 export function descendantsOf(
   pid: number,
   {
     platform = process.platform,
     query = (command, args, options) => execFileSync(command, args, options),
-  }: { platform?: NodeJS.Platform; query?: ProcessQuery } = {},
+    since,
+  }: {
+    platform?: NodeJS.Platform
+    query?: ProcessQuery
+    // When the root was spawned, in unix ms. Windows keeps ParentProcessId after
+    // a parent exits and recycles low PIDs hard, so once the root is gone from
+    // the table there is nothing left to date its edges against and every stale
+    // claimant is attributed to it — 128 of them in soak run 35305652456. Its
+    // spawn time is the evidence that survives the root itself.
+    since?: number
+  } = {},
 ): number[] {
   // Do not turn an unavailable process table into a successful zero-child check.
   const options = {
@@ -64,12 +83,18 @@ export function descendantsOf(
     children.set(parent, [...(children.get(parent) ?? []), child])
   }
   const found = new Set<number>()
+  // Deeper roots were reached by walking the table, so they are always in it.
+  // Only the process we were asked about can be missing, which is exactly when
+  // it has exited — and an exited ancestor can still have real living children.
+  const rootCreated =
+    created.get(pid) ?? (since === undefined ? undefined : ticksFrom(since))
   const walk = (root: number) => {
     for (const child of children.get(root) ?? []) {
       // A snapshot can contain recycled PIDs; never loop through a parent cycle.
       if (child === pid || found.has(child)) continue
-      if (platform === 'win32' && created.has(root)) {
-        const parentCreated = created.get(root)!
+      const rootTicks = root === pid ? rootCreated : created.get(root)
+      if (platform === 'win32' && rootTicks !== undefined) {
+        const parentCreated = rootTicks
         const childCreated = created.get(child)!
         assert.ok(
           parentCreated > 0n && childCreated > 0n,

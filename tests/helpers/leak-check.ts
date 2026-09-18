@@ -27,10 +27,14 @@ import { descendantsOf } from './process-tree.js'
  */
 const BUDGET = Number(process.env.SUPERGATEWAY_CHILD_BUDGET ?? 8)
 
-const watched = new Map<number, string>()
+const watched = new Map<number, { label: string; startedAt: number }>()
 
-export function watchGateway(pid: number | undefined, label: string) {
-  if (pid) watched.set(pid, label)
+export function watchGateway(
+  pid: number | undefined,
+  label: string,
+  startedAt: number,
+) {
+  if (pid) watched.set(pid, { label, startedAt })
 }
 
 export function forgetGateway(pid: number | undefined) {
@@ -39,8 +43,11 @@ export function forgetGateway(pid: number | undefined) {
 
 afterEach(() => {
   const offenders: string[] = []
-  for (const [pid, label] of watched) {
-    const live = descendantsOf(pid)
+  for (const [pid, { label, startedAt }] of watched) {
+    // Dating the edges against our own spawn time is what keeps a recycled
+    // Windows PID from handing us someone else's process tree once the gateway
+    // has exited — while still catching real children it left behind.
+    const live = descendantsOf(pid, { since: startedAt })
     if (live.length > BUDGET)
       offenders.push(
         `${label} (pid ${pid}) has ${live.length} live descendants`,

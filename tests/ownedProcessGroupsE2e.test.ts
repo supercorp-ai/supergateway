@@ -144,7 +144,7 @@ for (const termination of ['DELETE', 'idle-expiry']) {
       )
       assert.equal(
         (await rpc(url, initialize(4), affected.session)).response.status,
-        400,
+        404,
       )
       abort.abort()
     },

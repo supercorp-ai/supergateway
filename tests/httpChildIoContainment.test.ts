@@ -147,7 +147,7 @@ for (const mode of ['stateful', 'stateless'] as const) {
           })
           assert.equal(
             rejected.res.code,
-            400,
+            404,
             'failed session is removed even if close rejects',
           )
         }

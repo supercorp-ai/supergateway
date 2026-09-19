@@ -151,7 +151,7 @@ for (const stateful of [true, false]) {
             const rejected = await rpc(url, call('identity'), session)
             assert.equal(
               rejected.response.status,
-              400,
+              404,
               'failed session cannot be reused',
             )
           }

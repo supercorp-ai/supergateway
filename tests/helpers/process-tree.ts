@@ -52,7 +52,7 @@ export function descendantsOf(
     timeout: platform === 'win32' ? 30000 : 10000,
     stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
   }
-  const table =
+  const read = () =>
     platform === 'win32'
       ? query(
           'powershell.exe',
@@ -66,6 +66,24 @@ export function descendantsOf(
           options,
         )
       : query('ps', ['-eo', 'pid=,ppid='], options)
+  // A query that timed out observed nothing. That is not evidence about the
+  // process tree, and the leak check runs after *every* test, so failing on it
+  // blames whichever test happened to be in front of it — soak run
+  // 35395011603 lost a healthy campaign at cycle 32 when a protocol test died
+  // of `spawnSync powershell.exe ETIMEDOUT`. PowerShell cold-starts once per
+  // test on Windows, which is roughly a thousand chances per lane to be
+  // unlucky, so one stall is retried before it is believed. A second timeout
+  // still throws: an unreadable table must never pass as a clean one.
+  const timedOut = (error: unknown) =>
+    (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ||
+    /ETIMEDOUT/.test(String((error as Error)?.message ?? ''))
+  let table: string
+  try {
+    table = read()
+  } catch (error) {
+    if (!timedOut(error)) throw error
+    table = read()
+  }
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
   const created = new Map<number, bigint>()

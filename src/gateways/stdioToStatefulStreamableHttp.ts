@@ -239,9 +239,21 @@ export async function stdioToStatefulStreamableHttp(
             if ('id' in jsonMsg && !('method' in jsonMsg)) {
               pendingRequests.delete(jsonMsg.id)
             }
-            transport.send(jsonMsg).catch((e) => {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            })
+            transport
+              .send(jsonMsg, {
+                // A message with no related request is routed to the standalone
+                // GET stream, and the SDK returns silently when that stream is
+                // not connected yet — so nothing throws and the notification is
+                // simply gone. That window is exactly the start of a call, which
+                // is where a tool emits its first progress notification: soak run
+                // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
+                // route by their own id regardless; everything else rides the
+                // request in flight, as the stateless bridge already does.
+                relatedRequestId: pendingRequests.values().next().value,
+              })
+              .catch((e) => {
+                logger.error(`Failed to send to StreamableHttp`, e)
+              })
           } catch {
             logger.error(`Child non-JSON: ${line}`)
           }

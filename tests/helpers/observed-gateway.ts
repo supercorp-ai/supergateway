@@ -119,9 +119,13 @@ export function observeGateway(t: TestContext) {
       this.onmessage?.(req.body)
       res.status(202).send('Accepted')
     }
-    async send(message: any) {
+    async send(message: any, options?: any) {
       this.sent.push(structuredClone(message))
+      // Routing is part of the message's fate, not decoration: a notification
+      // sent without `relatedRequestId` goes to a stream that may not exist.
+      this.sentOptions.push(options)
     }
+    sentOptions: any[] = []
     async close() {
       this.closes++
       this.onclose?.()

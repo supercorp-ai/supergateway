@@ -192,7 +192,7 @@ for (const mode of ['stateful', 'stateless'] as const) {
         // map: old-session
         assert.deepEqual(
           { code: missing.res.code, body: missing.res.body },
-          { code: 400, body: 'Invalid or missing session ID' },
+          { code: 404, body: 'Session not found' },
         )
       }
       first.res.emit('finish')

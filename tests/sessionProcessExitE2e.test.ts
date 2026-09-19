@@ -69,7 +69,7 @@ for (const ending of ['DELETE', 'idle timeout'] as const) {
         `${ending} must terminate the stdio peer, not just its connection`,
       )
       const expired = await rpc(url, initialize(2), session)
-      assert.equal(expired.response.status, 400)
+      assert.equal(expired.response.status, 404)
       const fresh = await rpc(url, initialize(3))
       assert.equal(fresh.response.status, 200)
       assert.notEqual(fresh.response.headers.get('mcp-session-id'), session)

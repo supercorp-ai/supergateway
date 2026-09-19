@@ -66,7 +66,7 @@ for (const stateful of [false, true]) {
       if (session)
         assert.equal(
           (await rpc(base + '/mcp', tool(3, 'hold'), session)).response.status,
-          400,
+          404,
         )
       const fresh = await rpc(base + '/mcp', initialize(4))
       assert.equal(fresh.response.status, 200)
@@ -169,7 +169,7 @@ test(
           'reject the dead session',
         )
       ).response.status,
-      400,
+      404,
     )
     const fresh = await within(rpc(url, initialize(5)), 'open a fresh session')
     assert.equal(fresh.response.status, 200)
@@ -215,7 +215,7 @@ test(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),
     )
-    assert.equal((await rpc(url, initialize(3), session)).response.status, 400)
+    assert.equal((await rpc(url, initialize(3), session)).response.status, 404)
     assert.equal((await rpc(url, initialize(4))).response.status, 200)
   },
 )

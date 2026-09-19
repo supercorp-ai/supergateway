@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.0.0-rc.4
+
+- Answer 404 rather than 400 when a request carries a session id the gateway no longer holds, so a client whose session has expired or been ended starts a new one instead of failing every later call.
+
 ## 4.0.0-rc.3
 
 - Deliver a stateful server's progress notifications on the call they belong to, so the first one is no longer lost when a client has not yet opened its event stream.

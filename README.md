@@ -400,6 +400,9 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 - [@Areo-Joe](https://github.com/Areo-Joe)
 - [@Joffref](https://github.com/Joffref)
 - [@michaeljguarino](https://github.com/michaeljguarino)
+- [@springbrookconsultingllc-byte](https://github.com/springbrookconsultingllc-byte)
+- [@jstar0](https://github.com/jstar0)
+- [@v8eta](https://github.com/v8eta)
 
 ## Contributing
 

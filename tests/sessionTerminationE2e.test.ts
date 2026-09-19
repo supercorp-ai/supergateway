@@ -91,7 +91,7 @@ test(
           'reject the dead session',
         )
       ).response.status,
-      400,
+      404,
     )
     const fresh = await within(rpc(url, initialize(4)), 'open a fresh session')
     assert.equal(fresh.response.status, 200)

@@ -194,18 +194,18 @@ test('stateful response completion releases once and cleanup cancels session tim
   )
   assert.equal(children[0].kills, 1, 'transport closure terminates its child')
   const expiredGet = await request('GET', session)
-  assert.equal(expiredGet.code, 400)
-  assert.equal(expiredGet.body, 'Invalid or missing session ID')
+  assert.equal(expiredGet.code, 404)
+  assert.equal(expiredGet.body, 'Session not found')
   const expiredPost = await request('POST', session)
   assert.deepEqual(
     { code: expiredPost.code, body: expiredPost.body },
     {
-      code: 400,
+      code: 404,
       body: {
         jsonrpc: '2.0',
         error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
+          code: -32001,
+          message: 'Session not found',
         },
         id: null,
       },
@@ -230,7 +230,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     logs.some((line) => line.includes(`Session ${closeSession} timed out`)),
     false,
   )
-  assert.equal((await request('GET', closeSession)).code, 400)
+  assert.equal((await request('GET', closeSession)).code, 404)
 
   const failing = await request('POST')
   const errorSession = transports[2].sessionId!
@@ -253,7 +253,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     logs.some((line) => line.includes(`Session ${errorSession} timed out`)),
     true,
   )
-  assert.equal((await request('GET', errorSession)).code, 400)
+  assert.equal((await request('GET', errorSession)).code, 404)
   assert.equal(
     children.length,
     3,

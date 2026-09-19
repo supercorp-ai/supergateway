@@ -78,7 +78,7 @@ for (const method of ['POST', 'GET', 'DELETE']) {
         })
         assert.equal(
           response.status,
-          400,
+          404,
           `${sessionId} must be rejected as an unknown session`,
         )
         await response.text()

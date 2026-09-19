@@ -192,11 +192,16 @@ for (const stateful of [true, false]) {
             headers: session ? { 'mcp-session-id': session } : {},
             signal: AbortSignal.timeout(5000),
           })
-          assert.equal(response.status, stateful ? 400 : 405)
-          assert.match(
-            await response.text(),
-            stateful ? /Invalid or missing session ID/ : /Method not allowed/,
-          )
+          // Stateful separates the two cases: an absent header is a 400,
+          // while a session id the gateway does not hold is a 404 so the
+          // client re-initializes instead of replaying a dead id.
+          const [status, body] = !stateful
+            ? ([405, /Method not allowed/] as const)
+            : session
+              ? ([404, /Session not found/] as const)
+              : ([400, /Invalid or missing session ID/] as const)
+          assert.equal(response.status, status)
+          assert.match(await response.text(), body)
         }
       }
       if (stateful) {
@@ -206,15 +211,18 @@ for (const stateful of [true, false]) {
             { jsonrpc: '2.0', id: 2, method: 'tools/list' },
             session,
           )
-          assert.equal(bad.response.status, 400)
-          assert.equal(bad.messages[0].error.code, -32000)
+          assert.equal(bad.response.status, session ? 404 : 400)
+          assert.equal(bad.messages[0].error.code, session ? -32001 : -32000)
         }
+        // An initialize that still carries a dead session id is answered 404
+        // too: the spec has the client retry without the header, and that
+        // retry is the `init` below.
         const badInit = await rpc(
           base + '/mcp',
           initialize(),
           'unknown-session',
         )
-        assert.equal(badInit.response.status, 400)
+        assert.equal(badInit.response.status, 404)
       }
       const init = await rpc(base + '/mcp', initialize())
       assert.equal(init.response.status, 200)
@@ -257,7 +265,7 @@ for (const stateful of [true, false]) {
           { jsonrpc: '2.0', id: 3, method: 'tools/list' },
           session,
         )
-        assert.equal(stale.response.status, 400)
+        assert.equal(stale.response.status, 404)
       }
     },
   )
@@ -293,7 +301,7 @@ test(
       { jsonrpc: '2.0', id: 2, method: 'tools/list' },
       session,
     )
-    assert.equal(stale.response.status, 400)
+    assert.equal(stale.response.status, 404)
     const fresh = await rpc(url, initialize(3))
     assert.equal(fresh.response.status, 200)
     assert.notEqual(fresh.response.headers.get('mcp-session-id'), session)
@@ -362,7 +370,7 @@ test(
       { jsonrpc: '2.0', id: 4, method: 'tools/list' },
       session,
     )
-    assert.equal(stale.response.status, 400)
+    assert.equal(stale.response.status, 404)
   },
 )
 

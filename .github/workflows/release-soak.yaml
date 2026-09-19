@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sha256:
-        description: Verified SHA-256 of the published 4.0.0-rc.3 tarball
+        description: Verified SHA-256 of the published 4.0.0-rc.4 tarball
         required: true
         type: string
       duration:

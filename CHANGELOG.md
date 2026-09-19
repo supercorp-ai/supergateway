@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.0.0-rc.3
+
+- Deliver a stateful server's progress notifications on the call they belong to, so the first one is no longer lost when a client has not yet opened its event stream.
+
 ## 4.0.0-rc.2
 
 - Deliver a client's notifications and replies to the server instead of returning them to the client.

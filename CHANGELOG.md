@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.0.0
+
+### Breaking changes
+
+- Requires Node.js 20 or newer.
+- Stateful stdio→Streamable HTTP sessions now expire after 30 minutes of idleness. Previously an unconfigured session never expired, which stranded the server process of any client that disconnected without ending its session. Pass a large `--sessionTimeout` if you relied on the old behaviour.
+
+### Improvements and fixes
+
+- Support newer MCP protocols while preserving compatibility with older servers.
+- Deliver a client's notifications and replies to the server instead of returning them to the client.
+- Deliver a stateful server's progress notifications on the call they belong to, so the first one is no longer lost when a client has not yet opened its event stream.
+- Answer 404 rather than 400 when a request carries a session id the gateway no longer holds, so a client whose session has expired or been ended starts a new one instead of failing every later call.
+- Keep interactive operations isolated when servers return identical continuation state, and preserve signed multi-round operations and explicit continuation retries after completion.
+- Improve SSE reconnection, HTTP session handling, and subprocess cleanup.
+- Preserve Unicode text split across subprocess output chunks.
+- Improve error handling and redact credentials from diagnostic logs.
+- Report the correct version with `--version`.
+- Fix the Deno container and install the requested Supergateway version in images.
+- Exclude tests and development files from npm packages.
+
 ## 4.0.0-rc.4
 
 - Answer 404 rather than 400 when a request carries a session id the gateway no longer holds, so a client whose session has expired or been ended starts a new one instead of failing every later call.

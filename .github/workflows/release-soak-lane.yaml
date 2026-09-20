@@ -31,7 +31,7 @@ jobs:
       SUPERGATEWAY_SOAK_CONFIRMED: '1'
       SOAK_SECONDS: ${{ inputs.seconds }}
       SOAK_DIRECTORY: .release/overnight
-      SOAK_PACKAGE_VERSION: 4.0.0-rc.4
+      SOAK_PACKAGE_VERSION: 4.0.0
       SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
       # Both soaks so far died to a Windows gateway that was still running and
       # had written nothing after eight seconds, on a runner the poll counter

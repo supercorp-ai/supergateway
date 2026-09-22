@@ -134,7 +134,8 @@ test('stateful response completion releases once and cleanup cancels session tim
   const decrement = t.mock.method(SessionAccessCounter.prototype, 'dec')
   const clear = t.mock.method(SessionAccessCounter.prototype, 'clear')
   const logs: string[] = [],
-    errors: unknown[] = []
+    errors: unknown[] = [],
+    errorMessages: string[] = []
   enableFakeTimers(t)
   await stdioToStatefulStreamableHttp({
     stdioCmd: 'controlled-peer',
@@ -142,7 +143,10 @@ test('stateful response completion releases once and cleanup cancels session tim
     streamableHttpPath: '/mcp',
     logger: {
       info: (message) => logs.push(String(message)),
-      error: (_message, error) => errors.push(error),
+      error: (message, error) => {
+        errorMessages.push(String(message))
+        errors.push(error)
+      },
     },
     corsOrigin: false,
     healthEndpoints: [],
@@ -308,6 +312,11 @@ test('stateful response completion releases once and cleanup cancels session tim
     decrements = decrement.mock.callCount()
   await request('POST')
   assert.equal(transports[3].sessionId, undefined)
+  const prematureError = new Error('request failed before initialization')
+  transports[3].onerror!(prematureError)
+  assert.equal(errors.at(-1), prematureError)
+  assert.ok(errorMessages.at(-1)?.includes('(uninitialized)'))
+  assert.equal(children[3].kills, 0)
   await transports[3].close()
   assert.equal(
     children[3].kills,

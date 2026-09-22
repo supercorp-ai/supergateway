@@ -5,9 +5,24 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
+import { spawn } from 'node:child_process'
 
 const mode = process.argv[2]
 const port = Number(process.env.PORT || 3000)
+
+// An opt-in descendant for the real process-tree cleanup regression test.
+// It stays alive after its parent exits unless the gateway signals the group.
+if (process.env.SUPERGATEWAY_TEST_DESCENDANT_MARKER) {
+  spawn(
+    process.execPath,
+    [
+      '-e',
+      'setInterval(() => {}, 1 << 30)',
+      process.env.SUPERGATEWAY_TEST_DESCENDANT_MARKER,
+    ],
+    { stdio: 'ignore' },
+  )
+}
 
 const server = new McpServer({ name: 'mock-server', version: '1.0.0' })
 

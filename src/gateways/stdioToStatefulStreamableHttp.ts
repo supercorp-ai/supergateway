@@ -351,6 +351,14 @@ export async function stdioToStatefulStreamableHttp(
       return
     }
 
+    // A long-lived GET can keep the access count above zero indefinitely if
+    // its peer disappears without a clean TCP close. TCP keepalive lets the OS
+    // surface that dead connection so the normal response-close path can arm
+    // the session's idle timer. It does not time out healthy SSE streams.
+    if (req.method === 'GET' && sessionCounter) {
+      req.socket?.setKeepAlive(true, 60_000)
+    }
+
     // Increment session access count
     sessionCounter?.inc(sessionId, `${req.method} request for existing session`)
 

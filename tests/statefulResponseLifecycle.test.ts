@@ -132,6 +132,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     headers: {},
     sessionTimeout: 50,
   })
+  const keepAliveCalls: Array<[boolean, number]> = []
   const request = async (method: string, session?: string) => {
     const response = new Response()
     await routes.get(`${method} /mcp`)!(
@@ -139,6 +140,11 @@ test('stateful response completion releases once and cleanup cancels session tim
         method,
         headers: session ? { 'mcp-session-id': session } : {},
         body: initialize(),
+        socket: {
+          setKeepAlive(enabled: boolean, initialDelay: number) {
+            keepAliveCalls.push([enabled, initialDelay])
+          },
+        },
       },
       response,
     )
@@ -155,7 +161,9 @@ test('stateful response completion releases once and cleanup cancels session tim
   )
   t.mock.timers.tick(49)
   const activeGet = await request('GET', session)
+  assert.deepEqual(keepAliveCalls, [[true, 60_000]])
   const concurrentPost = await request('POST', session)
+  assert.deepEqual(keepAliveCalls, [[true, 60_000]])
   concurrentPost.emit('finish')
   concurrentPost.emit('close')
   assert.equal(

@@ -172,8 +172,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
         logger.info(`SSE connection closed (session ${sessionId})`),
       )
 
+    // The SDK also calls `onerror` for a single rejected POST (bad content
+    // type, oversized body, invalid JSON-RPC). The SSE stream is still alive;
+    // `onclose` and the client socket close handle actual session teardown.
     sseTransport.onerror = (err) =>
-      endSession(() => logger.error(`SSE error (session ${sessionId}):`, err))
+      logger.error(`SSE error (session ${sessionId}):`, err)
 
     req.on('close', () =>
       endSession(() =>

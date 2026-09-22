@@ -56,16 +56,29 @@ const initialize = (id: number) => ({
   },
 })
 
-async function openSessions(t: TestContext, extra: string[], count: number) {
+async function openSessions(
+  t: TestContext,
+  extra: string[],
+  count: number,
+  withDescendant = false,
+) {
   const marker = `reaping-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const port = await unusedPort()
-  const gateway = launchGateway(t, [
-    '--stdio',
-    peerWithMarker(marker),
-    '--port',
-    String(port),
-    ...extra,
-  ])
+  const gateway = launchGateway(
+    t,
+    [
+      '--stdio',
+      withDescendant
+        ? 'node tests/helpers/mock-mcp-server.js stdio'
+        : peerWithMarker(marker),
+      '--port',
+      String(port),
+      ...extra,
+    ],
+    withDescendant
+      ? { SUPERGATEWAY_TEST_DESCENDANT_MARKER: `${marker}-grandchild` }
+      : undefined,
+  )
   await gateway.ready()
   const url = `http://127.0.0.1:${port}/mcp`
   const sessions: string[] = []
@@ -107,6 +120,38 @@ test(
       liveChildren(marker),
       [],
       'no child may outlive the session that spawned it',
+    )
+  },
+)
+
+test(
+  'stateful session close reaps the child’s descendant process (#141)',
+  { timeout: 30000, skip: process.platform === 'win32' },
+  async (t) => {
+    const { marker, url, sessions, gateway } = await openSessions(
+      t,
+      ['--outputTransport', 'streamableHttp', '--stateful'],
+      1,
+      true,
+    )
+    assert.equal(sessions.length, 1)
+    const grandchild = `${marker}-grandchild`
+    await gateway.waitFor(
+      () => liveChildren(grandchild).length === 1,
+      'spawn a real MCP descendant',
+    )
+    const ended = await fetch(url, {
+      method: 'DELETE',
+      headers: headers(sessions[0]),
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(ended.status, 200)
+    await ended.text()
+    await settle()
+    assert.deepEqual(
+      liveChildren(grandchild),
+      [],
+      'closing the session must terminate the whole process group',
     )
   },
 )

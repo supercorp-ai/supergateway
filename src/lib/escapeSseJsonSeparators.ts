@@ -46,26 +46,28 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
       input[index + 1] === 0x80 &&
       (input[index + 2] === 0xa8 || input[index + 2] === 0xa9)
 
-    let count = 0
-    for (let i = 0; i < end; i++) {
+    const separators: number[] = []
+    for (
+      let i = input.indexOf(0xe2);
+      i >= 0 && i < end;
+      i = input.indexOf(0xe2, i + 1)
+    ) {
       if (isSeparator(i)) {
-        count++
+        separators.push(i)
         i += 2
       }
     }
     pending = input.subarray(end)
-    if (!count) return input.subarray(0, end)
-    const output = Buffer.allocUnsafe(end + count * 3)
+    if (!separators.length) return input.subarray(0, end)
+    const output = Buffer.allocUnsafe(end + separators.length * 3)
     let copiedFrom = 0
     let written = 0
-    for (let i = 0; i < end; i++) {
-      if (!isSeparator(i)) continue
+    for (const i of separators) {
       written += input.copy(output, written, copiedFrom, i)
       const replacement =
         input[i + 2] === 0xa8 ? LINE_SEPARATOR : PARAGRAPH_SEPARATOR
       written += replacement.copy(output, written)
-      i += 2
-      copiedFrom = i + 1
+      copiedFrom = i + 3
     }
     input.copy(output, written, copiedFrom, end)
     return output

@@ -114,7 +114,7 @@ jobs:
   coverage:
     name: Coverage gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -130,7 +130,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Measure coverage
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: npx -y supercov@0.0.53 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'

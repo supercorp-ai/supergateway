@@ -187,3 +187,147 @@ test('a long-running POST suppresses liveness probes until its response ends', a
   t.mock.timers.tick(100)
   assert.equal(sent.length, 1)
 })
+
+test('a POST already in flight when GET starts delays the first probe', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    async (id) => {
+      sent.push(id)
+    },
+    () => {},
+    logger,
+  )
+  probe.requestStarted()
+  probe.start()
+  t.mock.timers.tick(500)
+  assert.deepEqual(sent, [])
+  probe.requestFinished()
+  probe.requestFinished() // A duplicate completion cannot underflow the count.
+  t.mock.timers.tick(100)
+  assert.equal(sent.length, 1)
+})
+
+test('only replies to gateway pings count as proof of life', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    async (id) => {
+      sent.push(id)
+    },
+    () => {},
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  assert.equal(
+    probe.accept({ jsonrpc: '2.0', method: 'notifications/test' } as any),
+    false,
+  )
+  assert.equal(
+    probe.accept({ jsonrpc: '2.0', id: sent[0], method: 'ping' } as any),
+    false,
+  )
+  assert.equal(probe.accept({ jsonrpc: '2.0', id: 1, result: {} }), false)
+  assert.equal(probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} }), true)
+})
+
+test('send failure counts as a miss, while failures after stop or activity are ignored', async (t) => {
+  enableFakeTimers(t)
+  const errors: unknown[] = []
+  let rejectSend: ((error: Error) => void) | undefined
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectSend = reject
+      }),
+    () => {},
+    { info() {}, error: (_message, error) => errors.push(error) },
+  )
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+  }
+  probe.start()
+  t.mock.timers.tick(100)
+  rejectSend!(new Error('network write failed'))
+  await settle()
+  assert.equal(errors.length, 1)
+  // The failed first send immediately starts a second probe.
+  rejectSend!(new Error('late after activity'))
+  probe.activity()
+  await settle()
+  assert.equal(errors.length, 1)
+  t.mock.timers.tick(100)
+  rejectSend!(new Error('late after stop'))
+  probe.stop()
+  await settle()
+  assert.equal(errors.length, 1)
+})
+
+test('late timer and send completions cannot revive an obsolete probe', async (t) => {
+  const timers: Array<() => void> = []
+  t.mock.method(globalThis, 'setTimeout', ((callback: () => void) => {
+    timers.push(callback)
+    return { unref() {} } as NodeJS.Timeout
+  }) as typeof setTimeout)
+  t.mock.method(globalThis, 'clearTimeout', (() => {}) as typeof clearTimeout)
+  let resolveSend: (() => void) | undefined
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    () =>
+      new Promise<void>((resolve) => {
+        resolveSend = resolve
+      }),
+    () => {},
+    logger,
+  )
+  probe.start()
+  const originalSchedule = timers[1]
+  probe.stop()
+  originalSchedule()
+  assert.equal(resolveSend, undefined, 'stopped timer does not send')
+  probe.start()
+  const replacedSchedule = timers.at(-1)!
+  probe.activity()
+  replacedSchedule()
+  assert.equal(resolveSend, undefined, 'obsolete revision does not send')
+  timers.at(-1)!() // Current schedule sends.
+  assert.ok(resolveSend)
+  probe.activity()
+  resolveSend!()
+  await Promise.resolve()
+  assert.equal(timers.length, 8, 'late success does not arm a reply timeout')
+
+  timers.at(-1)!()
+  probe.stop()
+  resolveSend!()
+  await Promise.resolve()
+  assert.equal(timers.length, 8, 'a stopped probe ignores a late send')
+
+  probe.start()
+  timers.at(-1)!()
+  resolveSend!()
+  await Promise.resolve()
+  const obsoleteReplyTimer = timers.at(-1)!
+  probe.activity()
+  obsoleteReplyTimer()
+  assert.equal(
+    timers.length,
+    13,
+    'a superseded reply timer cannot count a miss',
+  )
+  probe.stop()
+  obsoleteReplyTimer()
+})

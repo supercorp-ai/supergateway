@@ -189,6 +189,7 @@ export async function stdioToStatefulStreamableHttp(
           () => {
             transport.close().catch((error) => {
               logger.error('Failed to close stale session:', error)
+              stopChild('stale transport close failed')
             })
           },
           logger,

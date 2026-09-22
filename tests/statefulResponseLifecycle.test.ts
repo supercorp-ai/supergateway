@@ -69,6 +69,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     onerror?: (error: Error) => void
     onmessage?: (message: any) => void
     closes = 0
+    closeError?: Error
     sent: any[] = []
     constructor(
       public options: {
@@ -90,6 +91,7 @@ test('stateful response completion releases once and cleanup cancels session tim
     }
     async close() {
       this.closes++
+      if (this.closeError) throw this.closeError
       this.onclose?.()
     }
     async send(message: any) {
@@ -131,13 +133,17 @@ test('stateful response completion releases once and cleanup cancels session tim
   // Spies preserve the real methods, including their state transitions.
   const decrement = t.mock.method(SessionAccessCounter.prototype, 'dec')
   const clear = t.mock.method(SessionAccessCounter.prototype, 'clear')
-  const logs: string[] = []
+  const logs: string[] = [],
+    errors: unknown[] = []
   enableFakeTimers(t)
   await stdioToStatefulStreamableHttp({
     stdioCmd: 'controlled-peer',
     port: 0,
     streamableHttpPath: '/mcp',
-    logger: { info: (message) => logs.push(String(message)), error() {} },
+    logger: {
+      info: (message) => logs.push(String(message)),
+      error: (_message, error) => errors.push(error),
+    },
     corsOrigin: false,
     healthEndpoints: [],
     headers: {},
@@ -350,4 +356,30 @@ test('stateful response completion releases once and cleanup cancels session tim
   assert.equal(children[5].kills, 1)
   assert.equal((await request('GET', staleSession)).code, 404)
   staleGet.emit('close')
+
+  // If the SDK rejects close, release the session and child anyway. Logging
+  // alone would keep the stale session mapped forever behind the proxy.
+  const rejectInitial = await request('POST')
+  const rejectSession = transports[6].sessionId!
+  rejectInitial.emit('finish')
+  const rejectGet = await request('GET', rejectSession)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  transports[6].onmessage!({
+    jsonrpc: '2.0',
+    id: transports[6].sent[0].id,
+    result: {},
+  })
+  transports[6].closeError = new Error('SDK close failed')
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[6].closes, 1)
+  assert.equal(errors.at(-1), transports[6].closeError)
+  assert.equal(children[6].kills, 1)
+  assert.equal((await request('GET', rejectSession)).code, 404)
+  rejectGet.emit('close')
 })

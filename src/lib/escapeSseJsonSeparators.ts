@@ -40,35 +40,31 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
     else if (end > 1 && input[end - 2] === 0xe2 && input[end - 1] === 0x80)
       end -= 2
 
-    const isSeparator = (index: number) =>
-      index + 2 < end &&
-      input[index] === 0xe2 &&
-      input[index + 1] === 0x80 &&
-      (input[index + 2] === 0xa8 || input[index + 2] === 0xa9)
-
     const separators: number[] = []
     for (
       let i = input.indexOf(0xe2);
       i >= 0 && i < end;
       i = input.indexOf(0xe2, i + 1)
     ) {
-      if (isSeparator(i)) {
-        separators.push(i)
-        i += 2
-      }
+      // indexOf guarantees the leading byte. A candidate must still have
+      // both continuation bytes within this write's complete prefix.
+      if (i + 2 >= end || input[i + 1] !== 0x80) continue
+      if (input[i + 2] !== 0xa8 && input[i + 2] !== 0xa9) continue
+      separators.push(i)
+      i += 2
     }
     pending = input.subarray(end)
     if (!separators.length) return input.subarray(0, end)
     const output = Buffer.allocUnsafe(end + separators.length * 3)
     let copiedFrom = 0
     let written = 0
-    for (const i of separators) {
+    separators.forEach((i) => {
       written += input.copy(output, written, copiedFrom, i)
       const replacement =
         input[i + 2] === 0xa8 ? LINE_SEPARATOR : PARAGRAPH_SEPARATOR
       written += replacement.copy(output, written)
       copiedFrom = i + 3
-    }
+    })
     input.copy(output, written, copiedFrom, end)
     return output
   }

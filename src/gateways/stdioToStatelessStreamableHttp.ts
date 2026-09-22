@@ -15,6 +15,7 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { createModernHttp } from '../lib/modernHttp.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
+import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -100,6 +101,10 @@ export async function stdioToStatelessStreamableHttp(
   })
 
   const app = express()
+  app.use((_req, res, next) => {
+    escapeSseJsonSeparators(res)
+    next()
+  })
   app.use(express.json())
 
   if (corsOrigin) {

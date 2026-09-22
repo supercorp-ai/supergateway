@@ -8,6 +8,9 @@ import { enableFakeTimers } from './helpers/fake-timers.js'
 // Keep the real gateway and session counter. Control only HTTP/SDK/process
 // boundaries so both response events and the idle deadline are deterministic.
 test('stateful response completion releases once and cleanup cancels session timers', async (t) => {
+  const settleMicrotasks = async () => {
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+  }
   type Handler = (req: any, res: Response) => Promise<void>
   const routes = new Map<string, Handler>()
   const app = {
@@ -47,7 +50,10 @@ test('stateful response completion releases once and cleanup cancels session tim
   class Child extends EventEmitter {
     stdout = new EventEmitter()
     stderr = new EventEmitter()
-    stdin = Object.assign(new EventEmitter(), { write() {} })
+    writes: string[] = []
+    stdin = Object.assign(new EventEmitter(), {
+      write: (value: string) => this.writes.push(value),
+    })
     kills = 0
     kill() {
       this.kills++
@@ -61,7 +67,9 @@ test('stateful response completion releases once and cleanup cancels session tim
     sessionId?: string
     onclose?: () => void
     onerror?: (error: Error) => void
+    onmessage?: (message: any) => void
     closes = 0
+    sent: any[] = []
     constructor(
       public options: {
         sessionIdGenerator: () => string
@@ -83,6 +91,9 @@ test('stateful response completion releases once and cleanup cancels session tim
     async close() {
       this.closes++
       this.onclose?.()
+    }
+    async send(message: any) {
+      this.sent.push(message)
     }
   }
   t.mock.module('express', {
@@ -156,6 +167,12 @@ test('stateful response completion releases once and cleanup cancels session tim
   t.mock.timers.tick(49)
   const activeGet = await request('GET', session)
   const concurrentPost = await request('POST', session)
+  t.mock.timers.tick(20_000)
+  assert.equal(
+    transports[0].sent.length,
+    0,
+    'a long-running POST must not be interrupted by idle liveness probes',
+  )
   concurrentPost.emit('finish')
   concurrentPost.emit('close')
   assert.equal(
@@ -170,6 +187,17 @@ test('stateful response completion releases once and cleanup cancels session tim
     'the outstanding GET keeps the session active',
   )
   assert.equal(children[0].kills, 0, 'active work keeps its child alive')
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  const ping = transports[0].sent.at(-1)
+  assert.equal(ping?.method, 'ping')
+  transports[0].onmessage!({ jsonrpc: '2.0', id: ping.id, result: {} })
+  assert.equal(
+    children[0].writes.some((value) => value.includes(ping.id)),
+    false,
+    'the liveness reply must not be forwarded to the stdio child',
+  )
+  assert.equal(children[0].kills, 0)
   activeGet.emit('close')
   activeGet.emit('finish')
   assert.deepEqual(
@@ -296,4 +324,30 @@ test('stateful response completion releases once and cleanup cancels session tim
   assert.equal(transports[4].closes, 1)
   assert.equal(clear.mock.callCount(), clears)
   assert.equal(decrement.mock.callCount(), decrements)
+
+  beforeSession = false
+  const staleInitial = await request('POST')
+  const staleSession = transports[5].sessionId!
+  staleInitial.emit('finish')
+  const staleGet = await request('GET', staleSession)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 1)
+  transports[5].onmessage!({
+    jsonrpc: '2.0',
+    id: transports[5].sent[0].id,
+    result: {},
+  })
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 2)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 3)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].closes, 1)
+  assert.equal(children[5].kills, 1)
+  assert.equal((await request('GET', staleSession)).code, 404)
+  staleGet.emit('close')
 })

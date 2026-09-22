@@ -62,10 +62,10 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     [{ logger: b.logger, drainStdin: true }],
   )
   let next = 0
-  b.middleware[1]({ path: '/messages' }, new Response(), () => next++)
+  b.middleware[2]({ path: '/messages' }, new Response(), () => next++)
   // map: raw-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 0, next: 1 })
-  b.middleware[1]({ path: '/other' }, new Response(), () => next++)
+  b.middleware[2]({ path: '/other' }, new Response(), () => next++)
   // map: json-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 1, next: 2 })
   for (const path of ['/health', '/ready']) {

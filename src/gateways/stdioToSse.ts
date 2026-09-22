@@ -12,6 +12,7 @@ import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
+import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -97,6 +98,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
   > = {}
 
   const app = express()
+  app.use((_req, res, next) => {
+    escapeSseJsonSeparators(res)
+    next()
+  })
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))

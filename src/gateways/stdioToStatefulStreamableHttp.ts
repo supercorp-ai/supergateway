@@ -14,6 +14,8 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
+import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
+import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
@@ -78,6 +80,10 @@ export async function stdioToStatefulStreamableHttp(
   })
 
   const app = express()
+  app.use((_req, res, next) => {
+    escapeSseJsonSeparators(res)
+    next()
+  })
   app.use(express.json())
 
   if (corsOrigin) {
@@ -106,6 +112,7 @@ export async function stdioToStatefulStreamableHttp(
   // ordinary HTTP header, before any session existed. A Map has no such
   // inheritance, which fixes the class rather than the names.
   const transports = new Map<string, StreamableHTTPServerTransport>()
+  const liveness = new Map<string, SessionLivenessProbe>()
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -145,11 +152,13 @@ export async function stdioToStatefulStreamableHttp(
     if (sessionId && transports.has(sessionId)) {
       // Reuse existing transport
       transport = transports.get(sessionId)!
+      liveness.get(sessionId)?.requestStarted()
       // Increment session access count
       sessionCounter?.inc(sessionId, 'POST request for existing session')
     } else if (!sessionId && isInitializeRequest(req.body)) {
       // New initialization request
       let initializedSessionId: string | undefined
+      let probe: SessionLivenessProbe | undefined
 
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
@@ -160,12 +169,31 @@ export async function stdioToStatefulStreamableHttp(
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           initializedSessionId = sessionId
+          if (probe) liveness.set(sessionId, probe)
           // Store the transport by session ID
           transports.set(sessionId, transport)
           // Initialize session access count
           sessionCounter?.inc(sessionId, 'session initialization')
         },
       })
+      if (sessionTimeout) {
+        // Bound probe traffic without adding a new option. sessionTimeout is
+        // still the minimum inactivity period before a session can be reaped.
+        probe = new SessionLivenessProbe(
+          Math.max(5_000, Math.min(sessionTimeout, 300_000)),
+          Math.max(5_000, Math.min(sessionTimeout, 30_000)),
+          sessionTimeout,
+          async (id) => {
+            await transport.send({ jsonrpc: '2.0', id, method: 'ping' })
+          },
+          () => {
+            transport.close().catch((error) => {
+              logger.error('Failed to close stale session:', error)
+            })
+          },
+          logger,
+        )
+      }
       await server.connect(transport)
       const child = spawn(stdioCmd, children.spawnOptions)
       const stop = children.own(child)
@@ -175,9 +203,11 @@ export async function stdioToStatefulStreamableHttp(
         if (childStopped) return
         childStopped = true
         if (initializedSessionId) {
+          liveness.delete(initializedSessionId)
           sessionCounter?.clear(initializedSessionId, false, reason)
           transports.delete(initializedSessionId)
         }
+        probe?.close()
         void stop()
       }
       let childFailed = false
@@ -267,6 +297,7 @@ export async function stdioToStatefulStreamableHttp(
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
+        if (probe?.accept(msg)) return
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
@@ -331,6 +362,7 @@ export async function stdioToStatefulStreamableHttp(
         responseEnded = true
         logger.info(`Response ${event}`, transport.sessionId)
         sessionCounter?.dec(transport.sessionId, `POST response ${event}`)
+        liveness.get(transport.sessionId)?.requestFinished()
       }
     }
 
@@ -360,6 +392,14 @@ export async function stdioToStatefulStreamableHttp(
 
     // Increment session access count
     sessionCounter?.inc(sessionId, `${req.method} request for existing session`)
+
+    if (req.method === 'GET') {
+      const probe = liveness.get(sessionId)
+      if (probe?.start()) {
+        res.once('finish', () => probe.stop())
+        res.once('close', () => probe.stop())
+      }
+    }
 
     // Decrement session access count when response ends
     let responseEnded = false

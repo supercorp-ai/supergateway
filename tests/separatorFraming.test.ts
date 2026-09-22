@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { launchGateway, unusedPort } from './helpers/gateway-process.js'
 
 /**
@@ -24,6 +26,34 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
  * keep that change honest if it lands.
  */
 const SEPARATORS = 'before\u2028middle\u2029after'
+
+test(
+  'the SDK client receives the original separator characters through the gateway',
+  { timeout: 60000 },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/clients/battery-peer.mjs',
+      '--port',
+      String(port),
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+    ])
+    await gateway.ready()
+    const client = new Client({ name: 'separator-client', version: '1.0.0' })
+    t.after(() => client.close())
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+      ),
+    )
+    const result = await client.callTool({ name: 'separators', arguments: {} })
+    assert.notEqual(result.isError, true)
+    assert.deepEqual(result.content, [{ type: 'text', text: SEPARATORS }])
+  },
+)
 
 async function callSeparators(t: Parameters<typeof launchGateway>[0]) {
   const port = await unusedPort()

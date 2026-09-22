@@ -132,7 +132,6 @@ test('stateful response completion releases once and cleanup cancels session tim
     headers: {},
     sessionTimeout: 50,
   })
-  const keepAliveCalls: Array<[boolean, number]> = []
   const request = async (method: string, session?: string) => {
     const response = new Response()
     await routes.get(`${method} /mcp`)!(
@@ -140,11 +139,6 @@ test('stateful response completion releases once and cleanup cancels session tim
         method,
         headers: session ? { 'mcp-session-id': session } : {},
         body: initialize(),
-        socket: {
-          setKeepAlive(enabled: boolean, initialDelay: number) {
-            keepAliveCalls.push([enabled, initialDelay])
-          },
-        },
       },
       response,
     )
@@ -161,9 +155,7 @@ test('stateful response completion releases once and cleanup cancels session tim
   )
   t.mock.timers.tick(49)
   const activeGet = await request('GET', session)
-  assert.deepEqual(keepAliveCalls, [[true, 60_000]])
   const concurrentPost = await request('POST', session)
-  assert.deepEqual(keepAliveCalls, [[true, 60_000]])
   concurrentPost.emit('finish')
   concurrentPost.emit('close')
   assert.equal(
@@ -226,12 +218,18 @@ test('stateful response completion releases once and cleanup cancels session tim
   const closeSession = transports[1].sessionId!
   closing.emit('finish')
   closing.emit('close')
+  // Even if a transport loses its public sessionId before notifying onclose,
+  // cleanup must use the identity captured at initialization.
+  transports[1].sessionId = undefined
   await transports[1].close()
   assert.deepEqual(clear.mock.calls.at(-1)!.arguments, [
     closeSession,
     false,
     'transport being closed',
   ])
+  assert.ok(
+    logs.includes(`StreamableHttp connection closed (session ${closeSession})`),
+  )
   assert.equal(children[1].kills, 1)
   t.mock.timers.tick(100)
   assert.equal(
@@ -274,17 +272,28 @@ test('stateful response completion releases once and cleanup cancels session tim
   beforeSession = true
   const clears = clear.mock.callCount(),
     decrements = decrement.mock.callCount()
-  const incomplete = await request('POST')
+  await request('POST')
   assert.equal(transports[3].sessionId, undefined)
+  await transports[3].close()
+  assert.equal(
+    children[3].kills,
+    1,
+    'close must stop a child without a session ID',
+  )
+  assert.equal(clear.mock.callCount(), clears)
   assert.equal(decrement.mock.callCount(), decrements)
-  children[3].stdin.emit(
+
+  const incomplete = await request('POST')
+  assert.equal(transports[4].sessionId, undefined)
+  assert.equal(decrement.mock.callCount(), decrements)
+  children[4].stdin.emit(
     'error',
     new Error('spawn failed before initialization'),
   )
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.equal(incomplete.destroyed, true)
-  assert.equal(children[3].kills, 1)
-  assert.equal(transports[3].closes, 1)
+  assert.equal(children[4].kills, 1)
+  assert.equal(transports[4].closes, 1)
   assert.equal(clear.mock.callCount(), clears)
   assert.equal(decrement.mock.callCount(), decrements)
 })

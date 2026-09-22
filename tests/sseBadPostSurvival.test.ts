@@ -1,10 +1,53 @@
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
+import { faultControl } from './helpers/fault-control.js'
 import {
   launchGateway,
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
+
+async function connect(
+  t: TestContext,
+  port: number,
+  gateway: ReturnType<typeof launchGateway>,
+) {
+  const abort = new AbortController()
+  t.after(() => abort.abort())
+  const opened = await fetch(`http://127.0.0.1:${port}/sse`, {
+    headers: { accept: 'text/event-stream' },
+    signal: abort.signal,
+  })
+  assert.equal(opened.status, 200)
+  const frames: string[] = []
+  const reader = opened.body!.getReader()
+  const decoder = new TextDecoder()
+  void (async () => {
+    let buffer = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines)
+        if (line.startsWith('data:')) frames.push(line.slice(5).trim())
+    }
+  })().catch(() => {})
+  await gateway.waitFor(
+    () => frames.some((frame) => frame.startsWith('/message')),
+    'announce an SSE message endpoint',
+  )
+  const endpoint = frames.find((frame) => frame.startsWith('/message'))!
+  const post = (body: string | Buffer, headers: Record<string, string>) =>
+    fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(10000),
+    })
+  return { frames, post }
+}
 
 // #190: the SDK reports errors on individual POSTs through `onerror`. Those
 // requests must fail without closing the SSE connection they were sent to.
@@ -49,40 +92,7 @@ for (const bad of [
       ])
       await gateway.ready()
 
-      const abort = new AbortController()
-      t.after(() => abort.abort())
-      const opened = await fetch(`http://127.0.0.1:${port}/sse`, {
-        headers: { accept: 'text/event-stream' },
-        signal: abort.signal,
-      })
-      assert.equal(opened.status, 200)
-      const frames: string[] = []
-      const reader = opened.body!.getReader()
-      const decoder = new TextDecoder()
-      void (async () => {
-        let buffer = ''
-        for (;;) {
-          const { value, done } = await reader.read()
-          if (done) return
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-          for (const line of lines)
-            if (line.startsWith('data:')) frames.push(line.slice(5).trim())
-        }
-      })().catch(() => {})
-      await gateway.waitFor(
-        () => frames.some((frame) => frame.startsWith('/message')),
-        'announce an SSE message endpoint',
-      )
-      const endpoint = frames.find((frame) => frame.startsWith('/message'))!
-      const post = (body: string | Buffer, headers: Record<string, string>) =>
-        fetch(`http://127.0.0.1:${port}${endpoint}`, {
-          method: 'POST',
-          headers,
-          body,
-          signal: AbortSignal.timeout(10000),
-        })
+      const { frames, post } = await connect(t, port, gateway)
 
       const first = await post(
         JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
@@ -112,3 +122,48 @@ for (const bad of [
     },
   )
 }
+
+test(
+  'a rejected POST does not cancel another call already in flight on the SSE session',
+  { timeout: 30000 },
+  async (t) => {
+    const control = await faultControl(t)
+    const port = await unusedPort()
+    const gateway = launchGateway(
+      t,
+      ['--stdio', 'node tests/helpers/fault-peer.mjs', '--port', String(port)],
+      { FAULT_CONTROL: control.url },
+    )
+    await gateway.ready()
+    const { frames, post } = await connect(t, port, gateway)
+    const valid = await post(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 71,
+        method: 'tools/call',
+        params: { name: 'hold', arguments: {} },
+      }),
+      { 'content-type': 'application/json' },
+    )
+    assert.equal(valid.status, 202)
+    await valid.text()
+    const held = await control.wait('hold')
+    assert.equal(
+      frames.some((frame) => frame.includes('"id":71')),
+      false,
+      'the valid call is still in flight when the bad POST arrives',
+    )
+
+    const rejected = await post('{"hello":"world"}', {
+      'content-type': 'application/json',
+    })
+    assert.equal(rejected.status, 400)
+    await rejected.text()
+    held.response.end('release')
+    await gateway.waitFor(
+      () => frames.some((frame) => frame.includes('"id":71')),
+      'deliver the in-flight reply on the original SSE stream',
+    )
+    assert.equal(gateway.child.exitCode, null)
+  },
+)

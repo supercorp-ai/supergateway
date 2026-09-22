@@ -149,6 +149,7 @@ export async function stdioToStatefulStreamableHttp(
       sessionCounter?.inc(sessionId, 'POST request for existing session')
     } else if (!sessionId && isInitializeRequest(req.body)) {
       // New initialization request
+      let initializedSessionId: string | undefined
 
       const server = new Server(
         { name: 'supergateway', version: getVersion() },
@@ -158,6 +159,7 @@ export async function stdioToStatefulStreamableHttp(
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
+          initializedSessionId = sessionId
           // Store the transport by session ID
           transports.set(sessionId, transport)
           // Initialize session access count
@@ -172,9 +174,9 @@ export async function stdioToStatefulStreamableHttp(
       const stopChild = (reason: string) => {
         if (childStopped) return
         childStopped = true
-        if (transport.sessionId) {
-          sessionCounter?.clear(transport.sessionId, false, reason)
-          transports.delete(transport.sessionId)
+        if (initializedSessionId) {
+          sessionCounter?.clear(initializedSessionId, false, reason)
+          transports.delete(initializedSessionId)
         }
         void stop()
       }
@@ -271,12 +273,17 @@ export async function stdioToStatefulStreamableHttp(
       }
 
       transport.onclose = () => {
-        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
+        logger.info(
+          `StreamableHttp connection closed (session ${initializedSessionId ?? '(uninitialized)'})`,
+        )
         stopChild('transport being closed')
       }
 
       transport.onerror = (err) => {
-        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
+        logger.error(
+          `StreamableHttp error (session ${initializedSessionId ?? '(uninitialized)'}):`,
+          err,
+        )
         // A rejected HTTP request is recoverable; actual transport closure
         // and child failure have their own cleanup paths.
       }
@@ -349,14 +356,6 @@ export async function stdioToStatefulStreamableHttp(
       // retrying a dead id. See the POST handler above for the spec citation.
       res.status(404).send('Session not found')
       return
-    }
-
-    // A long-lived GET can keep the access count above zero indefinitely if
-    // its peer disappears without a clean TCP close. TCP keepalive lets the OS
-    // surface that dead connection so the normal response-close path can arm
-    // the session's idle timer. It does not time out healthy SSE streams.
-    if (req.method === 'GET' && sessionCounter) {
-      req.socket?.setKeepAlive(true, 60_000)
     }
 
     // Increment session access count

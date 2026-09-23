@@ -79,12 +79,24 @@ test('SSE connect races with disconnect and shutdown without spawning children',
 
   await b.request('GET', '/sse')
   const stdinId = b.transports.at(-1)!.sessionId!
+  const endedTransport = b.transports.at(-1)!
+  b.children
+    .at(-1)!
+    .stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":3,"result":{}}\n'))
+  assert.equal(endedTransport.sent.length, 1)
   const stdinError = Error('broken pipe')
   b.children.at(-1)!.stdin.emit('error', stdinError)
   assert.deepEqual(b.errors.at(-1), [
     `Child stdin failure (session ${stdinId}):`,
     stdinError,
   ])
+  // A buffered reply can arrive after the session has been removed. It must
+  // never reach a closed SSE transport.
+  const sentBeforeLateReply = endedTransport.sent.length
+  b.children
+    .at(-1)!
+    .stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":4,"result":{}}\n'))
+  assert.equal(endedTransport.sent.length, sentBeforeLateReply)
 
   b.onConnect(async () => b.signals[0].cleanup())
   await b.request('GET', '/sse')

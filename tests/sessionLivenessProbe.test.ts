@@ -192,7 +192,7 @@ test('a POST already in flight when GET starts delays the first probe', async (t
   enableFakeTimers(t)
   const sent: string[] = []
   const probe = new SessionLivenessProbe(
-    100,
+    300_000,
     40,
     100,
     async (id) => {
@@ -203,12 +203,74 @@ test('a POST already in flight when GET starts delays the first probe', async (t
   )
   probe.requestStarted()
   probe.start()
-  t.mock.timers.tick(500)
+  t.mock.timers.tick(5_000)
   assert.deepEqual(sent, [])
   probe.requestFinished()
   probe.requestFinished() // A duplicate completion cannot underflow the count.
-  t.mock.timers.tick(100)
+  t.mock.timers.tick(4_999)
+  assert.equal(sent.length, 0)
+  t.mock.timers.tick(1)
   assert.equal(sent.length, 1)
+})
+
+test('a long default interval still establishes ping support shortly after GET opens', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  const probe = new SessionLivenessProbe(
+    300_000,
+    30_000,
+    1_800_000,
+    async (id) => {
+      sent.push(id)
+    },
+    () => {},
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(4_999)
+  assert.equal(sent.length, 0)
+  t.mock.timers.tick(1)
+  await Promise.resolve()
+  assert.equal(sent.length, 1)
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  t.mock.timers.tick(299_999)
+  assert.equal(
+    sent.length,
+    1,
+    'later pings retain the bounded regular interval',
+  )
+  t.mock.timers.tick(1)
+  assert.equal(sent.length, 2)
+})
+
+test('a ping reply remains proof of support across GET reconnects', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    async (id) => {
+      sent.push(id)
+    },
+    () => stale++,
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  probe.stop()
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  assert.equal(sent.length, 2)
+  t.mock.timers.tick(40)
+  await Promise.resolve()
+  assert.equal(sent.length, 3)
+  t.mock.timers.tick(40)
+  assert.equal(stale, 1, 'a vanished client is reaped without a new pong')
 })
 
 test('only replies to gateway pings count as proof of life', async (t) => {

@@ -58,6 +58,63 @@ test(
 )
 
 test(
+  'the default session timeout probes an SDK client shortly after its GET opens',
+  { timeout: 30000 },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/helpers/session-state-peer.mjs',
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+      '--port',
+      String(port),
+    ])
+    await gateway.ready()
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+    )
+    const client = new Client({
+      name: 'default-liveness-test',
+      version: '1.0.0',
+    })
+    t.after(() => client.close())
+    await client.connect(transport)
+    const first = await client.callTool({ name: 'step', arguments: {} })
+    const firstState = JSON.parse(
+      (first.content[0] as { text: string }).text,
+    ) as {
+      pid: number
+      calls: number
+    }
+    await gateway.waitFor(
+      () => gateway.output().includes('GET request for existing session'),
+      'open the SDK client’s standalone GET stream',
+    )
+    const postsBeforePing = gateway
+      .output()
+      .split('POST request for existing session').length
+    const deadline = Date.now() + 15_000
+    while (!gateway.output().includes('Sending session liveness ping')) {
+      assert.ok(Date.now() < deadline, gateway.output())
+      await delay(100)
+    }
+    await gateway.waitFor(
+      () =>
+        gateway.output().split('POST request for existing session').length >
+        postsBeforePing,
+      'receive the SDK client’s ping reply',
+    )
+    const second = await client.callTool({ name: 'step', arguments: {} })
+    assert.deepEqual(JSON.parse((second.content[0] as { text: string }).text), {
+      pid: firstState.pid,
+      calls: 2,
+    })
+  },
+)
+
+test(
   'an idle client that never answers server pings retains its existing session',
   { timeout: 30000 },
   async (t) => {

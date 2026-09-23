@@ -16,8 +16,11 @@ export class SessionLivenessProbe {
   private revision = 0
   private missed = 0
   private activeRequests = 0
+  // A reply proves this logical session's client supports pings even if its
+  // GET stream later reconnects.
   private answered = false
   private staleEligible = false
+  private firstProbe = false
 
   constructor(
     private readonly intervalMs: number,
@@ -34,7 +37,9 @@ export class SessionLivenessProbe {
     if (this.active || this.closed) return false
     this.active = true
     this.missed = 0
-    this.answered = false
+    // Establish ping support soon after each GET opens. A client may disappear
+    // before the regular interval (five minutes with the default timeout).
+    this.firstProbe = true
     this.resetGrace()
     if (!this.activeRequests) this.schedule()
     return true
@@ -93,9 +98,12 @@ export class SessionLivenessProbe {
     this.revision++
     clearTimeout(this.timer)
     const revision = this.revision
-    this.timer = setTimeout(() => {
-      if (this.active && this.revision === revision) this.probe()
-    }, this.intervalMs)
+    this.timer = setTimeout(
+      () => {
+        if (this.active && this.revision === revision) this.probe()
+      },
+      this.firstProbe ? Math.min(this.intervalMs, 5_000) : this.intervalMs,
+    )
     this.timer.unref()
   }
 
@@ -109,6 +117,7 @@ export class SessionLivenessProbe {
   }
 
   private probe(): void {
+    this.firstProbe = false
     const id = `${this.idPrefix}${++this.nextId}`
     const revision = ++this.revision
     this.logger.info('Sending session liveness ping')

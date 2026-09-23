@@ -1,17 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initialize } from './helpers/gateway-process.js'
-import { enableFakeTimers } from './helpers/fake-timers.js'
 
-test('Streamable HTTP reconnect retries with bounded backoff after SDK close', async (t) => {
-  enableFakeTimers(t)
+test('a failed first connection and concurrent fallback initialization keep one upstream client', async (t) => {
   let stdio: any
   let attempts = 0
-  const remotes: any[] = []
+  let releaseConnect!: () => void
+  const connectGate = new Promise<void>((resolve) => {
+    releaseConnect = resolve
+  })
+  const writes: string[] = []
   class Client {
     async connect() {
       attempts++
-      if (attempts === 2 || attempts === 3) throw Error('upstream unavailable')
+      if (attempts === 1) throw new TypeError('fetch failed')
+      await connectGate
       await this.request(initialize(0))
     }
     async request(message: any) {
@@ -24,9 +27,6 @@ test('Streamable HTTP reconnect retries with bounded backoff after SDK close', a
   class Remote {
     onclose?: () => void
     onerror?: (error: Error) => void
-    constructor() {
-      remotes.push(this)
-    }
   }
   t.mock.module('@modelcontextprotocol/sdk/client/index.js', {
     namedExports: { Client },
@@ -50,44 +50,39 @@ test('Streamable HTTP reconnect retries with bounded backoff after SDK close', a
   t.mock.module(new URL('../src/lib/onSignals.js', import.meta.url).href, {
     namedExports: { onSignals() {} },
   })
-  t.mock.method(process.stdout, 'write', () => true)
-  let closeDuringConnectedLog = true
-  const logger = {
-    info(message: string) {
-      if (message === 'Streamable HTTP connected' && closeDuringConnectedLog) {
-        closeDuringConnectedLog = false
-        // Close between the connect promise's success and finally handlers.
-        // Both can ask for a retry; only one timer should survive.
-        remotes[0].onclose?.()
-      }
-    },
-    error() {},
-  }
+  t.mock.method(process.stdout, 'write', (chunk: any) => {
+    writes.push(String(chunk))
+    return true
+  })
+  const logger = { info() {}, error() {} }
   const { streamableHttpToStdio } = await import(
     '../src/gateways/streamableHttpToStdio.js'
   )
   await streamableHttpToStdio({
-    streamableHttpUrl: 'http://127.0.0.1:19000/mcp',
+    streamableHttpUrl: 'http://127.0.0.1:19001/mcp',
     logger,
     headers: {},
   })
-  await stdio.onmessage(initialize(1))
+
+  const list = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/list' })
+  await stdio.onmessage(list(1))
+  assert.ok(JSON.parse(writes.at(-1)!).error)
   assert.equal(attempts, 1)
-  const flush = () => new Promise((resolve) => setImmediate(resolve))
-  t.mock.timers.tick(999)
-  assert.equal(attempts, 1)
-  t.mock.timers.tick(1)
-  await flush()
-  assert.equal(attempts, 2)
-  t.mock.timers.tick(1999)
-  assert.equal(attempts, 2)
-  t.mock.timers.tick(1)
-  await flush()
-  assert.equal(attempts, 3)
-  t.mock.timers.tick(3999)
-  assert.equal(attempts, 3)
-  t.mock.timers.tick(1)
-  await flush()
-  assert.equal(attempts, 4)
-  assert.equal(remotes.length, 4)
+
+  const first = stdio.onmessage(list(2))
+  const second = stdio.onmessage(initialize(3))
+  releaseConnect()
+  await Promise.all([first, second])
+  assert.equal(
+    attempts,
+    2,
+    'the pipelined initialize shares the fallback connect',
+  )
+  assert.deepEqual(
+    writes
+      .slice(-2)
+      .map((line) => JSON.parse(line).id)
+      .sort(),
+    [2, 3],
+  )
 })

@@ -59,11 +59,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
   const invalidateUpstream = (transport: StreamableHTTPClientTransport) => {
     if (mcpTransport !== transport) return
-    const stale = mcpClient
+    // The client and transport are installed and cleared together.
+    const stale = mcpClient!
     mcpClient = undefined
     mcpTransport = undefined
     void Promise.resolve()
-      .then(() => stale?.close())
+      .then(() => stale.close())
       .catch((err) =>
         logger.error('Failed to close stale Streamable HTTP client:', err),
       )
@@ -71,7 +72,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   }
 
   const scheduleReconnect = () => {
-    if (reconnectTimer || connecting || mcpClient || !hasConnected) return
+    if (reconnectTimer || !hasConnected) return
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
       void connectUpstream().catch((err) => {
@@ -82,7 +83,6 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   }
 
   const connectUpstream = (): Promise<unknown> => {
-    if (mcpClient) return Promise.resolve(undefined)
     if (connecting) return connecting
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)

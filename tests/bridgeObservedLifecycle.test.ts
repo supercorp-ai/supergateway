@@ -15,6 +15,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       writes: string[] = []
     let stdio: any
     let nextRequestFailure: unknown
+    let probeDuringConnect = false
     class Client {
       constructor(
         public info: any,
@@ -23,6 +24,8 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         clients.push(this)
       }
       async connect() {
+        if (probeDuringConnect)
+          await this.request({ jsonrpc: '2.0', id: 0, method: 'ping' })
         await this.request({
           ...initialize(0),
           params: {
@@ -241,6 +244,14 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         'SDK retry exhaustion also rebuilds the client',
       )
       assert.deepEqual(codes, [])
+      remotes[1].onerror(
+        new Error('Maximum reconnection attempts (2) exceeded.'),
+      )
+      assert.equal(
+        clients.length,
+        3,
+        'a stale transport cannot evict its successor',
+      )
       for (const [status, prefix] of [
         ['404', ''],
         ['503', 'MCP error -32000: '],
@@ -271,6 +282,33 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       })
       assert.ok(JSON.parse(writes.at(-1)!).error)
       assert.equal(clients.length, clientCount)
+      nextRequestFailure = new TypeError('ordinary upstream type error')
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 71,
+        method: 'tools/list',
+      })
+      assert.ok(JSON.parse(writes.at(-1)!).error)
+      assert.equal(clients.length, clientCount)
+
+      probeDuringConnect = true
+      remotes.at(-1).onclose()
+      const beforeProbe = requests.length
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 72,
+        method: 'tools/list',
+      })
+      assert.deepEqual(requests[beforeProbe], {
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'ping',
+      })
+      remotes.at(-1).onclose()
+      const beforeRepeatInitialize = clients.length
+      await stdio.onmessage(initialize(73))
+      assert.equal(clients.length, beforeRepeatInitialize + 1)
+      assert.equal(JSON.parse(writes.at(-1)!).id, 73)
     }
     output.mock.restore()
   })

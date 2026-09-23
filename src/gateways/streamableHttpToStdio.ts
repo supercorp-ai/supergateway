@@ -98,20 +98,27 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       }
     }
     transport.onclose = () => {
+      // An upstream that rejects the very first handshake is still a startup
+      // failure. Recovery applies only after stdio has a working MCP session.
+      if (!hasConnected) {
+        logger.error('Streamable HTTP connection closed')
+        process.exit(1)
+      }
       if (mcpTransport === transport) {
         logger.error('Streamable HTTP connection closed')
         invalidateUpstream(transport)
       }
     }
-    const client = initializeMessage
-      ? newInitializeMcpClient({ message: initializeMessage })
+    const initForConnection = initializeMessage
+    const client = initForConnection
+      ? newInitializeMcpClient({ message: initForConnection })
       : new Client(
           { name: 'supergateway', version: getVersion() },
           { capabilities: {} },
         )
     let initializeResult: unknown
     const originalRequest = client.request
-    if (initializeMessage) {
+    if (initForConnection) {
       client.request = async function (
         possibleInitRequestMessage,
         ...restArgs
@@ -119,12 +126,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         if (
           InitializeRequestSchema.safeParse(possibleInitRequestMessage)
             .success &&
-          initializeMessage?.params?.protocolVersion
+          initForConnection.params?.protocolVersion
         ) {
           const params = possibleInitRequestMessage.params as {
             protocolVersion?: unknown
           }
-          params.protocolVersion = initializeMessage.params.protocolVersion
+          params.protocolVersion = initForConnection.params.protocolVersion
         }
         initializeResult = await originalRequest.apply(this, [
           possibleInitRequestMessage,
@@ -188,8 +195,21 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       let result
 
       try {
+        if (
+          message.method === 'initialize' &&
+          message.params !== undefined &&
+          !InitializeRequestSchema.safeParse(message).success
+        ) {
+          throw Object.assign(new Error('Invalid initialize parameters'), {
+            code: -32602,
+          })
+        }
         if (!mcpClient) {
-          if (message.method === 'initialize') {
+          if (
+            message.method === 'initialize' &&
+            !initializeMessage &&
+            !connecting
+          ) {
             initializeMessage = message
             result = await connectUpstream()
           } else {

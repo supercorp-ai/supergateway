@@ -8,6 +8,9 @@ import { enableFakeTimers } from './helpers/fake-timers.js'
 // Keep the real gateway and session counter. Control only HTTP/SDK/process
 // boundaries so both response events and the idle deadline are deterministic.
 test('stateful response completion releases once and cleanup cancels session timers', async (t) => {
+  const settleMicrotasks = async () => {
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+  }
   type Handler = (req: any, res: Response) => Promise<void>
   const routes = new Map<string, Handler>()
   const app = {
@@ -47,7 +50,10 @@ test('stateful response completion releases once and cleanup cancels session tim
   class Child extends EventEmitter {
     stdout = new EventEmitter()
     stderr = new EventEmitter()
-    stdin = Object.assign(new EventEmitter(), { write() {} })
+    writes: string[] = []
+    stdin = Object.assign(new EventEmitter(), {
+      write: (value: string) => this.writes.push(value),
+    })
     kills = 0
     kill() {
       this.kills++
@@ -61,7 +67,10 @@ test('stateful response completion releases once and cleanup cancels session tim
     sessionId?: string
     onclose?: () => void
     onerror?: (error: Error) => void
+    onmessage?: (message: any) => void
     closes = 0
+    closeError?: Error
+    sent: any[] = []
     constructor(
       public options: {
         sessionIdGenerator: () => string
@@ -82,7 +91,11 @@ test('stateful response completion releases once and cleanup cancels session tim
     }
     async close() {
       this.closes++
+      if (this.closeError) throw this.closeError
       this.onclose?.()
+    }
+    async send(message: any) {
+      this.sent.push(message)
     }
   }
   t.mock.module('express', {
@@ -120,13 +133,21 @@ test('stateful response completion releases once and cleanup cancels session tim
   // Spies preserve the real methods, including their state transitions.
   const decrement = t.mock.method(SessionAccessCounter.prototype, 'dec')
   const clear = t.mock.method(SessionAccessCounter.prototype, 'clear')
-  const logs: string[] = []
+  const logs: string[] = [],
+    errors: unknown[] = [],
+    errorMessages: string[] = []
   enableFakeTimers(t)
   await stdioToStatefulStreamableHttp({
     stdioCmd: 'controlled-peer',
     port: 0,
     streamableHttpPath: '/mcp',
-    logger: { info: (message) => logs.push(String(message)), error() {} },
+    logger: {
+      info: (message) => logs.push(String(message)),
+      error: (message, error) => {
+        errorMessages.push(String(message))
+        errors.push(error)
+      },
+    },
     corsOrigin: false,
     healthEndpoints: [],
     headers: {},
@@ -156,6 +177,12 @@ test('stateful response completion releases once and cleanup cancels session tim
   t.mock.timers.tick(49)
   const activeGet = await request('GET', session)
   const concurrentPost = await request('POST', session)
+  t.mock.timers.tick(20_000)
+  assert.equal(
+    transports[0].sent.length,
+    0,
+    'a long-running POST must not be interrupted by idle liveness probes',
+  )
   concurrentPost.emit('finish')
   concurrentPost.emit('close')
   assert.equal(
@@ -170,6 +197,17 @@ test('stateful response completion releases once and cleanup cancels session tim
     'the outstanding GET keeps the session active',
   )
   assert.equal(children[0].kills, 0, 'active work keeps its child alive')
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  const ping = transports[0].sent.at(-1)
+  assert.equal(ping?.method, 'ping')
+  transports[0].onmessage!({ jsonrpc: '2.0', id: ping.id, result: {} })
+  assert.equal(
+    children[0].writes.some((value) => value.includes(ping.id)),
+    false,
+    'the liveness reply must not be forwarded to the stdio child',
+  )
+  assert.equal(children[0].kills, 0)
   activeGet.emit('close')
   activeGet.emit('finish')
   assert.deepEqual(
@@ -218,12 +256,18 @@ test('stateful response completion releases once and cleanup cancels session tim
   const closeSession = transports[1].sessionId!
   closing.emit('finish')
   closing.emit('close')
+  // Even if a transport loses its public sessionId before notifying onclose,
+  // cleanup must use the identity captured at initialization.
+  transports[1].sessionId = undefined
   await transports[1].close()
   assert.deepEqual(clear.mock.calls.at(-1)!.arguments, [
     closeSession,
     false,
     'transport being closed',
   ])
+  assert.ok(
+    logs.includes(`StreamableHttp connection closed (session ${closeSession})`),
+  )
   assert.equal(children[1].kills, 1)
   t.mock.timers.tick(100)
   assert.equal(
@@ -266,17 +310,85 @@ test('stateful response completion releases once and cleanup cancels session tim
   beforeSession = true
   const clears = clear.mock.callCount(),
     decrements = decrement.mock.callCount()
-  const incomplete = await request('POST')
+  await request('POST')
   assert.equal(transports[3].sessionId, undefined)
+  const prematureError = new Error('request failed before initialization')
+  transports[3].onerror!(prematureError)
+  assert.equal(errors.at(-1), prematureError)
+  assert.ok(errorMessages.at(-1)?.includes('(uninitialized)'))
+  assert.equal(children[3].kills, 0)
+  await transports[3].close()
+  assert.equal(
+    children[3].kills,
+    1,
+    'close must stop a child without a session ID',
+  )
+  assert.equal(clear.mock.callCount(), clears)
   assert.equal(decrement.mock.callCount(), decrements)
-  children[3].stdin.emit(
+
+  const incomplete = await request('POST')
+  assert.equal(transports[4].sessionId, undefined)
+  assert.equal(decrement.mock.callCount(), decrements)
+  children[4].stdin.emit(
     'error',
     new Error('spawn failed before initialization'),
   )
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.equal(incomplete.destroyed, true)
-  assert.equal(children[3].kills, 1)
-  assert.equal(transports[3].closes, 1)
+  assert.equal(children[4].kills, 1)
+  assert.equal(transports[4].closes, 1)
   assert.equal(clear.mock.callCount(), clears)
   assert.equal(decrement.mock.callCount(), decrements)
+
+  beforeSession = false
+  const staleInitial = await request('POST')
+  const staleSession = transports[5].sessionId!
+  staleInitial.emit('finish')
+  const staleGet = await request('GET', staleSession)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 1)
+  transports[5].onmessage!({
+    jsonrpc: '2.0',
+    id: transports[5].sent[0].id,
+    result: {},
+  })
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 2)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].sent.length, 3)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[5].closes, 1)
+  assert.equal(children[5].kills, 1)
+  assert.equal((await request('GET', staleSession)).code, 404)
+  staleGet.emit('close')
+
+  // If the SDK rejects close, release the session and child anyway. Logging
+  // alone would keep the stale session mapped forever behind the proxy.
+  const rejectInitial = await request('POST')
+  const rejectSession = transports[6].sessionId!
+  rejectInitial.emit('finish')
+  const rejectGet = await request('GET', rejectSession)
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  transports[6].onmessage!({
+    jsonrpc: '2.0',
+    id: transports[6].sent[0].id,
+    result: {},
+  })
+  transports[6].closeError = new Error('SDK close failed')
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  t.mock.timers.tick(5_000)
+  await settleMicrotasks()
+  assert.equal(transports[6].closes, 1)
+  assert.equal(errors.at(-1), transports[6].closeError)
+  assert.equal(children[6].kills, 1)
+  assert.equal((await request('GET', rejectSession)).code, 404)
+  rejectGet.emit('close')
 })

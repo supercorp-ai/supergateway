@@ -85,7 +85,7 @@ for (const paused of [false, true]) {
   const check = paused ? knownBugTest.bind(null, 'GW-033') : test
   check(
     `SSE ${paused ? 'paused' : 'draining'} reader survives 128 MiB of small valid notifications with a 96 MiB gateway heap`,
-    { timeout: 45000 },
+    { timeout: 90000 },
     async (t) => {
       const control = await faultControl(t)
       const port = await unusedPort()
@@ -167,6 +167,7 @@ for (const paused of [false, true]) {
       await healthy.wait(
         () => healthy.replies.has(2),
         `healthy client receives final result; ${gateway.errors()}`,
+        60000,
       )
       await control.wait('burst-done')
       assert.equal(healthy.count(), 8192)

@@ -1,29 +1,82 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { launchGateway, unusedPort } from './helpers/gateway-process.js'
 
-/**
- * Issue #91 / GW-021: the bytes on the wire, measured rather than assumed.
- *
- * Two reporters saw a tool result arrive truncated with U+2028 visible at the
- * cut, and the issue sat for months without a mechanism established. PR #93
- * proposed `sanitizeJsonObject` as the fix; it corrupts values, so it matters a
- * great deal whether the gateway is the thing that is wrong.
- *
- * It is not. The gateway relays the separators raw and the reply is a single
- * well-formed `data:` line, because the SSE specification splits an event
- * stream on CR and LF and nothing else. A consumer that splits on Unicode line
- * terminators instead — Python's `str.splitlines()`, the standard gotcha — cuts
- * that one line into three and fails to parse the first piece.
- *
- * Both halves are asserted here, because only having both distinguishes "the
- * gateway corrupts data" from "some clients cannot read correct data", and
- * those call for opposite fixes. Escaping the separators at serialisation would
- * be a courtesy to naive clients — an escaped U+2028 and the raw character are the same
- * JSON value — but it is not a correctness fix, and these tests are what would
- * keep that change honest if it lands.
- */
+// Issue #91: escape line separators in the SSE wire representation while
+// preserving their exact JSON value for standards-compliant SDK clients.
 const SEPARATORS = 'before\u2028middle\u2029after'
+
+test(
+  'legacy SSE and stateless HTTP preserve separator values for SDK clients',
+  { timeout: 60000 },
+  async (t) => {
+    for (const mode of ['sse', 'stateless'] as const) {
+      const port = await unusedPort()
+      const gateway = launchGateway(t, [
+        '--stdio',
+        'node tests/clients/battery-peer.mjs',
+        '--port',
+        String(port),
+        ...(mode === 'stateless'
+          ? ['--outputTransport', 'streamableHttp']
+          : []),
+      ])
+      await gateway.ready()
+      const client = new Client({
+        name: `separators-${mode}`,
+        version: '1.0.0',
+      })
+      const url = new URL(
+        `http://127.0.0.1:${port}/${mode === 'sse' ? 'sse' : 'mcp'}`,
+      )
+      await client.connect(
+        mode === 'sse'
+          ? new SSEClientTransport(url)
+          : new StreamableHTTPClientTransport(url),
+      )
+      try {
+        const result = await client.callTool({
+          name: 'separators',
+          arguments: {},
+        })
+        assert.deepEqual(result.content, [{ type: 'text', text: SEPARATORS }])
+      } finally {
+        await client.close()
+      }
+    }
+  },
+)
+
+test(
+  'the SDK client receives the original separator characters through the gateway',
+  { timeout: 60000 },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/clients/battery-peer.mjs',
+      '--port',
+      String(port),
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+    ])
+    await gateway.ready()
+    const client = new Client({ name: 'separator-client', version: '1.0.0' })
+    t.after(() => client.close())
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+      ),
+    )
+    const result = await client.callTool({ name: 'separators', arguments: {} })
+    assert.notEqual(result.isError, true)
+    assert.deepEqual(result.content, [{ type: 'text', text: SEPARATORS }])
+  },
+)
 
 async function callSeparators(t: Parameters<typeof launchGateway>[0]) {
   const port = await unusedPort()
@@ -77,20 +130,16 @@ async function callSeparators(t: Parameters<typeof launchGateway>[0]) {
 }
 
 test(
-  'the gateway relays U+2028/U+2029 raw, in one SSE data line',
+  'SSE escapes U+2028/U+2029 on the wire without changing their JSON value',
   { timeout: 60000 },
   async (t) => {
     const raw = await callSeparators(t)
     const bytes = Buffer.from(raw, 'utf8')
 
-    assert.ok(
-      bytes.includes(Buffer.from([0xe2, 0x80, 0xa8])),
-      'U+2028 was not relayed raw; the serialiser now escapes it',
-    )
-    assert.ok(
-      bytes.includes(Buffer.from([0xe2, 0x80, 0xa9])),
-      'U+2029 was not relayed raw; the serialiser now escapes it',
-    )
+    assert.equal(bytes.includes(Buffer.from([0xe2, 0x80, 0xa8])), false)
+    assert.equal(bytes.includes(Buffer.from([0xe2, 0x80, 0xa9])), false)
+    assert.ok(raw.includes('\\u2028'))
+    assert.ok(raw.includes('\\u2029'))
 
     // The SSE rule: split on CRLF, CR or LF, and nothing else.
     const lines = raw
@@ -111,7 +160,7 @@ test(
 )
 
 test(
-  'a client that splits on Unicode line terminators breaks on a correct frame',
+  'a Unicode line-splitting client can parse the escaped SSE frame',
   { timeout: 60000 },
   async (t) => {
     const raw = await callSeparators(t)
@@ -126,17 +175,9 @@ test(
       1,
       'the naive splitter should still find exactly one line beginning data:',
     )
-    assert.throws(
-      () => JSON.parse(naive[0].slice(5)),
-      /Unterminated string|Unexpected end|JSON/,
-      'the naive splitter no longer truncates — if the serialiser has started ' +
-        'escaping the separators, that is the change, and #91 is closed',
-    )
-    // The damage is the splitter's alone: the complete value is right there in
-    // the bytes it was handed.
-    assert.ok(
-      raw.includes(SEPARATORS),
-      'the complete value is present in the response the client truncated',
+    assert.equal(
+      JSON.parse(naive[0].slice(5)).result.content[0].text,
+      SEPARATORS,
     )
   },
 )

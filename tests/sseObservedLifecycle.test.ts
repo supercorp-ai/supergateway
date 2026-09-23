@@ -62,10 +62,10 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     [{ logger: b.logger, drainStdin: true }],
   )
   let next = 0
-  b.middleware[1]({ path: '/messages' }, new Response(), () => next++)
+  b.middleware[2]({ path: '/messages' }, new Response(), () => next++)
   // map: raw-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 0, next: 1 })
-  b.middleware[1]({ path: '/other' }, new Response(), () => next++)
+  b.middleware[2]({ path: '/other' }, new Response(), () => next++)
   // map: json-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 1, next: 2 })
   for (const path of ['/health', '/ready']) {
@@ -77,7 +77,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     )
   }
   for (const [index, ending] of (
-    ['close', 'error', 'request-close'] as const
+    ['close', 'request-close'] as const
   ).entries()) {
     const { req } = await b.request('GET', '/events')
     const transport = b.transports.at(-1)!
@@ -113,9 +113,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     )
     // map: peer-reply
     assert.deepEqual(transport.sent, [reply])
-    const fault = new Error('wire disconnected')
     if (ending === 'close') await transport.close()
-    else if (ending === 'error') transport.onerror!(fault)
     else req.emit('close')
     const rejected = await b.request('POST', '/messages', {
       query: { sessionId: id },
@@ -139,31 +137,42 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
         line[0] === `SSE connection closed (session ${id})` ||
         line[0] === `Client disconnected (session ${id})`,
     ).length
-    assert.equal(endings, ending === 'error' ? 0 : 1)
+    assert.equal(endings, 1)
     // map: session-diagnostic
-    assert.deepEqual(
-      ending === 'error' ? b.errors.at(-1) : b.info.at(-1),
-      ending === 'error'
-        ? [`SSE error (session ${id}):`, fault]
-        : [
-            ending === 'close'
-              ? `SSE connection closed (session ${id})`
-              : `Client disconnected (session ${id})`,
-          ],
-    )
+    assert.deepEqual(b.info.at(-1), [
+      ending === 'close'
+        ? `SSE connection closed (session ${id})`
+        : `Client disconnected (session ${id})`,
+    ])
     // map: connection-diagnostics
-    assert.deepEqual(
-      b.info
-        .slice(-5, ending === 'error' ? undefined : -1)
-        .slice(ending === 'error' ? -4 : 0),
-      [
-        [`New SSE connection from 127.0.0.9`],
-        [`POST to SSE transport (session ${id})`],
-        [`SSE → Child (session ${id}): ${JSON.stringify(message)}`],
-        ['Child → SSE:', reply],
-      ],
-    )
+    assert.deepEqual(b.info.slice(-5, -1), [
+      [`New SSE connection from 127.0.0.9`],
+      [`POST to SSE transport (session ${id})`],
+      [`SSE → Child (session ${id}): ${JSON.stringify(message)}`],
+      ['Child → SSE:', reply],
+    ])
   }
+  const { req: recoverableReq } = await b.request('GET', '/events')
+  const recoverable = b.transports.at(-1)!
+  const recoverableId = recoverable.sessionId!
+  const closesBeforeError = b.serverCloses.length
+  const requestError = new Error('invalid POST body')
+  recoverable.onerror!(requestError)
+  assert.deepEqual(b.errors.at(-1), [
+    `SSE error (session ${recoverableId}):`,
+    requestError,
+  ])
+  assert.equal(b.serverCloses.length, closesBeforeError)
+  const followup = await b.request('POST', '/messages', {
+    query: { sessionId: recoverableId },
+    body: { jsonrpc: '2.0', id: 8, method: 'ping' },
+  })
+  assert.equal(
+    followup.res.code,
+    202,
+    'a rejected POST leaves its session usable',
+  )
+  recoverableReq.emit('close')
   b.children[0].stdout.emit('data', Buffer.from('broken-json\n'))
   b.children[0].stderr.emit('data', Buffer.from('peer diagnostic\n'))
   // map: peer-diagnostics

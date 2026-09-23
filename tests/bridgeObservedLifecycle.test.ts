@@ -16,6 +16,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     let stdio: any
     let nextRequestFailure: unknown
     let probeDuringConnect = false
+    let nextCloseFailure: Error | undefined
     class Client {
       constructor(
         public info: any,
@@ -46,7 +47,13 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
           protocolVersion: message.params?.protocolVersion ?? '2024-11-05',
         }
       }
-      async close() {}
+      async close() {
+        if (nextCloseFailure) {
+          const failure = nextCloseFailure
+          nextCloseFailure = undefined
+          throw failure
+        }
+      }
     }
     class Remote {
       onerror?: (error: Error) => void
@@ -210,9 +217,16 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         { codes: [1], error: [`${label} connection closed`] },
       )
     } else {
+      const closeFailure = Error('stale client close failed')
+      nextCloseFailure = closeFailure
       remotes[0].onclose()
       assert.deepEqual(codes, [], 'the stdio bridge survives upstream closure')
       assert.deepEqual(errors.at(-1), [`${label} connection closed`])
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.deepEqual(errors.at(-1), [
+        'Failed to close stale Streamable HTTP client:',
+        closeFailure,
+      ])
       const beforeReconnect = requests.length
       await stdio.onmessage({
         jsonrpc: '2.0',

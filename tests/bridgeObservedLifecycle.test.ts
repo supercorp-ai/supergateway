@@ -14,7 +14,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       errors: any[][] = [],
       writes: string[] = []
     let stdio: any
-    let nextRequestFailure: Error | undefined
+    let nextRequestFailure: unknown
     class Client {
       constructor(
         public info: any,
@@ -34,7 +34,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       }
       async request(message: any) {
         requests.push(structuredClone(message))
-        if (nextRequestFailure) {
+        if (nextRequestFailure !== undefined) {
           const failure = nextRequestFailure
           nextRequestFailure = undefined
           throw failure
@@ -262,6 +262,15 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         })
         assert.equal(clients.length, clientCount + 1)
       }
+      nextRequestFailure = 'ordinary upstream error'
+      const clientCount = clients.length
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 70,
+        method: 'tools/list',
+      })
+      assert.ok(JSON.parse(writes.at(-1)!).error)
+      assert.equal(clients.length, clientCount)
     }
     output.mock.restore()
   })

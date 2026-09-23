@@ -44,12 +44,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       servers: b.servers,
     },
     {
-      spawns: [
-        [
-          'peer --sse-test',
-          { shell: true, detached: process.platform !== 'win32' },
-        ],
-      ],
+      spawns: [],
       listens: [8127],
       cors: [{ origin: ['https://client.example', /trusted$/] }],
       routes: ['GET /health', 'GET /ready', 'GET /events', 'POST /messages'],
@@ -82,6 +77,11 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     const { req } = await b.request('GET', '/events')
     const transport = b.transports.at(-1)!
     const id = transport.sessionId!
+    const child = b.children[index]
+    assert.deepEqual(b.spawns[index], [
+      'peer --sse-test',
+      { shell: true, detached: process.platform !== 'win32' },
+    ])
     // map: session-server
     assert.deepEqual(
       { count: b.servers.length, args: b.servers.at(-1) },
@@ -105,9 +105,9 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     // map: post-accepted
     assert.equal(accepted.res.code, 202)
     // map: child-message
-    assert.equal(b.children[0].writes.at(-1), JSON.stringify(message) + '\n')
+    assert.equal(child.writes.at(-1), JSON.stringify(message) + '\n')
     const reply = { jsonrpc: '2.0', id: 7, result: {} }
-    b.children[0].stdout.emit(
+    child.stdout.emit(
       'data',
       Buffer.from('\n  \n' + JSON.stringify(reply) + '\n'),
     )
@@ -132,6 +132,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     // removing the session would recurse until the stack ran out
     // (@RussellZager, on #113) and would log its ending twice on the way.
     assert.equal(b.serverCloses.length, index + 1)
+    assert.equal(child.kills, 1, 'closing a session terminates only its child')
     const endings: number = (b.info as unknown[][]).filter(
       (line: unknown[]) =>
         line[0] === `SSE connection closed (session ${id})` ||
@@ -149,7 +150,7 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
       [`New SSE connection from 127.0.0.9`],
       [`POST to SSE transport (session ${id})`],
       [`SSE → Child (session ${id}): ${JSON.stringify(message)}`],
-      ['Child → SSE:', reply],
+      [`Child → SSE (session ${id}):`, reply],
     ])
   }
   const { req: recoverableReq } = await b.request('GET', '/events')
@@ -173,30 +174,26 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     'a rejected POST leaves its session usable',
   )
   recoverableReq.emit('close')
-  b.children[0].stdout.emit('data', Buffer.from('broken-json\n'))
-  b.children[0].stderr.emit('data', Buffer.from('peer diagnostic\n'))
+  const recoveredChild = b.children.at(-1)!
+  recoveredChild.stdout.emit('data', Buffer.from('broken-json\n'))
+  recoveredChild.stderr.emit('data', Buffer.from('peer diagnostic\n'))
   // map: peer-diagnostics
   assert.deepEqual(b.errors.slice(-2), [
-    ['Child non-JSON: broken-json'],
-    ['Child stderr: peer diagnostic\n'],
+    [`Child non-JSON (session ${recoverableId}): broken-json`],
+    [`Child stderr (session ${recoverableId}): peer diagnostic\n`],
   ])
-  const codes: unknown[] = []
-  t.mock.method(process, 'exit', (code?: any): never => {
-    codes.push(code)
-    return undefined as never
+  const active = await b.request('GET', '/events')
+  const activeId = b.transports.at(-1)!.sessionId!
+  const exitedChild = b.children.at(-1)!
+  exitedChild.emit('exit', 17, null)
+  assert.deepEqual(b.errors.at(-1), [
+    `Child exited (session ${activeId}): code=17, signal=null`,
+  ])
+  const rejectedAfterExit = await b.request('POST', '/messages', {
+    query: { sessionId: activeId },
+    body: { jsonrpc: '2.0', id: 9, method: 'ping' },
   })
-  for (const [code, signal] of [
-    [17, null],
-    [null, 'SIGTERM'],
-  ] as const) {
-    // map: child-exit
-    b.children[0].emit('exit', code, signal)
-    await new Promise((resolve) => setImmediate(resolve))
-    // map: exit-diagnostic
-    assert.deepEqual(b.errors.at(-1), [
-      `Child exited: code=${code}, signal=${signal}`,
-    ])
-  }
-  // map: exit-codes
-  assert.deepEqual(codes, [17, 1])
+  assert.equal(rejectedAfterExit.res.code, 503)
+  assert.equal(b.serverCloses.length, closesBeforeError + 2)
+  active.req.emit('close')
 })

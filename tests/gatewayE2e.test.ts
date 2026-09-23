@@ -620,12 +620,22 @@ test(
     ])
     await gateway.waitFor(
       () =>
-        gateway.errors().includes('Child non-JSON: peer startup diagnostic') &&
-        gateway.errors().includes('Child stderr: peer stderr diagnostic'),
+        /Child non-JSON \(session .+\): peer startup diagnostic/.test(
+          gateway.errors(),
+        ) &&
+        /Child stderr \(session .+\): peer stderr diagnostic/.test(
+          gateway.errors(),
+        ),
       'relay peer stdout/stderr diagnostics',
     )
-    assert.match(gateway.errors(), /Child non-JSON: peer startup diagnostic/)
-    assert.match(gateway.errors(), /Child stderr: peer stderr diagnostic/)
+    assert.match(
+      gateway.errors(),
+      /Child non-JSON \(session .+\): peer startup diagnostic/,
+    )
+    assert.match(
+      gateway.errors(),
+      /Child stderr \(session .+\): peer stderr diagnostic/,
+    )
     await client.close()
   },
 )

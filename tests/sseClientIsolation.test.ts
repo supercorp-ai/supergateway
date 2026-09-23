@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
 import {
   launchGateway,
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 /**
  * Read an SSE stream into an array of `data:` payloads as they arrive.
@@ -35,23 +35,10 @@ function readFrames(response: Response) {
 }
 
 /**
- * The half of GW-017 that is still open.
- *
- * Per-session `Server` instances fixed the crash — a second client connects,
- * and so does a reconnecting one. They did not fix this: `stdioToSse` runs one
- * child for the whole process and writes every line it prints to every
- * connected session, so a client that asked nothing still receives another
- * client's replies.
- *
- * Routing replies needs the gateway to rewrite ids, because two clients both
- * numbering from zero collide on the child's single stdin. And routing alone
- * would not settle #35: one child means one *state*, so two clients driving a
- * browser or a filesystem server still interfere whatever the envelopes say.
- * That is an architecture decision rather than a patch, so this stays red and
- * honest instead of being quietly narrowed.
+ * Each SSE session owns its own child. Replies must stay on the session that
+ * made the request even when another session is connected at the same time.
  */
-knownBugTest(
-  'GW-017',
+test(
   'one SSE client does not receive another client’s replies',
   { timeout: 30000 },
   async (t) => {

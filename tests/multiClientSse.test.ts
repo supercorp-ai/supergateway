@@ -8,25 +8,9 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
-// Nothing else in the suite connects two clients to one gateway, which is how
-// #112, #138 and #153 stayed open: every existing test exercises each gateway
-// once, and a bug that needs a *second* connection is invisible to all of them
-// no matter how well the first one is covered. `server` is constructed once per
-// process in stdioToSse.ts and `server.connect()` is called per connection, so
-// the second connection is the whole question.
-//
-// It asks the wrong one, though, which is why it is held rather than enforced.
-// Two clients both reaching the upstream server is not the property that
-// matters; both reaching it *without seeing each other's traffic* is. On SDKs
-// up to 1.25.3 this test passed — and it passed because those versions do not
-// guard the shared-instance reuse that GHSA-345p-7cg4-v4c7 describes, so the
-// second client was served by leaking. A green here certified the vulnerable
-// configuration as working. From 1.26.0 the SDK refuses the second connect and
-// this fails, which is the same defect seen from the other side.
-//
-// `sseClientIsolation.test.ts` asserts the property this one should have, and
-// is the spec for the fix. This stays as the reachability half of GW-017: when
-// the fix lands, both are enabled together and both must pass.
+// Reachability after a second client connects is distinct from isolation.
+// The wire-level isolation and independent child state are asserted by
+// sseClientIsolation.test.ts and sseSessionStateIsolation.test.ts.
 test(
   'SSE gateway serves a second client on the same process',
   { timeout: 30000 },

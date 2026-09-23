@@ -37,6 +37,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
           protocolVersion: message.params?.protocolVersion ?? '2024-11-05',
         }
       }
+      async close() {}
     }
     class Remote {
       onerror?: (error: Error) => void
@@ -110,14 +111,10 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     // map: setup
     assert.deepEqual(
       {
-        url: remotes[0].url.href,
-        headers: remotes[0].options.requestInit.headers,
         servers,
         signals,
       },
       {
-        url,
-        headers,
         servers: [
           [
             { name: 'supergateway', version: getVersion() },
@@ -130,6 +127,13 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     const original = Client.prototype.request
     const input = initialize(41)
     await stdio.onmessage(input)
+    assert.deepEqual(
+      {
+        url: remotes[0].url.href,
+        headers: remotes[0].options.requestInit.headers,
+      },
+      { url, headers },
+    )
     // map: restore-request
     assert.equal(clients[0].request, original)
     // map: initialize-forward
@@ -187,16 +191,51 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       codes.push(code)
       throw exited
     })
-    // map: transport-close
-    assert.throws(
-      () => remotes[0].onclose(),
-      (error) => error === exited,
-    )
-    // map: close-diagnostic
-    assert.deepEqual(
-      { codes, error: errors.at(-1) },
-      { codes: [1], error: [`${label} connection closed`] },
-    )
+    if (mode === 'sse') {
+      assert.throws(
+        () => remotes[0].onclose(),
+        (error) => error === exited,
+      )
+      assert.deepEqual(
+        { codes, error: errors.at(-1) },
+        { codes: [1], error: [`${label} connection closed`] },
+      )
+    } else {
+      remotes[0].onclose()
+      assert.deepEqual(codes, [], 'the stdio bridge survives upstream closure')
+      assert.deepEqual(errors.at(-1), [`${label} connection closed`])
+      const beforeReconnect = requests.length
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 43,
+        method: 'tools/list',
+      })
+      assert.equal(clients.length, 2, 'recovery uses a fresh MCP client')
+      assert.deepEqual(
+        {
+          url: remotes[1].url.href,
+          headers: remotes[1].options.requestInit.headers,
+          version: requests[beforeReconnect].params.protocolVersion,
+        },
+        { url, headers, version: input.params.protocolVersion },
+        'recovery preserves the original URL, headers and protocol version',
+      )
+      assert.deepEqual(codes, [])
+      remotes[1].onerror(
+        new Error('Maximum reconnection attempts (2) exceeded.'),
+      )
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 44,
+        method: 'tools/list',
+      })
+      assert.equal(
+        clients.length,
+        3,
+        'SDK retry exhaustion also rebuilds the client',
+      )
+      assert.deepEqual(codes, [])
+    }
     output.mock.restore()
   })
 }

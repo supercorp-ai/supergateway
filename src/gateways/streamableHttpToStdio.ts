@@ -22,8 +22,6 @@ export interface StreamableHttpToStdioArgs {
   headers: Record<string, string>
 }
 
-let mcpClient: Client | undefined
-
 const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
   const clientInfo = message.params?.clientInfo as Implementation | undefined
   const clientCapabilities = message.params?.capabilities as
@@ -41,27 +39,9 @@ const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
   )
 }
 
-const newFallbackMcpClient = async ({
-  mcpTransport,
-}: {
-  mcpTransport: StreamableHTTPClientTransport
-}) => {
-  const fallbackMcpClient = new Client(
-    {
-      name: 'supergateway',
-      version: getVersion(),
-    },
-    {
-      capabilities: {},
-    },
-  )
-
-  await fallbackMcpClient.connect(mcpTransport)
-  return fallbackMcpClient
-}
-
 export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   const { streamableHttpUrl, logger, headers } = args
+  const upstreamUrl = new URL(streamableHttpUrl)
 
   logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
@@ -69,22 +49,116 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
 
   onSignals({ logger })
 
-  const mcpTransport = new StreamableHTTPClientTransport(
-    new URL(streamableHttpUrl),
-    {
-      requestInit: {
-        headers,
-      },
-    },
-  )
+  let mcpClient: Client | undefined
+  let mcpTransport: StreamableHTTPClientTransport | undefined
+  let initializeMessage: JSONRPCRequest | undefined
+  let connecting: Promise<unknown> | undefined
+  let reconnectTimer: NodeJS.Timeout | undefined
+  let reconnectDelay = 1000
+  let hasConnected = false
 
-  mcpTransport.onerror = (err) => {
-    logger.error('Streamable HTTP error:', err)
+  const invalidateUpstream = (transport: StreamableHTTPClientTransport) => {
+    if (mcpTransport !== transport) return
+    const stale = mcpClient
+    mcpClient = undefined
+    mcpTransport = undefined
+    void Promise.resolve()
+      .then(() => stale?.close())
+      .catch((err) =>
+        logger.error('Failed to close stale Streamable HTTP client:', err),
+      )
+    scheduleReconnect()
   }
 
-  mcpTransport.onclose = () => {
-    logger.error('Streamable HTTP connection closed')
-    process.exit(1)
+  const scheduleReconnect = () => {
+    if (reconnectTimer || connecting || mcpClient || !hasConnected) return
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined
+      void connectUpstream().catch((err) => {
+        logger.error('Streamable HTTP reconnect failed:', err)
+      })
+    }, reconnectDelay)
+    reconnectTimer.unref()
+  }
+
+  const connectUpstream = (): Promise<unknown> => {
+    if (mcpClient) return Promise.resolve(undefined)
+    if (connecting) return connecting
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+    }
+    const transport = new StreamableHTTPClientTransport(new URL(upstreamUrl), {
+      requestInit: { headers },
+    })
+    transport.onerror = (err) => {
+      logger.error('Streamable HTTP error:', err)
+      if (err.message.includes('Maximum reconnection attempts')) {
+        invalidateUpstream(transport)
+      }
+    }
+    transport.onclose = () => {
+      if (mcpTransport === transport) {
+        logger.error('Streamable HTTP connection closed')
+        invalidateUpstream(transport)
+      }
+    }
+    const client = initializeMessage
+      ? newInitializeMcpClient({ message: initializeMessage })
+      : new Client(
+          { name: 'supergateway', version: getVersion() },
+          { capabilities: {} },
+        )
+    let initializeResult: unknown
+    const originalRequest = client.request
+    if (initializeMessage) {
+      client.request = async function (
+        possibleInitRequestMessage,
+        ...restArgs
+      ) {
+        if (
+          InitializeRequestSchema.safeParse(possibleInitRequestMessage)
+            .success &&
+          initializeMessage?.params?.protocolVersion
+        ) {
+          const params = possibleInitRequestMessage.params as {
+            protocolVersion?: unknown
+          }
+          params.protocolVersion = initializeMessage.params.protocolVersion
+        }
+        initializeResult = await originalRequest.apply(this, [
+          possibleInitRequestMessage,
+          ...restArgs,
+        ])
+        return initializeResult as Awaited<ReturnType<typeof originalRequest>>
+      }
+    }
+    connecting = client
+      .connect(transport)
+      .then(() => {
+        client.request = originalRequest
+        mcpClient = client
+        mcpTransport = transport
+        hasConnected = true
+        reconnectDelay = 1000
+        logger.info('Streamable HTTP connected')
+        return initializeResult
+      })
+      .catch(async (err) => {
+        client.request = originalRequest
+        try {
+          await client.close()
+        } catch {
+          // Preserve the connection failure as the error returned to stdio.
+        }
+        if (hasConnected) reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+        throw err
+      })
+      .finally(() => {
+        connecting = undefined
+        if (!mcpClient) scheduleReconnect()
+      })
+    return connecting
   }
 
   const stdioServer = new Server(
@@ -116,59 +190,19 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       try {
         if (!mcpClient) {
           if (message.method === 'initialize') {
-            mcpClient = newInitializeMcpClient({
-              message,
-            })
-
-            const originalRequest = mcpClient.request
-
-            mcpClient.request = async function (
-              possibleInitRequestMessage,
-              ...restArgs
-            ) {
-              if (
-                InitializeRequestSchema.safeParse(possibleInitRequestMessage)
-                  .success &&
-                message.params?.protocolVersion
-              ) {
-                // Respect the protocol version from the stdio client's init
-                // request. From SDK 1.22 `params` is a union of every request
-                // shape and only the initialize member carries protocolVersion,
-                // so this stopped type-checking; the safeParse above already
-                // established both that this is an initialize request and, since
-                // that schema requires params, that they are present. The cast
-                // records what the guard proved, and types the field `unknown`
-                // because the source is `{}` on SDK 1.18 and `string` on 1.30.
-                //
-                // Kept as a plain assignment rather than the SSE bridge's
-                // read-then-overwrite: this bridge sets the version whether or
-                // not the request carried one, and matching that spelling here
-                // would change behaviour.
-                const params = possibleInitRequestMessage.params as {
-                  protocolVersion?: unknown
-                }
-                params.protocolVersion = message.params.protocolVersion
-              }
-              result = await originalRequest.apply(this, [
-                possibleInitRequestMessage,
-                ...restArgs,
-              ])
-              return result
-            }
-
-            await mcpClient.connect(mcpTransport)
-            mcpClient.request = originalRequest
+            initializeMessage = message
+            result = await connectUpstream()
           } else {
             logger.info(
-              'Streamable HTTP client not initialized, creating fallback client',
+              initializeMessage
+                ? 'Reconnecting Streamable HTTP client'
+                : 'Streamable HTTP client not initialized, creating fallback client',
             )
-            mcpClient = await newFallbackMcpClient({ mcpTransport })
+            await connectUpstream()
             // The request that triggered the fallback still has to be
             // answered. Creating the client was never the point of it.
-            result = await mcpClient.request(req, z.any())
+            result = await mcpClient!.request(req, z.any())
           }
-
-          logger.info('Streamable HTTP connected')
         } else {
           result = await mcpClient.request(req, z.any())
         }
@@ -178,6 +212,16 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
           err && typeof err === 'object' && 'code' in err
             ? (err as any).code
             : undefined
+        // A 404 means the server no longer recognizes this MCP session. A
+        // fresh transport must initialize before the next stdio request. Never
+        // replay the failed request: a tool call may have had side effects.
+        const networkFailure =
+          rawCode === 404 ||
+          (typeof rawCode === 'number' && rawCode >= 500) ||
+          (err instanceof TypeError && /fetch failed/i.test(err.message))
+        if (networkFailure && mcpTransport) {
+          invalidateUpstream(mcpTransport)
+        }
         // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
         // the SDK's McpError uses falls inside it. A transport error carries
         // something else entirely: from SDK 1.24 a failed POST throws
@@ -237,7 +281,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
     } else {
       await relayClientMessage({
         message,
-        send: mcpClient ? (relayed) => mcpTransport.send(relayed) : undefined,
+        send: mcpClient ? (relayed) => mcpTransport!.send(relayed) : undefined,
         label: 'Streamable HTTP',
         logger,
       })

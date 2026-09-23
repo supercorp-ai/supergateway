@@ -243,9 +243,14 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
           /^(?:MCP error -32000: )?Error POSTing to endpoint \(HTTP (?:404|5\d\d)\):/.test(
             err.message,
           )
+        const transportHttpFailure =
+          err instanceof Error &&
+          /^Streamable HTTP error: Error POSTing to endpoint:/.test(
+            err.message,
+          ) &&
+          (rawCode === 404 || (typeof rawCode === 'number' && rawCode >= 500))
         const networkFailure =
-          rawCode === 404 ||
-          (typeof rawCode === 'number' && rawCode >= 500) ||
+          transportHttpFailure ||
           (err instanceof TypeError && /fetch failed/i.test(err.message)) ||
           legacyHttpFailure
         if (networkFailure && mcpTransport) {

@@ -273,11 +273,61 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         })
         assert.equal(clients.length, clientCount + 1)
       }
+      const beforeToolError = clients.length
+      for (const code of [404, 503]) {
+        nextRequestFailure = Object.assign(new Error('tool item absent'), {
+          code,
+        })
+        await stdio.onmessage({
+          jsonrpc: '2.0',
+          id: 68,
+          method: 'tools/list',
+        })
+        assert.ok(JSON.parse(writes.at(-1)!).error)
+        assert.equal(clients.length, beforeToolError)
+      }
+
+      nextRequestFailure = Object.assign(
+        new Error('Streamable HTTP error: Error POSTing to endpoint: denied'),
+        { code: 400 },
+      )
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 69,
+        method: 'tools/list',
+      })
+      assert.equal(clients.length, beforeToolError)
+      nextRequestFailure = new Error(
+        'Streamable HTTP error: Error POSTing to endpoint: unknown status',
+      )
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 76,
+        method: 'tools/list',
+      })
+      assert.equal(clients.length, beforeToolError)
+
+      nextRequestFailure = Object.assign(
+        new Error('Streamable HTTP error: Error POSTing to endpoint: down'),
+        { code: 503 },
+      )
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 70,
+        method: 'tools/list',
+      })
+      await stdio.onmessage({
+        jsonrpc: '2.0',
+        id: 75,
+        method: 'tools/list',
+      })
+      assert.equal(clients.length, beforeToolError + 1)
+
       nextRequestFailure = 'ordinary upstream error'
       const clientCount = clients.length
       await stdio.onmessage({
         jsonrpc: '2.0',
-        id: 70,
+        id: 74,
         method: 'tools/list',
       })
       assert.ok(JSON.parse(writes.at(-1)!).error)

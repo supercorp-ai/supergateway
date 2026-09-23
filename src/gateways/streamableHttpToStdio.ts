@@ -193,6 +193,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       logger.info('Stdio → Streamable HTTP:', message)
       const req = message as JSONRPCRequest
       let result
+      let requestTransport: StreamableHTTPClientTransport | undefined
 
       try {
         if (
@@ -221,9 +222,11 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
             await connectUpstream()
             // The request that triggered the fallback still has to be
             // answered. Creating the client was never the point of it.
+            requestTransport = mcpTransport
             result = await mcpClient!.request(req, z.any())
           }
         } else {
+          requestTransport = mcpTransport
           result = await mcpClient.request(req, z.any())
         }
       } catch (err) {
@@ -253,8 +256,8 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
           transportHttpFailure ||
           (err instanceof TypeError && /fetch failed/i.test(err.message)) ||
           legacyHttpFailure
-        if (networkFailure && mcpTransport) {
-          invalidateUpstream(mcpTransport)
+        if (networkFailure && requestTransport) {
+          invalidateUpstream(requestTransport)
         }
         // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
         // the SDK's McpError uses falls inside it. A transport error carries

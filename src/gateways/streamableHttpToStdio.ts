@@ -235,10 +235,19 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         // A 404 means the server no longer recognizes this MCP session. A
         // fresh transport must initialize before the next stdio request. Never
         // replay the failed request: a tool call may have had side effects.
+        // SDK 1.18-1.23 wrap HTTP failures in a generic MCP error rather
+        // than exposing the status as `code`. Recognize that transport's
+        // specific message too, so an expired session reconnects there.
+        const legacyHttpFailure =
+          err instanceof Error &&
+          /^(?:MCP error -32000: )?Error POSTing to endpoint \(HTTP (?:404|5\d\d)\):/.test(
+            err.message,
+          )
         const networkFailure =
           rawCode === 404 ||
           (typeof rawCode === 'number' && rawCode >= 500) ||
-          (err instanceof TypeError && /fetch failed/i.test(err.message))
+          (err instanceof TypeError && /fetch failed/i.test(err.message)) ||
+          legacyHttpFailure
         if (networkFailure && mcpTransport) {
           invalidateUpstream(mcpTransport)
         }

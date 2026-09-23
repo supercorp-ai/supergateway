@@ -14,6 +14,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       errors: any[][] = [],
       writes: string[] = []
     let stdio: any
+    let nextRequestFailure: Error | undefined
     class Client {
       constructor(
         public info: any,
@@ -33,6 +34,11 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       }
       async request(message: any) {
         requests.push(structuredClone(message))
+        if (nextRequestFailure) {
+          const failure = nextRequestFailure
+          nextRequestFailure = undefined
+          throw failure
+        }
         return {
           protocolVersion: message.params?.protocolVersion ?? '2024-11-05',
         }
@@ -235,6 +241,27 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         'SDK retry exhaustion also rebuilds the client',
       )
       assert.deepEqual(codes, [])
+      for (const [status, prefix] of [
+        ['404', ''],
+        ['503', 'MCP error -32000: '],
+      ]) {
+        nextRequestFailure = new Error(
+          `${prefix}Error POSTing to endpoint (HTTP ${status}): unavailable`,
+        )
+        const clientCount = clients.length
+        await stdio.onmessage({
+          jsonrpc: '2.0',
+          id: 50 + clientCount,
+          method: 'tools/list',
+        })
+        assert.ok(JSON.parse(writes.at(-1)!).error)
+        await stdio.onmessage({
+          jsonrpc: '2.0',
+          id: 60 + clientCount,
+          method: 'tools/list',
+        })
+        assert.equal(clients.length, clientCount + 1)
+      }
     }
     output.mock.restore()
   })

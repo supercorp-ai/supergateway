@@ -55,6 +55,7 @@ test(
       id: 4,
       method: 'tools/list',
     })
+    assert.ok(recovered.result, JSON.stringify(recovered))
     assert.equal(recovered.result.tools[0].name, 'add')
     assert.equal(bridge.child.exitCode, null)
   },

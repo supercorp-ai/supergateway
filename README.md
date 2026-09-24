@@ -307,6 +307,7 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@kvick-games](https://github.com/kvick-games)
 - [@nowireless4u](https://github.com/nowireless4u)
 - [@paul-maas](https://github.com/paul-maas)
 - [@ArnaudBger](https://github.com/ArnaudBger)

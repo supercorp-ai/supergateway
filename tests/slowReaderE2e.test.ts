@@ -136,6 +136,14 @@ for (const paused of [false, true]) {
         () => healthy.replies.has(10),
         'initialize healthy client',
       )
+      const healthyPid = Number(
+        healthy.replies.get(10).result.serverInfo.version,
+      )
+      assert.notEqual(
+        healthyPid,
+        Number(slow.replies.get(1).result.serverInfo.version),
+        'SSE sessions own separate children',
+      )
       await healthy.post({
         jsonrpc: '2.0',
         method: 'notifications/initialized',
@@ -164,13 +172,22 @@ for (const paused of [false, true]) {
         assert.equal(gateway.child.signalCode, null, gateway.errors())
         slow.response.resume()
       }
+      await healthy.post({
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'identity', arguments: {} },
+      })
       await healthy.wait(
-        () => healthy.replies.has(2),
-        `healthy client receives final result; ${gateway.errors()}`,
-        60000,
+        () => healthy.replies.has(3),
+        'independent client remains responsive during another client’s burst',
+      )
+      assert.equal(healthy.count(), 0, 'no notifications cross sessions')
+      assert.equal(
+        JSON.parse(healthy.replies.get(3).result.content[0].text).pid,
+        healthyPid,
       )
       await control.wait('burst-done')
-      assert.equal(healthy.count(), 8192)
       if (!paused || !slow.response.destroyed) {
         if (paused) {
           const deadline = Date.now() + 15000
@@ -191,20 +208,6 @@ for (const paused of [false, true]) {
           )
         if (slow.replies.has(2)) assert.equal(slow.count(), 8192)
       }
-      await healthy.post({
-        jsonrpc: '2.0',
-        id: 3,
-        method: 'tools/call',
-        params: { name: 'identity', arguments: {} },
-      })
-      await healthy.wait(
-        () => healthy.replies.has(3),
-        'healthy client makes another request',
-      )
-      assert.equal(
-        JSON.parse(healthy.replies.get(3).result.content[0].text).pid,
-        Number(slow.replies.get(1).result.serverInfo.version),
-      )
       assert.equal(gateway.child.exitCode, null, gateway.errors())
     },
   )

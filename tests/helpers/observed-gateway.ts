@@ -49,6 +49,7 @@ export function observeGateway(t: TestContext) {
     serverCloses: any[] = [],
     connections: any[] = []
   let serverCloseFailure: Error | null = null
+  let connectHook: ((transport: any) => void | Promise<void>) | null = null
   const children: Child[] = [],
     transports: Transport[] = []
   let parses = 0
@@ -162,6 +163,7 @@ export function observeGateway(t: TestContext) {
         async connect(transport: any) {
           connections.push(transport)
           this.transport = transport
+          await connectHook?.(transport)
         }
         // Recorded, because a session's `Server` staying open is the same
         // defect one indirection along: the next `connect` on it throws.
@@ -218,6 +220,9 @@ export function observeGateway(t: TestContext) {
     serverCloses,
     failServerClose: (error: Error | null) => {
       serverCloseFailure = error
+    },
+    onConnect: (hook: ((transport: any) => void | Promise<void>) | null) => {
+      connectHook = hook
     },
     connections,
     children,

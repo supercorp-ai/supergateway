@@ -84,9 +84,9 @@ test('a failing SSE delivery is logged and drops only that session', async (t) =
     ) {}
     async start() {}
     async send(message: unknown) {
-      sent.push(message)
-      // What the real transport does once its response is gone.
-      throw Error('Not connected')
+      sent.push({ sessionId: this.sessionId, message })
+      // Only the disconnected session rejects. Its healthy peer keeps working.
+      if (this.sessionId === 'session-1') throw Error('Not connected')
     }
     async close() {}
   }
@@ -115,6 +115,7 @@ test('a failing SSE delivery is logged and drops only that session', async (t) =
     namedExports: {
       Server: class {
         async connect() {}
+        async close() {}
       },
     },
   })
@@ -150,14 +151,27 @@ test('a failing SSE delivery is logged and drops only that session', async (t) =
     'data',
     Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }) + '\n'),
   )
-  // The rejection is delivered on a later microtask than the synchronous
-  // fan-out loop, so let it settle before asserting.
+  // The rejection is delivered on a later microtask.
   await new Promise((resolve) => setImmediate(resolve))
 
-  assert.equal(sent.length, 2, 'the message is offered to both subscribers')
+  assert.deepEqual(
+    sent.map((delivery: any) => delivery.sessionId),
+    ['session-1'],
+    'a child reply is delivered only to its own session',
+  )
   assert.ok(
     errors.some((message) => message.includes('Failed to send to session')),
     `the failure is reported, got: ${JSON.stringify(errors)}`,
+  )
+  children[1].stdout.emit(
+    'data',
+    Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }) + '\n'),
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    sent.map((delivery: any) => delivery.sessionId),
+    ['session-1', 'session-2'],
+    'the healthy session remains deliverable',
   )
 })
 

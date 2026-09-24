@@ -4,14 +4,10 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { observeGateway } from './helpers/observed-gateway.js'
 
-// A child that finishes its work and exits 0 must leave the gateway exiting 0
-// too, so a supervisor, container runtime or CI step sees success. Both
-// gateways spell this `process.exit(code ?? 1)`, and zero is the one value that
-// separates it from `code || 1`: every other observed exit code is truthy and
-// both forms agree there. Existing child-exit tests use 17, 19, 23 and a null
-// code for the signal case, so the successful exit was never observed.
+// SSE children are now scoped to sessions; their exit must not stop the gateway.
+// WebSocket still has one process-wide child and passes through its exit code.
 
-test('SSE gateway exits 0 when its child exits 0', async (t) => {
+test('SSE gateway stays up when a session child exits 0', async (t) => {
   const b = observeGateway(t)
   const codes: unknown[] = []
   const { stdioToSse } = await import('../src/gateways/stdioToSse.js')
@@ -30,16 +26,23 @@ test('SSE gateway exits 0 when its child exits 0', async (t) => {
     codes.push(code)
     return undefined as never
   })
+  const first = await b.request('GET', '/events')
+  const firstId = b.transports[0].sessionId!
   b.children[0].emit('exit', 0, null)
   await new Promise((resolve) => setImmediate(resolve))
   // map: sse-clean-child-exit-code
   assert.deepEqual(
     codes,
-    [0],
-    'the SSE gateway passes a child exit code of zero through as zero, not replaced by the failure default',
+    [],
+    'the session child finishing must not terminate other gateway sessions',
   )
-  // map: sse-clean-child-exit-diagnostic
-  assert.deepEqual(b.errors.at(-1), ['Child exited: code=0, signal=null'])
+  assert.deepEqual(b.errors.at(-1), [
+    `Child exited (session ${firstId}): code=0, signal=null`,
+  ])
+  assert.equal(b.serverCloses.length, 1)
+  await b.request('GET', '/events')
+  assert.equal(b.children.length, 2, 'a new session still starts')
+  first.req.emit('close')
 })
 
 test('WebSocket gateway exits 0 when its child exits 0', async (t) => {

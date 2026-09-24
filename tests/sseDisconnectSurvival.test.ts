@@ -7,27 +7,8 @@ const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 /**
  * A client that vanishes must not be able to take the gateway down with it.
  *
- * `stdioToSse.ts` fans every child message out to every session without
- * awaiting the send and without a rejection handler. `SSEServerTransport.send`
- * is async, so a delivery to a transport whose response is gone rejects rather
- * than throwing, and nothing in `src/` installs an `unhandledRejection`
- * handler — Node terminates the process. The only reason that never fires is
- * ordering: the `close` handler on the SSE response removes the session before
- * the reply arrives to be fanned out.
- *
- * The window is opened deliberately here rather than waited for. The `delayed`
- * tool holds the reply for 100ms, so the socket is aborted while the request is
- * still in flight and the fan-out is guaranteed to happen after the disconnect.
- *
- * One client at a time, on purpose: two concurrent SSE clients is GW-017, which
- * newer SDKs refuse outright, while this property holds on every supported
- * version. Reconnecting afterwards is deliberately left to
- * `sseReconnect.test.ts` — on SDK 1.26 and up that is a *second* defect and it
- * kills the process, which would mask this one.
- *
- * Verified load-bearing by mutation — remove the session cleanup from the
- * compiled gateway and this fails because the process is gone, not because a
- * request failed.
+ * A dropped client owns a child with a delayed reply in flight. The session
+ * must close and reap that child while the gateway remains available.
  */
 test(
   'an abruptly dropped SSE client does not take the gateway down',
@@ -93,19 +74,13 @@ test(
       'notice the dropped connection',
     )
 
-    // The reply now arrives with nobody to give it to, and the fan-out writes
-    // to every session still in the map. This is the moment under test.
+    // The session's child is stopped before its delayed reply can reach anyone.
     await gateway.waitFor(
-      () => /Child → SSE[\s\S]*id: 91/.test(gateway.output()),
-      'fan out the reply that arrived after the client left',
+      () => /Child exited \(session .*signal=SIGTERM/.test(gateway.output()),
+      'stop the departed session’s child',
     )
 
-    // The fan-out is logged before the send is attempted, so asserting
-    // liveness immediately would race a process that is about to die. Ask the
-    // HTTP server something harmless instead: a reply proves it is still
-    // serving, and getting one costs exactly the round trip the rejection
-    // needs to surface. Deliberately not a second /sse connection — on SDK
-    // 1.26 and up that is GW-017 and would kill the gateway by itself.
+    // Ask HTTP for a reply so liveness is observed after child teardown.
     const stillServing = await fetch(
       `http://127.0.0.1:${port}/message?sessionId=not-a-session`,
       {

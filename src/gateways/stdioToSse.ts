@@ -69,13 +69,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
   const children = new OwnedChildProcesses(logger)
   onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
-  const child = spawn(stdioCmd, children.spawnOptions)
-  children.own(child)
-  child.on('exit', (code, signal) => {
-    logger.error(`Child exited: code=${code}, signal=${signal}`)
-    void children.close().then(() => process.exit(code ?? 1))
-  })
-
   // One `Server` per session, not one per process.
   //
   // `Protocol.connect` assigns `this._transport`, and from SDK 1.26 it throws
@@ -129,19 +122,47 @@ export async function stdioToSse(args: StdioToSseArgs) {
       res,
       headers,
     })
+    if (children.closing) {
+      res.status(503).send('Gateway is shutting down')
+      return
+    }
 
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     const sessionServer = new Server(
       { name: 'supergateway', version: getVersion() },
       { capabilities: {} },
     )
-    await sessionServer.connect(sseTransport)
+    try {
+      await sessionServer.connect(sseTransport)
+    } catch (err) {
+      logger.error('Failed to open SSE session:', err)
+      await sessionServer
+        .close()
+        .catch((closeErr) =>
+          logger.error('Failed to close rejected SSE session:', closeErr),
+        )
+      if (!res.headersSent) res.status(500).end()
+      else res.destroy()
+      return
+    }
+    // A client can disappear while the SDK is starting the transport. Never
+    // launch a child for a response that has already gone away.
+    if (children.closing || res.destroyed || res.writableEnded) {
+      await sessionServer
+        .close()
+        .catch((err) =>
+          logger.error('Failed to close abandoned SSE session:', err),
+        )
+      return
+    }
 
     // `SSEServerTransport.sessionId` is declared `string`, not `string |
     // undefined`: the SDK assigns it in the constructor. The guard that used to
     // wrap this could not be false, so it was an obligation no test could ever
     // discharge rather than a defence against anything.
     const sessionId = sseTransport.sessionId
+    const child = spawn(stdioCmd, children.spawnOptions)
+    const stopChild = children.own(child)
     sessions[sessionId] = {
       server: sessionServer,
       transport: sseTransport,
@@ -167,10 +188,57 @@ export async function stdioToSse(args: StdioToSseArgs) {
       report()
       const { server } = sessions[sessionId]
       delete sessions[sessionId]
+      void stopChild()
       server.close().catch((err) => {
         logger.error(`Failed to close session ${sessionId}:`, err)
       })
     }
+
+    child.on('error', (err) => {
+      logger.error(`Child failure (session ${sessionId}):`, err)
+      endSession(() => {})
+    })
+    child.stdin.on('error', (err) => {
+      logger.error(`Child stdin failure (session ${sessionId}):`, err)
+      endSession(() => {})
+    })
+    child.on('exit', (code, signal) => {
+      const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
+      if (!sessions[sessionId]) {
+        logger.info(detail)
+        return
+      }
+      logger.error(detail)
+      endSession(() => {})
+    })
+
+    const decoder = new StringDecoder('utf8')
+    let buffer = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += decoder.write(chunk)
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop()!
+      lines.forEach((line) => {
+        if (!line.trim()) return
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
+          if (!sessions[sessionId]) return
+          sseTransport.send(jsonMsg).catch((err) => {
+            endSession(() =>
+              logger.error(`Failed to send to session ${sessionId}:`, err),
+            )
+          })
+        } catch {
+          logger.error(`Child non-JSON (session ${sessionId}): ${line}`)
+        }
+      })
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      logger.error(
+        `Child stderr (session ${sessionId}): ${chunk.toString('utf8')}`,
+      )
+    })
 
     sseTransport.onclose = () =>
       endSession(() =>
@@ -216,38 +284,5 @@ export async function stdioToSse(args: StdioToSseArgs) {
     logger.info(`Listening on port ${port}`)
     logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
     logger.info(`POST messages: http://localhost:${port}${messagePath}`)
-  })
-
-  const decoder = new StringDecoder('utf8')
-  let buffer = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += decoder.write(chunk)
-    const lines = buffer.split(/\r?\n/)
-    // `split` always returns at least one element, so `pop()` is never
-    // undefined here — the fallback it replaced could not be taken.
-    buffer = lines.pop()!
-    lines.forEach((line) => {
-      if (!line.trim()) return
-      try {
-        const jsonMsg = JSON.parse(line)
-        logger.info('Child → SSE:', jsonMsg)
-        for (const [sid, session] of Object.entries(sessions)) {
-          // `send` is async: it reports failure by rejecting, so a synchronous
-          // try/catch around it never ran and the rejection escaped to kill the
-          // process. Attaching the handler here is also what makes the pruning
-          // below reachable for the first time.
-          session.transport.send(jsonMsg).catch((err) => {
-            logger.error(`Failed to send to session ${sid}:`, err)
-            delete sessions[sid]
-          })
-        }
-      } catch {
-        logger.error(`Child non-JSON: ${line}`)
-      }
-    })
-  })
-
-  child.stderr.on('data', (chunk: Buffer) => {
-    logger.error(`Child stderr: ${chunk.toString('utf8')}`)
   })
 }

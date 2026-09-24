@@ -74,6 +74,8 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
             ],
           ],
     )
+    const connected =
+      mode === 'sse' ? await b.request('GET', '/events') : undefined
     const before = b.info.length
     b.children[0].stdout.emit('data', Buffer.from('\n \r\n\t\n'))
     // map: empty-frames
@@ -86,7 +88,6 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       { info: [], errors: [], sends: [] },
     )
     if (mode === 'sse') {
-      const connected = await b.request('GET', '/events')
       const accepted = await b.request('POST', '/messages', {
         query: { sessionId: b.transports[0].sessionId },
         body: { jsonrpc: '2.0', id: 2, method: 'ping' },
@@ -98,7 +99,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       ])
       // map: sse-response-headers
       assert.deepEqual(
-        [connected.res.headers, accepted.res.headers, missing.res.headers],
+        [connected!.res.headers, accepted.res.headers, missing.res.headers],
         [args.headers, args.headers, args.headers],
       )
     }

@@ -21,7 +21,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
 - **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
 - **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
-- **`--baseUrl "http://localhost:8000"`**: Base URL for SSE or WS clients (stdio→SSE mode; optional)
+- **`--baseUrl "https://mcp.example.com"`**: Public URL clients use to reach the gateway (stdio→SSE mode; optional). A client that connects through it receives an absolute message endpoint, for clients that require one; any other client keeps the relative endpoint. Behind a proxy, forward `Host` or `X-Forwarded-Host`, and `X-Forwarded-Proto` for https.
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)

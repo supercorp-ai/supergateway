@@ -13,6 +13,10 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
+import {
+  absolutizeSseEndpoint,
+  sseEndpointOrigin,
+} from '../lib/sseEndpointOrigin.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -127,6 +131,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
       return
     }
 
+    // Only when this client provably connected through `--baseUrl`'s own
+    // origin; otherwise the SDK's relative endpoint stands (#46).
+    const endpointOrigin = sseEndpointOrigin(baseUrl, req.headers)
+    if (endpointOrigin) absolutizeSseEndpoint(res, endpointOrigin)
     const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
     const sessionServer = new Server(
       { name: 'supergateway', version: getVersion() },

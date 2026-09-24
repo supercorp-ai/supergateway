@@ -21,7 +21,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
 - **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
 - **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
-- **`--baseUrl "https://mcp.example.com/gateway"`**: Where clients reach the gateway (stdio→SSE mode; optional). Its path prefixes the message endpoint sent to SSE clients — `/gateway/message` here. The host is not sent: clients post to the address they connected through.
+- **`--baseUrl "http://localhost:8000"`**: Base URL for SSE clients (stdio→SSE mode; optional, see [Troubleshooting](#troubleshooting))
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
@@ -296,6 +296,12 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 ```
 
 **Note:** Although the setup supports sending headers via the `--header` flag, if you need to pass an Authorization header (which typically includes a space, e.g. `"Bearer 123"`), you must use the `--oauth2Bearer` flag due to a known Cursor bug with spaces in command-line arguments.
+
+## Troubleshooting
+
+### `--baseUrl` host is not used
+
+In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl https://mcp.example.com/gateway` makes the message endpoint `/gateway/message`, and clients post to the host they connected through. Clients that need an absolute endpoint URL, such as Copilot Studio, should use `--outputTransport streamableHttp`.
 
 ## Why MCP?
 

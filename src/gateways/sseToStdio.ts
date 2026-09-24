@@ -23,6 +23,17 @@ export interface SseToStdioArgs {
 
 let sseClient: Client | undefined
 
+// A compliant MCP SSE server sends `event: endpoint` — the URL to POST
+// messages to — as the first thing on a new stream, and the SDK's handshake
+// waits for it with no deadline. A server that opened the stream and never sent
+// one (#27, a hand-written C++ server) left every client request pending
+// forever, with nothing logged after "Connecting to SSE...". Thirty seconds is
+// far longer than any compliant server takes, and shorter than the minute a
+// desktop client typically waits, so the client still receives the reason.
+const SSE_HANDSHAKE_TIMEOUT_MS = 30_000
+
+class SseHandshakeTimeout extends Error {}
+
 const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
   const clientInfo = message.params?.clientInfo as Implementation | undefined
   const clientCapabilities = message.params?.capabilities as
@@ -41,9 +52,9 @@ const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
 }
 
 const newFallbackSseClient = async ({
-  sseTransport,
+  connect,
 }: {
-  sseTransport: SSEClientTransport
+  connect: (client: Client) => Promise<void>
 }) => {
   const fallbackSseClient = new Client(
     {
@@ -55,7 +66,7 @@ const newFallbackSseClient = async ({
     },
   )
 
-  await fallbackSseClient.connect(sseTransport)
+  await connect(fallbackSseClient)
   return fallbackSseClient
 }
 
@@ -68,11 +79,17 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
   onSignals({ logger })
 
+  let streamOpened = false
   const sseTransport = new SSEClientTransport(new URL(sseUrl), {
     eventSourceInit: {
-      fetch: (...props: Parameters<typeof fetch>) => {
+      fetch: async (...props: Parameters<typeof fetch>) => {
         const [url, init = {}] = props
-        return fetch(url, { ...init, headers: { ...init.headers, ...headers } })
+        const response = await fetch(url, {
+          ...init,
+          headers: { ...init.headers, ...headers },
+        })
+        if (response.ok) streamOpened = true
+        return response
       },
     },
     requestInit: {
@@ -82,6 +99,28 @@ export async function sseToStdio(args: SseToStdioArgs) {
 
   sseTransport.onerror = (err) => {
     logger.error('SSE error:', err)
+  }
+
+  const connectUpstream = async (client: Client) => {
+    let timer: NodeJS.Timeout | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const seconds = SSE_HANDSHAKE_TIMEOUT_MS / 1000
+        reject(
+          new SseHandshakeTimeout(
+            streamOpened
+              ? `SSE server at ${sseUrl} opened an event stream but sent no \`endpoint\` event within ${seconds}s. An MCP SSE server must first send \`event: endpoint\` with the URL to POST messages to. If this server uses Streamable HTTP, connect with --streamableHttp instead.`
+              : `SSE server at ${sseUrl} did not open an event stream within ${seconds}s.`,
+          ),
+        )
+      }, SSE_HANDSHAKE_TIMEOUT_MS)
+    })
+    try {
+      // A late settlement of the losing `connect` is absorbed by `race`.
+      await Promise.race([client.connect(sseTransport), deadline])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   sseTransport.onclose = () => {
@@ -143,11 +182,13 @@ export async function sseToStdio(args: SseToStdioArgs) {
               return result
             }
 
-            await sseClient.connect(sseTransport)
+            await connectUpstream(sseClient)
             sseClient.request = originalRequest
           } else {
             logger.info('SSE client not initialized, creating fallback client')
-            sseClient = await newFallbackSseClient({ sseTransport })
+            sseClient = await newFallbackSseClient({
+              connect: connectUpstream,
+            })
             // The request that triggered the fallback still has to be
             // answered. Creating the client was never the point of it.
             result = await sseClient.request(req, z.any())
@@ -207,7 +248,15 @@ export async function sseToStdio(args: SseToStdioArgs) {
             ...(errorData === undefined ? {} : { data: errorData }),
           },
         })
-        process.stdout.write(JSON.stringify(errorResp) + '\n')
+        const line = JSON.stringify(errorResp) + '\n'
+        if (err instanceof SseHandshakeTimeout) {
+          // The SDK's transport cannot be started a second time, so there is
+          // nothing left to serve. Closing it exits through `onclose`, once the
+          // client has been told why.
+          process.stdout.write(line, () => void sseTransport.close())
+          return
+        }
+        process.stdout.write(line)
         return
       }
       // `request` throws on a protocol error, so anything it returns is a

@@ -1,25 +1,38 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import {
   launchGateway,
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
-// The `endpoint` event tells an SSE client where to POST its messages, and
-// `--baseUrl` exists for when that is not the address the client connected to:
-// a gateway behind a proxy or tunnel. So the only assertion that proves the
-// option is honoured connects on one address and expects another.
+// What `--baseUrl` does in stdio→SSE mode: it sets the *path* of the endpoint
+// an SSE client is told to POST to, and nothing else.
 //
-// The version this replaces connected to `http://0.0.0.0:11000` and passed that
-// same value as `--baseUrl`. A gateway that ignores the option sends a relative
-// `/message?sessionId=…`, which resolves against the connection to exactly the
-// URL it expected — so it passed against that mutant as well. Reading the raw
-// event, rather than the SDK client's resolved URL, is what makes the two
-// distinguishable. (The SDK client could not be used here anyway: it refuses an
-// endpoint on a different origin from the stream it came from.)
-const endpointEvent = async (t: TestContext, args: string[]) => {
+// `SSEServerTransport` documents its endpoint as "the relative or absolute URL"
+// to send clients to, and up to SDK 1.9.0 it sent a full `--baseUrl` verbatim.
+// SDK 1.10.0 (typescript-sdk#177, a fix for sessionId query handling) began
+// writing only `pathname + search + hash`, so the scheme, host and port have
+// not reached any client since — #46. We decided not to restore them: after that
+// long, some Python and Java clients depend on the relative endpoint (they
+// compare the endpoint's port literally, and `Host` loses an explicit `:443`),
+// and the one client reported as needing an absolute endpoint, Copilot Studio,
+// now only speaks Streamable HTTP. See #227 for the evidence.
+//
+// So these pin the behaviour deliberately. If an SDK release restores the host,
+// the second test fails, and the decision gets made again rather than shipped
+// by accident.
+//
+// An earlier version of this file connected to the same address it passed as
+// `--baseUrl`, so a relative endpoint resolved to exactly the URL it expected
+// and it could not tell the host being sent from the host being dropped. Every
+// case here reads the raw event and controls how the client appears to connect.
+const endpointEvent = async (
+  t: TestContext,
+  args: string[],
+  headers: Record<string, string> = {},
+) => {
   const port = await unusedPort()
   const gateway = launchGateway(t, [
     '--stdio',
@@ -35,46 +48,62 @@ const endpointEvent = async (t: TestContext, args: string[]) => {
     ...args,
   ])
   await gateway.ready()
-  const abort = new AbortController()
-  t.after(() => abort.abort())
-  const response = await fetch(`http://127.0.0.1:${port}/sse`, {
-    headers: { accept: 'text/event-stream' },
-    signal: abort.signal,
+  // `node:http` rather than fetch, which forbids setting Host.
+  return new Promise<string>((resolve, reject) => {
+    const req = http.get(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/sse',
+        headers: { accept: 'text/event-stream', ...headers },
+      },
+      (res) => {
+        assert.equal(res.statusCode, 200)
+        let received = ''
+        res.setEncoding('utf8').on('data', (chunk: string) => {
+          received += chunk
+          if (!received.includes('\n\n')) return
+          req.destroy()
+          const event = received.split('\n\n')[0]
+          assert.match(event, /^event: endpoint$/m)
+          resolve(event.match(/^data: (.*)$/m)![1])
+        })
+      },
+    )
+    req.on('error', (error) => {
+      if (!req.destroyed) reject(error)
+    })
+    t.after(() => req.destroy())
   })
-  assert.equal(response.status, 200)
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader()
-  let received = ''
-  while (!received.includes('\n\n')) {
-    const { value, done } = await reader.read()
-    if (done) break
-    received += value
-  }
-  abort.abort()
-  const event = received.split('\n\n')[0]
-  assert.match(event, /^event: endpoint$/m, `not an endpoint event: ${event}`)
-  return event.match(/^data: (.*)$/m)![1]
 }
 
-// Held as a known bug: #46. Since SDK 1.9, `SSEServerTransport` writes only
-// `pathname + search + hash` into the endpoint event, so the scheme, host and
-// port of `--baseUrl` are silently dropped and only its path survives. Clients
-// that need an absolute endpoint, such as Microsoft Copilot Studio, cannot use
-// the gateway. Restoring it is a behaviour change: the TypeScript and Python
-// SDK clients reject an endpoint on another origin, so a `--baseUrl` that does
-// not match how clients connect works today only because it is ignored.
-knownBugTest(
-  '#46',
-  '--baseUrl sets the endpoint an SSE client is told to POST to',
+test(
+  "--baseUrl's path prefixes the endpoint",
   { timeout: 20000 },
   async (t) => {
+    // The part of `--baseUrl` that does take effect: behind a proxy that
+    // serves the gateway under `/gateway`, clients POST to the right place.
     const data = await endpointEvent(t, [
       '--baseUrl',
-      'https://public.example/gateway',
+      'https://pub.example/gateway',
     ])
-    assert.match(
-      data,
-      /^https:\/\/public\.example\/gateway\/message\?sessionId=[\w-]+$/,
+    assert.match(data, /^\/gateway\/message\?sessionId=[\w-]+$/)
+  },
+)
+
+test(
+  "--baseUrl's host is not sent, even to a client that connected through it",
+  { timeout: 20000 },
+  async (t) => {
+    // The strongest case for sending it — a proxy keeping the client's Host
+    // and saying it arrived over https — still gets a path. Fails if an SDK
+    // release restores the documented absolute endpoint.
+    const data = await endpointEvent(
+      t,
+      ['--baseUrl', 'https://pub.example/gateway'],
+      { host: 'pub.example', 'x-forwarded-proto': 'https' },
     )
+    assert.match(data, /^\/gateway\/message\?sessionId=[\w-]+$/)
   },
 )
 

@@ -307,6 +307,13 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@paul-maas](https://github.com/paul-maas)
+- [@ArnaudBger](https://github.com/ArnaudBger)
+- [@alvaroalon2](https://github.com/alvaroalon2)
+- [@oshaban](https://github.com/oshaban)
+- [@springbrookconsultingllc-byte](https://github.com/springbrookconsultingllc-byte)
+- [@jstar0](https://github.com/jstar0)
+- [@v8eta](https://github.com/v8eta)
 - [@zaggash](https://github.com/zaggash)
 - [@0xt3ch](https://github.com/0xt3ch)
 - [@werebear73](https://github.com/werebear73)
@@ -400,9 +407,6 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 - [@Areo-Joe](https://github.com/Areo-Joe)
 - [@Joffref](https://github.com/Joffref)
 - [@michaeljguarino](https://github.com/michaeljguarino)
-- [@springbrookconsultingllc-byte](https://github.com/springbrookconsultingllc-byte)
-- [@jstar0](https://github.com/jstar0)
-- [@v8eta](https://github.com/v8eta)
 
 ## Contributing
 

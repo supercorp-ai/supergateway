@@ -307,6 +307,8 @@ Cursor can also integrate with Supergateway in SSE→stdio mode. The configurati
 
 ## Contributors
 
+- [@srijan](https://github.com/srijan)
+- [@TheItschi](https://github.com/TheItschi)
 - [@paul-maas](https://github.com/paul-maas)
 - [@ArnaudBger](https://github.com/ArnaudBger)
 - [@alvaroalon2](https://github.com/alvaroalon2)

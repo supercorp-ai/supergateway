@@ -108,6 +108,21 @@ for (const [name, args, error] of [
     ],
     /must be a positive number/,
   ],
+  [
+    // Parsed as NaN, which passed a `<= 0` check and silently disabled the
+    // 30-minute default that stops a vanished client leaking its child.
+    'non-numeric session timeout',
+    [
+      '--stdio',
+      peerCommand,
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+      '--sessionTimeout',
+      '30m',
+    ],
+    /must be a positive number/,
+  ],
   ['invalid upstream URL', ['--streamableHttp', 'not-a-url'], /Fatal error/],
 ] as const) {
   test(`CLI rejects ${name}`, { timeout: 10000 }, async (t) => {

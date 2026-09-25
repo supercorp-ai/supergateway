@@ -16,6 +16,8 @@ import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
+import { CancellableRequests } from '../lib/cancellableRequests.js'
+import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -156,12 +158,15 @@ export async function sseToStdio(args: SseToStdioArgs) {
     ...payload,
   })
 
+  const inFlight = new CancellableRequests(logger)
+
   const handleStdioMessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
       logger.info('Stdio → SSE:', message)
       const req = message as JSONRPCRequest
       let result
+      const signal = inFlight.begin(req.id)
 
       try {
         if (!sseClient) {
@@ -200,14 +205,23 @@ export async function sseToStdio(args: SseToStdioArgs) {
             })
             // The request that triggered the fallback still has to be
             // answered. Creating the client was never the point of it.
-            result = await sseClient.request(req, z.any())
+            result = await sseClient.request(req, z.any(), {
+              signal,
+              timeout: MAX_TIMEOUT_MS,
+            })
           }
 
           logger.info('SSE connected')
         } else {
-          result = await sseClient.request(req, z.any())
+          result = await sseClient.request(req, z.any(), {
+            signal,
+            timeout: MAX_TIMEOUT_MS,
+          })
         }
       } catch (err) {
+        inFlight.end(req.id)
+        // The client cancelled it, and expects no reply.
+        if (signal.aborted) return
         logger.error('Request error:', err)
         const rawCode =
           err && typeof err === 'object' && 'code' in err
@@ -274,10 +288,11 @@ export async function sseToStdio(args: SseToStdioArgs) {
       // ternary both misread that data and called `hasOwnProperty` off the
       // result itself, which a result carrying that key as a string turned
       // into a crash.
+      inFlight.end(req.id)
       const response = wrapResponse(req, { result: { ...result } })
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
-    } else {
+    } else if (!inFlight.cancel(message)) {
       await relayClientMessage({
         message,
         send: sseClient ? (relayed) => sseTransport.send(relayed) : undefined,

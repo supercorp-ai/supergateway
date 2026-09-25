@@ -17,6 +17,8 @@ import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
+import { CancellableRequests } from '../lib/cancellableRequests.js'
+import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -193,6 +195,8 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
     ...payload,
   })
 
+  const inFlight = new CancellableRequests(logger)
+
   const handleStdioMessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
@@ -200,6 +204,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       const req = message as JSONRPCRequest
       let result
       let requestTransport: StreamableHTTPClientTransport | undefined
+      const signal = inFlight.begin(req.id)
 
       try {
         if (
@@ -229,13 +234,22 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
             // The request that triggered the fallback still has to be
             // answered. Creating the client was never the point of it.
             requestTransport = mcpTransport
-            result = await mcpClient!.request(req, z.any())
+            result = await mcpClient!.request(req, z.any(), {
+              signal,
+              timeout: MAX_TIMEOUT_MS,
+            })
           }
         } else {
           requestTransport = mcpTransport
-          result = await mcpClient.request(req, z.any())
+          result = await mcpClient.request(req, z.any(), {
+            signal,
+            timeout: MAX_TIMEOUT_MS,
+          })
         }
       } catch (err) {
+        inFlight.end(req.id)
+        // The client cancelled it, and expects no reply.
+        if (signal.aborted) return
         logger.error('Request error:', err)
         const rawCode =
           err && typeof err === 'object' && 'code' in err
@@ -318,10 +332,11 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       // ternary both misread that data and called `hasOwnProperty` off the
       // result itself, which a result carrying that key as a string turned
       // into a crash.
+      inFlight.end(req.id)
       const response = wrapResponse(req, { result: { ...result } })
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
-    } else {
+    } else if (!inFlight.cancel(message)) {
       await relayClientMessage({
         message,
         send: mcpClient ? (relayed) => mcpTransport!.send(relayed) : undefined,

@@ -105,7 +105,8 @@ export async function stdioToStatelessStreamableHttp(
     escapeSseJsonSeparators(res)
     next()
   })
-  app.use(express.json())
+  // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
+  app.use(express.json({ limit: '4mb' }))
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))

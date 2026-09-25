@@ -1,4 +1,4 @@
-import { knownBugTest } from './helpers/known-bug.js'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   initialize,
@@ -8,9 +8,8 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
-knownBugTest(
-  'GW-004/GW-005',
-  'stateless HTTP handles zero IDs and interleaved notifications without losing responses',
+test(
+  'GW-004/GW-005: stateless HTTP handles zero IDs and interleaved notifications without losing responses',
   { timeout: 15000 },
   async (t) => {
     const port = await unusedPort()
@@ -57,9 +56,12 @@ knownBugTest(
   },
 )
 
-knownBugTest(
-  'GW-003',
-  'stateless HTTP forwards every request in a batch after one initialization',
+// GW-003: each message in a batch used to start its own auto-initialize, and
+// the second overwrote the first's pending message, so the first request never
+// reached the child and the POST hung. Batches are protocol 2025-03-26; clients
+// on that version still send them.
+test(
+  'GW-003: stateless HTTP forwards every request in a batch after one initialization',
   { timeout: 15000 },
   async (t) => {
     const port = await unusedPort()

@@ -112,10 +112,12 @@ export async function stdioToWs(args: StdioToWsArgs) {
         // cannot be reached before the server listens.
         if (child!.killed) {
           res.status(500).send('Child process has been killed')
+          return
         }
 
         if (!isReady) {
           res.status(500).send('Server is not ready')
+          return
         }
 
         res.send('ok')

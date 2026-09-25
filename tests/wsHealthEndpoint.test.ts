@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { knownBugTest } from './helpers/known-bug.js'
 
 /**
  * The WebSocket gateway's health endpoint reports two unhealthy states — the
@@ -111,70 +110,28 @@ async function startHalfwayUp(t: {
   return { health, children }
 }
 
-test('the health endpoint reports an unready server and a dead child', async (t) => {
+// GW-019: each unhealthy branch used to fall through, so an unready server
+// went on to send 'ok' and a dead child sent two more responses after its 500.
+// Against real Express the later sends raise ERR_HTTP_HEADERS_SENT; the
+// handler was one missing `return` away from telling a load balancer that a
+// gateway with a dead child is healthy.
+test('the health endpoint answers an unready server and a dead child exactly once', async (t) => {
   const { health, children } = await startHalfwayUp(t)
 
   const unready = new Recorder()
   health(null, unready)
-  assert.ok(
-    unready.calls.some(
-      (call) => call.status === 500 && call.body === 'Server is not ready',
-    ),
-    `a server still starting answers 500: ${JSON.stringify(unready.calls)}`,
+  assert.deepEqual(
+    unready.calls,
+    [{ status: 500, body: 'Server is not ready' }],
+    'an unready server answers once, and does not then claim to be ok',
   )
 
   children[0].kill()
   const dead = new Recorder()
   health(null, dead)
-  assert.ok(
-    dead.calls.some(
-      (call) =>
-        call.status === 500 && call.body === 'Child process has been killed',
-    ),
-    `a killed child answers 500: ${JSON.stringify(dead.calls)}`,
+  assert.deepEqual(
+    dead.calls,
+    [{ status: 500, body: 'Child process has been killed' }],
+    'a dead child answers once, and does not then claim to be ok',
   )
 })
-
-/**
- * GW-019: neither unhealthy branch returns, so both fall through. Measured:
- *
- *   unready    500 'Server is not ready'                    then 'ok'
- *   dead child 500 'Child process has been killed'
- *              then 500 'Server is not ready'               then 'ok'
- *
- * Against real Express the later sends raise ERR_HTTP_HEADERS_SENT, so a
- * monitor receives the first status with an error logged behind it. The
- * endpoint is one `return` away from answering `ok` for a gateway whose child is
- * dead, which is the precise failure a health check exists to prevent — a load
- * balancer reading it keeps routing traffic to a broken gateway.
- *
- * Held rather than fixed: a behaviour change to a user-visible endpoint belongs
- * with cluster F, not in a coverage pass.
- */
-knownBugTest(
-  'GW-019',
-  'the health endpoint sends exactly one response',
-  { timeout: 15000 },
-  async (t) => {
-    const { health, children } = await startHalfwayUp(
-      t as unknown as Parameters<typeof startHalfwayUp>[0],
-    )
-
-    const unready = new Recorder()
-    health(null, unready)
-    assert.deepEqual(
-      unready.calls,
-      [{ status: 500, body: 'Server is not ready' }],
-      'an unready server answers once, and does not then claim to be ok',
-    )
-
-    children[0].kill()
-    const dead = new Recorder()
-    health(null, dead)
-    assert.deepEqual(
-      dead.calls,
-      [{ status: 500, body: 'Child process has been killed' }],
-      'a dead child answers once, and does not then claim to be ok',
-    )
-  },
-)

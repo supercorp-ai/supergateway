@@ -25,11 +25,14 @@ export class WebSocketServerTransport implements Transport {
             console.log('Broadcast message:', msg)
             return handler(msg)
           }
+          // The id is written as JSON so `send` can restore it with its type:
+          // a number reads as before (`<clientId>:17`), a string keeps its
+          // quotes (`<clientId>:"17"`), and colons inside it survive.
           // @ts-ignore
           return handler({
             ...msg,
             // @ts-ignore
-            id: clientId + ':' + msg.id,
+            id: clientId + ':' + JSON.stringify(msg.id),
           })
         }
       : undefined
@@ -75,11 +78,13 @@ export class WebSocketServerTransport implements Transport {
     // decide if they passed a raw clientId (legacy) or options object
     const clientId = typeof options === 'string' ? options : undefined
 
-    // if your protocol mangles IDs to include clientId, strip it off
-    const [cId, rawId] = clientId?.split(':') ?? []
-    if (rawId !== undefined) {
+    // Strip the client id that `onmessage` prefixed. Client ids are UUIDs, so
+    // the first colon is the separator and the rest is the original id.
+    const separator = clientId?.indexOf(':') ?? -1
+    const cId = separator === -1 ? clientId : clientId!.slice(0, separator)
+    if (separator !== -1) {
       // @ts-ignore
-      msg.id = parseInt(rawId, 10)
+      msg.id = JSON.parse(clientId!.slice(separator + 1))
     }
 
     const payload = JSON.stringify(msg)

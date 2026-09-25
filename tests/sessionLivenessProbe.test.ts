@@ -393,3 +393,37 @@ test('late timer and send completions cannot revive an obsolete probe', async (t
   probe.stop()
   obsoleteReplyTimer()
 })
+
+test('a replacement GET does not inherit the previous stream’s missed pings', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    async (id) => {
+      sent.push(id)
+    },
+    () => stale++,
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  t.mock.timers.tick(40)
+  await Promise.resolve()
+  assert.equal(sent.length, 3, 'one ping went unanswered on the first stream')
+  probe.stop()
+  assert.equal(probe.start(), true)
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  assert.equal(sent.length, 4)
+  t.mock.timers.tick(40)
+  await Promise.resolve()
+  assert.equal(stale, 0, 'a single miss on the new stream is not two')
+  assert.equal(sent.length, 5, 'the new stream retries after its first miss')
+})

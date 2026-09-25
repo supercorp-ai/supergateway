@@ -20,6 +20,8 @@ async function capture(write: (res: ServerResponse) => void) {
       body: bytes.toString('utf8'),
       bytes,
       length: result.headers.get('content-length'),
+      statusText: result.statusText,
+      contentType: result.headers.get('content-type'),
     }
   } finally {
     server.close()
@@ -92,6 +94,10 @@ test('SSE escaping respects status-message headers and implicit header writes', 
   })
   assert.equal(explicit.length, null)
   assert.equal(explicit.body, frame.replace('\u2028', '\\u2028'))
+  // The wrapper rewrites the headers it forwards, so the status message and the
+  // headers passed to writeHead must still reach the client.
+  assert.equal(explicit.statusText, 'fine')
+  assert.equal(explicit.contentType, 'TEXT/EVENT-STREAM')
 
   const implicit = await capture((res) => {
     res.setHeader('Content-Type', 'text/event-stream')

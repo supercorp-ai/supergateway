@@ -9,6 +9,8 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 
+// GW-010: 30 days is past setTimeout's 2^31-1 ms limit, which Node treated as
+// 1 ms, so the session expired at once. Both lengths must keep the session.
 for (const days of [1, 30]) {
   test(
     `stateful HTTP honors a ${days}-day idle timeout without expiring immediately`,

@@ -140,6 +140,38 @@ test('missed pings do not shorten the configured idle grace period', async (t) =
   assert.equal(stale, 1)
 })
 
+// GW-010 for the probe: the idle grace is --sessionTimeout itself, and a grace
+// above setTimeout's 2^31-1 ms used to fire after 1 ms, so a 30-day session
+// became reapable after its first two missed pings.
+test('an idle grace beyond setTimeout’s range is not cut to 1 ms', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    30 * 24 * 60 * 60 * 1000,
+    async (id) => {
+      sent.push(id)
+    },
+    () => stale++,
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  for (let cycle = 0; cycle < 3; cycle++) {
+    t.mock.timers.tick(100)
+    await Promise.resolve()
+    t.mock.timers.tick(40)
+    await Promise.resolve()
+    t.mock.timers.tick(40)
+  }
+  assert.equal(stale, 0, 'missed pings inside the 30-day grace do not reap')
+  probe.stop()
+})
+
 test('late ping responses are consumed instead of leaking to the MCP child', async (t) => {
   enableFakeTimers(t)
   const sent: string[] = []

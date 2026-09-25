@@ -1,4 +1,5 @@
 import { Logger } from '../types.js'
+import { setLongTimeout, type LongTimeout } from './longTimeout.js'
 
 /**
  * The invariant `dec()` relies on: a session held in the counting shape always
@@ -26,12 +27,10 @@ export function assertPositiveAccessCount(
   }
 }
 
-const MAX_TIMEOUT_MS = 2 ** 31 - 1
-
 export class SessionAccessCounter {
   private sessions: Map<
     string,
-    { accessCount: number } | { timeout: NodeJS.Timeout }
+    { accessCount: number } | { timeout: LongTimeout }
   > = new Map()
 
   constructor(
@@ -61,7 +60,7 @@ export class SessionAccessCounter {
       this.logger.info(
         `Session access count 0 -> 1, clearing cleanup timeout for ${sessionId}`,
       )
-      clearTimeout(session.timeout)
+      session.timeout.clear()
       this.sessions.set(sessionId, { accessCount: 1 })
     } else {
       // Increment active session
@@ -105,26 +104,14 @@ export class SessionAccessCounter {
         `Session access count reached 0, setting cleanup timeout for ${sessionId}`,
       )
 
-      this.expireAfter(sessionId, this.timeout)
+      this.sessions.set(sessionId, {
+        timeout: setLongTimeout(() => {
+          this.logger.info(`Session ${sessionId} timed out, cleaning up`)
+          this.sessions.delete(sessionId)
+          this.cleanup(sessionId)
+        }, this.timeout),
+      })
     }
-  }
-
-  // A delay above 2^31-1 ms (about 24.8 days) makes Node's setTimeout fire
-  // after 1 ms, so a longer --sessionTimeout waits in hops. Each hop replaces
-  // the entry, so `inc` and `clear` always cancel the timer that is pending.
-  private expireAfter(sessionId: string, remaining: number) {
-    const hop = Math.min(remaining, MAX_TIMEOUT_MS)
-    this.sessions.set(sessionId, {
-      timeout: setTimeout(() => {
-        if (remaining > hop) {
-          this.expireAfter(sessionId, remaining - hop)
-          return
-        }
-        this.logger.info(`Session ${sessionId} timed out, cleaning up`)
-        this.sessions.delete(sessionId)
-        this.cleanup(sessionId)
-      }, hop),
-    })
   }
 
   clear(sessionId: string, runCleanup: boolean, reason: string) {
@@ -140,7 +127,7 @@ export class SessionAccessCounter {
 
     // Clear any pending timeout
     if ('timeout' in session) {
-      clearTimeout(session.timeout)
+      session.timeout.clear()
     }
 
     // Remove from tracking

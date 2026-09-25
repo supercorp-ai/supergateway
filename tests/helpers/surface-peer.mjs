@@ -3,6 +3,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import {
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 
 const mcp = new McpServer(
   { name: 'surface-peer', version: '1.0.0' },
@@ -22,6 +26,11 @@ mcp.resource('note', 'note://alpha', async (uri) => ({
 mcp.prompt('greet', { who: z.string() }, ({ who }) => ({
   messages: [{ role: 'user', content: { type: 'text', text: `hello ${who}` } }],
 }))
+
+// McpServer advertises `subscribe` from the capabilities above but does not
+// answer it; the low-level handlers do.
+mcp.server.setRequestHandler(SubscribeRequestSchema, async () => ({}))
+mcp.server.setRequestHandler(UnsubscribeRequestSchema, async () => ({}))
 
 mcp.tool('touch', {}, async () => {
   await mcp.server.sendResourceUpdated({ uri: 'note://alpha' })

@@ -127,7 +127,12 @@ export async function stdioToSse(args: StdioToSseArgs) {
       return
     }
 
-    const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
+    // Without its trailing slash, `https://host/` would give `//message`,
+    // which a client reads as a URL on a host named "message".
+    const sseTransport = new SSEServerTransport(
+      `${baseUrl.replace(/\/+$/, '')}${messagePath}`,
+      res,
+    )
     const sessionServer = new Server(
       { name: 'supergateway', version: getVersion() },
       { capabilities: {} },

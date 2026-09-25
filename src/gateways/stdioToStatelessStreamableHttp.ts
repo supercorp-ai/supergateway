@@ -16,6 +16,7 @@ import { createModernHttp } from '../lib/modernHttp.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
+import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -106,7 +107,7 @@ export async function stdioToStatelessStreamableHttp(
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
-  app.use(express.json({ limit: '4mb' }))
+  app.use(express.json({ limit: '4mb' }), jsonBodyErrors)
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))

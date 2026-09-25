@@ -197,7 +197,9 @@ export async function stdioToStatelessStreamableHttp(
       // State tracking for initialization flow
       let initializeRequestId: string | number | null = null // Current initialize request ID
       let isAutoInitializing = false // Flag to indicate if we're auto-initializing
-      let pendingOriginalMessage: JSONRPCMessage | null = null
+      // Every message that arrived before auto-initialization finished, in
+      // order. A batch POST delivers several before the child can answer.
+      let pendingOriginalMessages: JSONRPCMessage[] = []
       let responseClosed = false
       let handled = false
       let hasOneWayMessage = false
@@ -285,16 +287,16 @@ export async function stdioToStatelessStreamableHttp(
                   JSON.stringify(initializedNotification) + '\n',
                 )
 
-                // Now send the original message. There is always one to
-                // send: `isAutoInitializing` is only ever set true alongside
-                // assigning it, and the only assignment back to null is the one
-                // below, immediately before the flag is cleared again. The
-                // guard that used to stand here could not be false.
-                logger.info(
-                  `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
-                )
-                child.stdin.write(JSON.stringify(pendingOriginalMessage) + '\n')
-                pendingOriginalMessage = null
+                // Now send the held messages, in the order they arrived.
+                // There is always at least one: `isAutoInitializing` is only
+                // set true when the first is queued.
+                for (const original of pendingOriginalMessages) {
+                  logger.info(
+                    `StreamableHttp → Child (original): ${JSON.stringify(original)}`,
+                  )
+                  child.stdin.write(JSON.stringify(original) + '\n')
+                }
+                pendingOriginalMessages = []
 
                 // Reset auto-initialize tracking
                 isAutoInitializing = false
@@ -344,8 +346,14 @@ export async function stdioToStatelessStreamableHttp(
         // POST's messages in a synchronous `for` loop with no await between
         // iterations. The condition was dead, and the flag write-only with it.
         if (!isInitializeRequest(msg)) {
+          // GW-003: a later message of the same batch joins the queue rather
+          // than starting a second handshake and replacing the first message.
+          if (isAutoInitializing) {
+            pendingOriginalMessages.push(msg)
+            return
+          }
           // Store the original message and send initialize first
-          pendingOriginalMessage = msg
+          pendingOriginalMessages = [msg]
           initializeRequestId = `init_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
           isAutoInitializing = true
 

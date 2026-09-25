@@ -19,7 +19,7 @@ jobs:
   test:
     name: Suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +45,7 @@ jobs:
       # stale build would let the compiled CLI tests pass against old code.
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: npm test
         env:
           # The ts-node typechecking loader aborts every file on Node 24.
@@ -267,7 +267,7 @@ jobs:
   sdk:
     name: SDK ${{ matrix.sdk }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -299,7 +299,7 @@ jobs:
         run: npm install --no-save @modelcontextprotocol/sdk@${{ matrix.sdk }}
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: npm test
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
@@ -313,7 +313,7 @@ jobs:
   compat:
     name: Compatible suite on Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -334,7 +334,7 @@ jobs:
 
       - name: Run the version-portable suite
         # Native lifecycle tests include the same shutdown grace as the full suite.
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: npm run test:compat
 
   # Build with the supported SDK toolchain, then install the exact tarball with

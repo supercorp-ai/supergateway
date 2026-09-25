@@ -13,6 +13,7 @@ import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
+import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 
 export interface SseToStdioArgs {
@@ -73,14 +74,16 @@ const newFallbackSseClient = async ({
 export async function sseToStdio(args: SseToStdioArgs) {
   const { sseUrl, logger, headers } = args
 
-  logger.info(`  - sse: ${sseUrl}`)
+  const upstreamUrl = parseUpstreamUrl(sseUrl)
+
+  logger.info(`  - sse: ${redactUrl(upstreamUrl)}`)
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info('Connecting to SSE...')
 
   onSignals({ logger })
 
   let streamOpened = false
-  const sseTransport = new SSEClientTransport(new URL(sseUrl), {
+  const sseTransport = new SSEClientTransport(upstreamUrl, {
     eventSourceInit: {
       fetch: async (...props: Parameters<typeof fetch>) => {
         const [url, init = {}] = props
@@ -109,8 +112,8 @@ export async function sseToStdio(args: SseToStdioArgs) {
         reject(
           new SseHandshakeTimeout(
             streamOpened
-              ? `SSE server at ${sseUrl} opened an event stream but sent no \`endpoint\` event within ${seconds}s. An MCP SSE server must first send \`event: endpoint\` with the URL to POST messages to. If this server uses Streamable HTTP, connect with --streamableHttp instead.`
-              : `SSE server at ${sseUrl} did not open an event stream within ${seconds}s.`,
+              ? `SSE server at ${redactUrl(upstreamUrl)} opened an event stream but sent no \`endpoint\` event within ${seconds}s. An MCP SSE server must first send \`event: endpoint\` with the URL to POST messages to. If this server uses Streamable HTTP, connect with --streamableHttp instead.`
+              : `SSE server at ${redactUrl(upstreamUrl)} did not open an event stream within ${seconds}s.`,
           ),
         )
       }, SSE_HANDSHAKE_TIMEOUT_MS)

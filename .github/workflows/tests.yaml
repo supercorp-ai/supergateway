@@ -217,6 +217,16 @@ jobs:
           printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
           chmod +x "$RUNNER_TEMP/pybattery"
           node tests/clients/run-battery.mjs python "$RUNNER_TEMP/pybattery"
+      # The battery tests Python clients; this is the other direction (#85): a
+      # Python MCP server behind the stateless gateway, which must initialize
+      # each per-request child itself.
+      - name: Python MCP server behind stateless HTTP
+        timeout-minutes: 3
+        env:
+          TS_NODE_TRANSPILE_ONLY: 'true'
+          SUPERGATEWAY_TEST_PYTHON: python
+          SUPERGATEWAY_REQUIRE_PYTHON: '1'
+        run: node --test --experimental-loader ts-node/esm tests/pythonServerStateless.test.ts
       - name: Conformance battery — Go
         timeout-minutes: 6
         run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery"

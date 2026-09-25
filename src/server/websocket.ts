@@ -25,6 +25,9 @@ export class WebSocketServerTransport implements Transport {
             console.log('Broadcast message:', msg)
             return handler(msg)
           }
+          // A reply to the server's own request (sampling, roots, elicitation)
+          // carries the child's id and must reach it unchanged.
+          if (!('method' in msg)) return handler(msg)
           // The id is written as JSON so `send` can restore it with its type:
           // a number reads as before (`<clientId>:17`), a string keeps its
           // quotes (`<clientId>:"17"`), and colons inside it survive.

@@ -125,3 +125,47 @@ test(
     )
   },
 )
+
+// The other direction. A request of the server's own is broadcast, and the
+// client's reply reaches the child with the child's id, not a tunnelled one.
+// Before, a string id was taken for a client id and the request dropped, and a
+// reply carried `<clientId>:<id>`, so no server request ever completed.
+test(
+  'a server request with a string id reaches the client and its reply reaches the server',
+  { timeout: 30000 },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/helpers/string-id-reverse-peer.mjs',
+      '--outputTransport',
+      'ws',
+      '--port',
+      String(port),
+    ])
+    await gateway.ready()
+    const client = await connect(port, t)
+    client.socket.on('message', (data: Buffer) => {
+      const message = JSON.parse(data.toString('utf8'))
+      if (message.method === 'ping')
+        client.socket.send(
+          JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }),
+        )
+    })
+
+    client.socket.send(
+      JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }),
+    )
+    await gateway.waitFor(
+      () => client.ids().includes(7),
+      'complete the request once the server’s ping is answered',
+    )
+    assert.deepEqual(
+      client.received.map((raw) => JSON.parse(raw)),
+      [
+        { jsonrpc: '2.0', id: 'srv-ping', method: 'ping' },
+        { jsonrpc: '2.0', id: 7, result: { pingAnswered: true } },
+      ],
+    )
+  },
+)

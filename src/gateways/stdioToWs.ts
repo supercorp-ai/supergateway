@@ -87,7 +87,11 @@ export async function stdioToWs(args: StdioToWsArgs) {
           // stretch — there is no await between registering this handler and
           // that assignment — so Node cannot deliver a chunk while it is still
           // null. The optional chain guarded a tick that cannot happen.
-          wsTransport!.send(jsonMsg, jsonMsg.id).catch((err) => {
+          // A reply goes back to the client that asked, named by its tunnelled
+          // id. A request of the server's own has no client to route to, so it
+          // is broadcast like a notification, whatever the type of its id.
+          const route = 'method' in jsonMsg ? undefined : jsonMsg.id
+          wsTransport!.send(jsonMsg, route).catch((err) => {
             logger.error('Failed to broadcast message:', err)
           })
         } catch {

@@ -14,6 +14,7 @@ import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
+import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 
 export interface StreamableHttpToStdioArgs {
@@ -41,9 +42,9 @@ const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
 
 export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   const { streamableHttpUrl, logger, headers } = args
-  const upstreamUrl = new URL(streamableHttpUrl)
+  const upstreamUrl = parseUpstreamUrl(streamableHttpUrl)
 
-  logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
+  logger.info(`  - streamableHttp: ${redactUrl(upstreamUrl)}`)
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info('Connecting to Streamable HTTP...')
 

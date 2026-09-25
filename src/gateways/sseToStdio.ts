@@ -15,6 +15,7 @@ import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
+import { relayServerMessages } from '../lib/relayServerMessages.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -125,6 +126,11 @@ export async function sseToStdio(args: SseToStdioArgs) {
       clearTimeout(timer)
     }
   }
+
+  relayServerMessages(sseTransport, (message) => {
+    logger.info('SSE → Stdio:', message)
+    process.stdout.write(JSON.stringify(message) + '\n')
+  })
 
   sseTransport.onclose = () => {
     logger.error('SSE connection closed')

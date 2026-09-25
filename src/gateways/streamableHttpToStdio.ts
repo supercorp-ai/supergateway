@@ -16,6 +16,7 @@ import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
+import { relayServerMessages } from '../lib/relayServerMessages.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
@@ -91,6 +92,10 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
     }
     const transport = new StreamableHTTPClientTransport(new URL(upstreamUrl), {
       requestInit: { headers },
+    })
+    relayServerMessages(transport, (message) => {
+      logger.info('Streamable HTTP → Stdio:', message)
+      process.stdout.write(JSON.stringify(message) + '\n')
     })
     transport.onerror = (err) => {
       logger.error('Streamable HTTP error:', err)

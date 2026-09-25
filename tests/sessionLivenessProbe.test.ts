@@ -140,6 +140,38 @@ test('missed pings do not shorten the configured idle grace period', async (t) =
   assert.equal(stale, 1)
 })
 
+// GW-010 for the probe: the idle grace is --sessionTimeout itself, and a grace
+// above setTimeout's 2^31-1 ms used to fire after 1 ms, so a 30-day session
+// became reapable after its first two missed pings.
+test('an idle grace beyond setTimeout’s range is not cut to 1 ms', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    30 * 24 * 60 * 60 * 1000,
+    async (id) => {
+      sent.push(id)
+    },
+    () => stale++,
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  for (let cycle = 0; cycle < 3; cycle++) {
+    t.mock.timers.tick(100)
+    await Promise.resolve()
+    t.mock.timers.tick(40)
+    await Promise.resolve()
+    t.mock.timers.tick(40)
+  }
+  assert.equal(stale, 0, 'missed pings inside the 30-day grace do not reap')
+  probe.stop()
+})
+
 test('late ping responses are consumed instead of leaking to the MCP child', async (t) => {
   enableFakeTimers(t)
   const sent: string[] = []
@@ -392,4 +424,38 @@ test('late timer and send completions cannot revive an obsolete probe', async (t
   )
   probe.stop()
   obsoleteReplyTimer()
+})
+
+test('a replacement GET does not inherit the previous stream’s missed pings', async (t) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    100,
+    async (id) => {
+      sent.push(id)
+    },
+    () => stale++,
+    logger,
+  )
+  probe.start()
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  t.mock.timers.tick(40)
+  await Promise.resolve()
+  assert.equal(sent.length, 3, 'one ping went unanswered on the first stream')
+  probe.stop()
+  assert.equal(probe.start(), true)
+  t.mock.timers.tick(100)
+  await Promise.resolve()
+  assert.equal(sent.length, 4)
+  t.mock.timers.tick(40)
+  await Promise.resolve()
+  assert.equal(stale, 0, 'a single miss on the new stream is not two')
+  assert.equal(sent.length, 5, 'the new stream retries after its first miss')
 })

@@ -1,4 +1,5 @@
 import { Logger } from '../types.js'
+import { setLongTimeout, type LongTimeout } from './longTimeout.js'
 
 /**
  * The invariant `dec()` relies on: a session held in the counting shape always
@@ -29,7 +30,7 @@ export function assertPositiveAccessCount(
 export class SessionAccessCounter {
   private sessions: Map<
     string,
-    { accessCount: number } | { timeout: NodeJS.Timeout }
+    { accessCount: number } | { timeout: LongTimeout }
   > = new Map()
 
   constructor(
@@ -59,7 +60,7 @@ export class SessionAccessCounter {
       this.logger.info(
         `Session access count 0 -> 1, clearing cleanup timeout for ${sessionId}`,
       )
-      clearTimeout(session.timeout)
+      session.timeout.clear()
       this.sessions.set(sessionId, { accessCount: 1 })
     } else {
       // Increment active session
@@ -104,7 +105,7 @@ export class SessionAccessCounter {
       )
 
       this.sessions.set(sessionId, {
-        timeout: setTimeout(() => {
+        timeout: setLongTimeout(() => {
           this.logger.info(`Session ${sessionId} timed out, cleaning up`)
           this.sessions.delete(sessionId)
           this.cleanup(sessionId)
@@ -126,7 +127,7 @@ export class SessionAccessCounter {
 
     // Clear any pending timeout
     if ('timeout' in session) {
-      clearTimeout(session.timeout)
+      session.timeout.clear()
     }
 
     // Remove from tracking

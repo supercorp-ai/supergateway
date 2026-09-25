@@ -9,6 +9,8 @@ import {
 } from './helpers/gateway-process.js'
 
 for (const notification of [true, false]) {
+  // GW-009: the request case passes on SDK 1.29 and 1.30 but still hangs on
+  // older SDKs in CI's matrix (1.18.2–1.22.0 measured), so it stays a known bug.
   const runTest = notification ? test : knownBugTest.bind(undefined, 'GW-009')
   runTest(
     `stateless HTTP contains deeply nested ${notification ? 'malformed notification' : 'request'} failures`,

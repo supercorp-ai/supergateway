@@ -42,7 +42,7 @@ test('the client’s initialized notification is absorbed, not relayed or echoed
 })
 
 test('every other client notification reaches the server', async () => {
-  const { errors, logger } = recorder()
+  const { info, errors, logger } = recorder()
   const sent: JSONRPCMessage[] = []
   const cancelled = {
     jsonrpc: '2.0' as const,
@@ -61,6 +61,7 @@ test('every other client notification reaches the server', async () => {
   // on a request the client had already abandoned.
   assert.deepEqual(sent, [cancelled])
   assert.deepEqual(errors, [])
+  assert.deepEqual(info, [['Stdio → Streamable HTTP:', cancelled]])
 })
 
 test('a response to a server-initiated request reaches the server', async () => {

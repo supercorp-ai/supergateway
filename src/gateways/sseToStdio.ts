@@ -145,7 +145,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
   await stdioServer.connect(stdioTransport)
 
   const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
-    jsonrpc: req.jsonrpc || '2.0',
+    jsonrpc: '2.0',
     id: req.id,
     ...payload,
   })

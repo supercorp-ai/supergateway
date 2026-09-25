@@ -82,7 +82,11 @@ const parseHeaders = ({
     const value = header.slice(colonIndex + 1).trim()
 
     if (!key || !value) {
-      logger.error(`Invalid header format: ${header}, ignoring`)
+      // Only the name. With the name missing the rest is a bare value, and
+      // `--header ": Bearer abc"` would otherwise put the credential in the log.
+      logger.error(
+        `Invalid header format: ${key || '(missing name)'}, ignoring`,
+      )
       return acc
     }
 

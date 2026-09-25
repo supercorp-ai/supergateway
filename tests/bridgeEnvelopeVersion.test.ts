@@ -1,20 +1,17 @@
-// GW-013: both upstream-to-stdio bridges build their reply envelope with
-// `req.jsonrpc || '2.0'`, so a request carrying a non-2.0 version is answered
+// GW-013, fixed: both upstream-to-stdio bridges built their reply envelope with
+// `req.jsonrpc || '2.0'`, so a request carrying a non-2.0 version was answered
 // with that same version. JSON-RPC 2.0 requires every response to carry "2.0".
-// Recorded as a specification, not enabled: asserting the current reply would
-// bless a non-conformant envelope.
 //
 // Found by mutation audit rather than by coverage: replacing the expression
 // with the constant '2.0' passes the entire suite, because every other test
 // sends a conformant request and cannot tell the two apart.
-import { knownBugTest } from './helpers/known-bug.js'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initialize } from './helpers/gateway-process.js'
 
 for (const mode of ['sse', 'streamableHttp'] as const) {
-  knownBugTest(
-    'GW-013',
-    `${mode} bridge answers a non-2.0 request with a conformant 2.0 envelope`,
+  test(
+    `GW-013: ${mode} bridge answers a non-2.0 request with a conformant 2.0 envelope`,
     { timeout: 15000 },
     async (t) => {
       const writes: string[] = []

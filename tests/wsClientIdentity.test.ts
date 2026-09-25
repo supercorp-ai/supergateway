@@ -8,7 +8,6 @@ import {
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 /**
  * The WebSocket gateway is the one bridge in this repository that already
@@ -17,11 +16,12 @@ import { knownBugTest } from './helpers/known-bug.js'
  * "route by request id" option, implemented in `src/server/websocket.ts`.
  *
  * On the way in, the transport rewrites the JSON-RPC id to
- * `<clientId>:<originalId>`. The child echoes that composite back, and the send
- * path splits it, restores the original id and delivers to that one client.
- * Client identity is tunnelled through the id field.
+ * `<clientId>:<originalId>`, with the original id written as JSON. The child
+ * echoes that composite back, and the send path splits it at the first colon,
+ * restores the original id and delivers to that one client. Client identity is
+ * tunnelled through the id field.
  *
- * Neat, and it has a sharp edge — see GW-018 below.
+ * Neat, and it had a sharp edge — see GW-018 below.
  */
 async function connect(port: number, t: { after: (fn: () => void) => void }) {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/message`)
@@ -88,9 +88,9 @@ test(
 )
 
 /**
- * GW-018: a string JSON-RPC id comes back as null.
+ * GW-018, fixed: a string JSON-RPC id came back as null.
  *
- * The composite id is taken apart with `parseInt(rawId, 10)`, which assumes the
+ * The composite id was taken apart with `parseInt(rawId, 10)`, which assumed the
  * original id was a number. JSON-RPC 2.0 allows a string, and so does MCP.
  * `parseInt('req-abc', 10)` is NaN, and `JSON.stringify` writes NaN as null, so
  * the client is sent `"id": null` for a request it labelled `"req-abc"` and can
@@ -103,9 +103,8 @@ test(
  * client numbers its requests. A client using string or UUID ids gets replies
  * it cannot correlate, and every request appears to hang.
  */
-knownBugTest(
-  'GW-018',
-  'a WebSocket client’s string request id survives the round trip',
+test(
+  'GW-018: a WebSocket client’s string request id survives the round trip',
   { timeout: 30000 },
   async (t) => {
     const { port, gateway } = await launch(t)

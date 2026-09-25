@@ -58,7 +58,8 @@ export class CancellableRequests {
       )
       return true
     }
-    controller.abort(params?.reason ?? 'Cancelled by the client')
+    // Found by its requestId, so the params were there.
+    controller.abort(params!.reason ?? 'Cancelled by the client')
     return true
   }
 }

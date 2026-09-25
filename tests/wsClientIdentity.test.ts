@@ -8,7 +8,6 @@ import {
   peerCommand,
   unusedPort,
 } from './helpers/gateway-process.js'
-import { knownBugTest } from './helpers/known-bug.js'
 
 /**
  * The WebSocket gateway is the one bridge in this repository that already
@@ -90,7 +89,7 @@ test(
 /**
  * GW-018: a string JSON-RPC id comes back as null.
  *
- * The composite id is taken apart with `parseInt(rawId, 10)`, which assumes the
+ * The composite id was taken apart with `parseInt(rawId, 10)`, which assumed the
  * original id was a number. JSON-RPC 2.0 allows a string, and so does MCP.
  * `parseInt('req-abc', 10)` is NaN, and `JSON.stringify` writes NaN as null, so
  * the client is sent `"id": null` for a request it labelled `"req-abc"` and can
@@ -100,12 +99,12 @@ test(
  *   A received id: null  (type object)
  *
  * Numeric ids are unaffected, which is why nothing caught this: the SDK's own
- * client numbers its requests. A client using string or UUID ids gets replies
- * it cannot correlate, and every request appears to hang.
+ * client numbers its requests. A client using string or UUID ids got replies
+ * it could not correlate, and every request appeared to hang. The transport now
+ * JSON-encodes the original id into the composite and decodes it on the way out.
  */
-knownBugTest(
-  'GW-018',
-  'a WebSocket client’s string request id survives the round trip',
+test(
+  'GW-018: a WebSocket client’s string request id survives the round trip',
   { timeout: 30000 },
   async (t) => {
     const { port, gateway } = await launch(t)

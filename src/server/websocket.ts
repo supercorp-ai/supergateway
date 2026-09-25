@@ -7,6 +7,18 @@ import { v4 as uuidv4 } from 'uuid'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Server } from 'http'
 
+// The id a client sent, encoded by onmessage as JSON. The fallback keeps a
+// non-JSON suffix as the string it was.
+const decodeId = (raw: string): string | number => {
+  try {
+    const id = JSON.parse(raw)
+    if (typeof id === 'string' || typeof id === 'number') return id
+  } catch {
+    // not JSON
+  }
+  return raw
+}
+
 export class WebSocketServerTransport implements Transport {
   private wss!: WebSocketServer
   private clients: Map<string, WebSocket> = new Map()
@@ -25,11 +37,13 @@ export class WebSocketServerTransport implements Transport {
             console.log('Broadcast message:', msg)
             return handler(msg)
           }
+          // The original id is JSON-encoded so send() can restore it with its
+          // type: JSON-RPC allows string ids, not just numbers.
           // @ts-ignore
           return handler({
             ...msg,
             // @ts-ignore
-            id: clientId + ':' + msg.id,
+            id: clientId + ':' + JSON.stringify(msg.id),
           })
         }
       : undefined
@@ -76,10 +90,11 @@ export class WebSocketServerTransport implements Transport {
     const clientId = typeof options === 'string' ? options : undefined
 
     // if your protocol mangles IDs to include clientId, strip it off
-    const [cId, rawId] = clientId?.split(':') ?? []
-    if (rawId !== undefined) {
+    const separator = clientId?.indexOf(':') ?? -1
+    const cId = separator === -1 ? clientId : clientId!.slice(0, separator)
+    if (separator !== -1) {
       // @ts-ignore
-      msg.id = parseInt(rawId, 10)
+      msg.id = decodeId(clientId!.slice(separator + 1))
     }
 
     const payload = JSON.stringify(msg)

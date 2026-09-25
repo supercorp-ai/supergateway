@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from '../types.js'
+import { setLongTimeout, type LongTimeout } from './longTimeout.js'
 
 // A GET socket can remain open at a reverse proxy after its client vanishes.
 // A protocol ping crosses that proxy and requires an answer from the client.
@@ -10,7 +11,7 @@ export class SessionLivenessProbe {
   private readonly idPrefix = `supergateway-ping:${randomUUID()}:`
   private nextId = 0
   private timer?: NodeJS.Timeout
-  private graceTimer?: NodeJS.Timeout
+  private graceTimer?: LongTimeout
   private active = false
   private closed = false
   private revision = 0
@@ -49,7 +50,7 @@ export class SessionLivenessProbe {
     this.active = false
     this.revision++
     clearTimeout(this.timer)
-    clearTimeout(this.graceTimer)
+    this.graceTimer?.clear()
     this.timer = undefined
     this.graceTimer = undefined
   }
@@ -108,9 +109,9 @@ export class SessionLivenessProbe {
   }
 
   private resetGrace(): void {
-    clearTimeout(this.graceTimer)
+    this.graceTimer?.clear()
     this.staleEligible = false
-    this.graceTimer = setTimeout(() => {
+    this.graceTimer = setLongTimeout(() => {
       this.staleEligible = true
     }, this.staleAfterMs)
     this.graceTimer.unref()

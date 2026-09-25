@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fc from 'fast-check'
+// The `ws` client, not the global one: `WebSocket` is undefined on Node 18 and
+// 20, which the compat job still covers.
+import { WebSocket } from 'ws'
 import { launchGateway, unusedPort } from './helpers/gateway-process.js'
 
 /**
@@ -11,10 +14,10 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
  *
  * Written as a property because the bug in this area is a *type* bug, not a
  * value bug: GW-018 is `parseInt` applied to an id that was a string, and no
- * example test using a numeric id can see it. The generator is the point. The
- * WebSocket gateway fails this property today (see wsClientIdentity.test.ts);
- * SSE passes it, and this pins that, because the GW-017 fix is expected to
- * introduce per-client routing here and routing by id is the tempting way.
+ * example test using a numeric id can see it. The generator is the point. SSE
+ * is pinned because per-client routing by id is the tempting way to fix GW-017
+ * there; WebSocket already routes by id, and is pinned because it is where
+ * GW-018 lived.
  */
 const jsonRpcId = fc.oneof(
   fc.integer(),
@@ -98,6 +101,64 @@ test(
               'every id comes back exactly as it was sent, same type included',
             )
           } finally {
+            await gateway.dispose()
+          }
+        },
+      ),
+      { numRuns: 10 },
+    )
+  },
+)
+
+test(
+  'the WebSocket gateway returns the request id unchanged, whatever its type',
+  { timeout: 120000 },
+  async (t) => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(jsonRpcId, { minLength: 1, maxLength: 6 }),
+        async (ids) => {
+          const port = await unusedPort()
+          const gateway = launchGateway(t, [
+            '--stdio',
+            'node tests/helpers/chunking-mcp-peer.mjs',
+            '--outputTransport',
+            'ws',
+            '--port',
+            String(port),
+          ])
+          let socket: WebSocket | undefined
+          try {
+            await gateway.ready()
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/message`)
+            socket = ws
+            const replies: Array<{ id: unknown }> = []
+            ws.on('message', (data: Buffer) => {
+              replies.push(JSON.parse(data.toString('utf8')))
+            })
+            await new Promise<void>((resolve, reject) => {
+              ws.once('open', () => resolve())
+              ws.once('error', (error: Error) => reject(error))
+            })
+
+            for (const id of ids)
+              ws.send(
+                JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list' }),
+              )
+            await gateway.waitFor(
+              () => replies.length >= ids.length,
+              `deliver ${ids.length} replies`,
+            )
+
+            // Sorted as JSON so a number and its string twin stay distinct.
+            const key = (id: unknown) => JSON.stringify(id)
+            assert.deepEqual(
+              replies.map((reply) => key(reply.id)).sort(),
+              ids.map(key).sort(),
+              'every id comes back exactly as it was sent, same type included',
+            )
+          } finally {
+            socket?.close()
             await gateway.dispose()
           }
         },

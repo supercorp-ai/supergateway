@@ -1,6 +1,5 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { knownBugTest } from './helpers/known-bug.js'
 import { get } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { faultControl } from './helpers/fault-control.js'
@@ -82,8 +81,7 @@ async function stream(t: TestContext, base: string) {
 }
 
 for (const paused of [false, true]) {
-  const check = paused ? knownBugTest.bind(null, 'GW-033') : test
-  check(
+  test(
     `SSE ${paused ? 'paused' : 'draining'} reader survives 128 MiB of small valid notifications with a 96 MiB gateway heap`,
     { timeout: 90000 },
     async (t) => {

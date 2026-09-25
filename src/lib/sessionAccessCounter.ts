@@ -26,6 +26,8 @@ export function assertPositiveAccessCount(
   }
 }
 
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
+
 export class SessionAccessCounter {
   private sessions: Map<
     string,
@@ -103,14 +105,26 @@ export class SessionAccessCounter {
         `Session access count reached 0, setting cleanup timeout for ${sessionId}`,
       )
 
-      this.sessions.set(sessionId, {
-        timeout: setTimeout(() => {
-          this.logger.info(`Session ${sessionId} timed out, cleaning up`)
-          this.sessions.delete(sessionId)
-          this.cleanup(sessionId)
-        }, this.timeout),
-      })
+      this.expireAfter(sessionId, this.timeout)
     }
+  }
+
+  // A delay above 2^31-1 ms (about 24.8 days) makes Node's setTimeout fire
+  // after 1 ms, so a longer --sessionTimeout waits in hops. Each hop replaces
+  // the entry, so `inc` and `clear` always cancel the timer that is pending.
+  private expireAfter(sessionId: string, remaining: number) {
+    const hop = Math.min(remaining, MAX_TIMEOUT_MS)
+    this.sessions.set(sessionId, {
+      timeout: setTimeout(() => {
+        if (remaining > hop) {
+          this.expireAfter(sessionId, remaining - hop)
+          return
+        }
+        this.logger.info(`Session ${sessionId} timed out, cleaning up`)
+        this.sessions.delete(sessionId)
+        this.cleanup(sessionId)
+      }, hop),
+    })
   }
 
   clear(sessionId: string, runCleanup: boolean, reason: string) {

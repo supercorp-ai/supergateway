@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
-import { knownBugTest } from './helpers/known-bug.js'
 import {
   initialize,
   launchGateway,
@@ -11,8 +10,7 @@ import {
 } from './helpers/gateway-process.js'
 
 for (const days of [1, 30]) {
-  const runTest = days === 1 ? test : knownBugTest.bind(undefined, 'GW-010')
-  runTest(
+  test(
     `stateful HTTP honors a ${days}-day idle timeout without expiring immediately`,
     { timeout: 10000 },
     async (t) => {

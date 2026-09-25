@@ -20,22 +20,38 @@ export class WebSocketServerTransport implements Transport {
   set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
     this.messageHandler = handler
       ? (msg, clientId) => {
+          // The id is written as JSON so `send` can restore it with its type:
+          // a number reads as before (`<clientId>:17`), a string keeps its
+          // quotes (`<clientId>:"17"`), and colons inside it survive.
+          const tunnel = (id: unknown) => clientId + ':' + JSON.stringify(id)
           // @ts-ignore
           if (msg.id === undefined) {
-            console.log('Broadcast message:', msg)
+            // A client's cancel names its own request id, which reached the
+            // child tunnelled, so the cancel has to name the tunnelled one.
+            // Without an id it is a notification, or not JSON-RPC at all; either
+            // way only a cancel's params are rewritten.
+            const { method, params } = msg as {
+              method: string
+              params?: { requestId?: unknown }
+            }
+            if (
+              method === 'notifications/cancelled' &&
+              params?.requestId !== undefined
+            )
+              return handler({
+                ...msg,
+                params: { ...params, requestId: tunnel(params.requestId) },
+              } as JSONRPCMessage)
             return handler(msg)
           }
           // A reply to the server's own request (sampling, roots, elicitation)
           // carries the child's id and must reach it unchanged.
           if (!('method' in msg)) return handler(msg)
-          // The id is written as JSON so `send` can restore it with its type:
-          // a number reads as before (`<clientId>:17`), a string keeps its
-          // quotes (`<clientId>:"17"`), and colons inside it survive.
           // @ts-ignore
           return handler({
             ...msg,
             // @ts-ignore
-            id: clientId + ':' + JSON.stringify(msg.id),
+            id: tunnel(msg.id),
           })
         }
       : undefined

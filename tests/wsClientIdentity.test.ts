@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setTimeout as delay } from 'node:timers/promises'
 // The `ws` client, not the global one: `WebSocket` is undefined on Node 18 and
 // 20, which the compat job still covers.
 import { WebSocket } from 'ws'
@@ -167,5 +168,62 @@ test(
         { jsonrpc: '2.0', id: 7, result: { pingAnswered: true } },
       ],
     )
+  },
+)
+
+// A cancel names the client's own id; the request reached the child tunnelled,
+// so an untranslated cancel named an id the child had never seen and the tool
+// ran on.
+test(
+  'a WebSocket client’s cancel reaches the request it named',
+  { timeout: 30000 },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/helpers/slow-peer.mjs',
+      '--outputTransport',
+      'ws',
+      '--port',
+      String(port),
+    ])
+    await gateway.ready()
+    const client = await connect(port, t)
+    const send = (message: object) =>
+      client.socket.send(JSON.stringify({ jsonrpc: '2.0', ...message }))
+    const reply = async (id: string) => {
+      await gateway.waitFor(() => client.ids().includes(id), `answer ${id}`)
+      return client.received
+        .map((raw) => JSON.parse(raw))
+        .find((m) => m.id === id)
+    }
+    send({
+      id: 'init',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'raw', version: '1.0.0' },
+      },
+    })
+    await reply('init')
+    send({ method: 'notifications/initialized' })
+    send({
+      id: 'call-A',
+      method: 'tools/call',
+      params: { name: 'slow', arguments: { ms: 1500 } },
+    })
+    await delay(300)
+    send({
+      method: 'notifications/cancelled',
+      params: { requestId: 'call-A', reason: 'user stopped it' },
+    })
+    await delay(300)
+    send({
+      id: 'status',
+      method: 'tools/call',
+      params: { name: 'status', arguments: {} },
+    })
+    assert.equal((await reply('status')).result.content[0].text, 'aborted')
   },
 )

@@ -14,6 +14,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -236,6 +237,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
           logger.error(`Child non-JSON (session ${sessionId}): ${line}`)
         }
       })
+      holdOutput(child.stdout, drained([res]))
     })
     child.stderr.on('data', (chunk: Buffer) => {
       logger.error(

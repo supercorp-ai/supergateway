@@ -70,9 +70,11 @@ export function observeGateway(t: TestContext) {
     delete(path: string, handler: any) {
       routes.set(`DELETE ${path}`, handler)
     },
+    // Express returns the Node server it started; the gateway tunes it.
     listen(port: number, callback: () => void) {
       listens.push(port)
       callback()
+      return {}
     },
   }
   class Child extends EventEmitter {

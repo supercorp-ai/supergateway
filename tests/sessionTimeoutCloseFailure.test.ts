@@ -58,6 +58,7 @@ const expressMock = (routes: Map<string, (req: any, res: any) => unknown>) => ({
   },
   listen(_port: number, cb?: () => void) {
     cb?.()
+    return {}
   },
 })
 

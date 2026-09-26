@@ -16,6 +16,9 @@ for the long run. A push does not start this workflow.
   expiry, capacity eviction and backend crashes against the installed CLI.
 - Repeated protocol checks include signed continuation rounds, repeated backend
   tokens, explicit retries, cancellation and concurrent-client isolation.
+- Since 4.0.0 they also cover what the bridges relay from the upstream server
+  (notifications, sampling, roots, elicitation) and cancel, one child per
+  WebSocket connection, resources and prompts, and the stateless handshake.
 - POSIX lanes also exercise legacy transports, shutdown and SDK 1.30/1.4 clients.
 - POSIX resource tests keep six gateways alive: SSE, WebSocket, legacy stateful
   and stateless HTTP, modern HTTP, and modern signed continuations. They check

@@ -21,6 +21,21 @@ for the long run. A push does not start this workflow.
   and stateless HTTP, modern HTTP, and modern signed continuations. They check
   call results, reconnects, cancellation, Unicode and sustained continuation
   churn. One legacy stateful session stays open throughout active load.
+- POSIX lanes also run six real MCP servers, pinned from npm and PyPI
+  (`scripts/real-servers/servers.ts`), through every gateway path each cycle,
+  and require the same answers as a direct stdio connection. The MCP
+  Inspector's CLI does the same against server-everything
+  (`scripts/inspectorClient.test.ts`), including as the stdio client of both
+  bridges. The workflow runs both once before the clock starts, so a registry
+  outage fails fast.
+- POSIX lanes also run sustained scenarios (`scripts/soak-scenarios.test.ts`):
+  long-lived SSE and Streamable HTTP bridges relaying logs, progress and
+  sampling, cancelling calls, carrying 4 MB replies and surviving upstream
+  restarts; busy and idle WebSocket clients side by side; and servers crashing
+  mid-call in every mode. They have their own child, descriptor and RSS gates.
+- A separate Ubuntu job runs the Python and Go SDK and Ruby client batteries
+  (`tests/clients/`) over every output transport for the whole phase
+  (`scripts/soak-languages.mjs`).
 - Windows runs the portable protocol and continuation checks, including fixture
   child cleanup. It does not claim the POSIX RSS, descriptor or process-group tests.
 

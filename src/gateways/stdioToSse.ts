@@ -13,6 +13,7 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
+import { LineSplitter } from '../lib/lineSplitter.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -218,12 +219,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
     })
 
     const decoder = new StringDecoder('utf8')
-    let buffer = ''
+    const lines = new LineSplitter()
     child.stdout.on('data', (chunk: Buffer) => {
-      buffer += decoder.write(chunk)
-      const lines = buffer.split(/\r?\n/)
-      buffer = lines.pop()!
-      lines.forEach((line) => {
+      lines.push(decoder.write(chunk)).forEach((line) => {
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)

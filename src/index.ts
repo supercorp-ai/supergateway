@@ -144,7 +144,7 @@ async function main() {
     .option('protocolVersion', {
       type: 'string',
       description:
-        'MCP protocol version to use for auto-initialization. Defaults to "2024-11-05" if not specified.',
+        'MCP protocol version to use for auto-initialization when the request has no MCP-Protocol-Version header. Defaults to "2024-11-05" if not specified.',
       default: '2024-11-05',
     })
     .help()

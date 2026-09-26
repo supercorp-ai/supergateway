@@ -18,6 +18,7 @@ import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
+import { LineSplitter } from '../lib/lineSplitter.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -83,6 +84,9 @@ export async function stdioToStatefulStreamableHttp(
   const app = express()
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
+    // --header applies to every response, as it does in SSE mode. It used to
+    // reach only the health endpoint.
+    setResponseHeaders({ res, headers })
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
@@ -99,10 +103,6 @@ export async function stdioToStatefulStreamableHttp(
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
-      setResponseHeaders({
-        res,
-        headers,
-      })
       res.send('ok')
     })
   }
@@ -259,14 +259,9 @@ export async function stdioToStatefulStreamableHttp(
       })
 
       const decoder = new StringDecoder('utf8')
-      let buffer = ''
+      const lines = new LineSplitter()
       child.stdout.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk)
-        const lines = buffer.split(/\r?\n/)
-        // `split` always returns at least one element, so `pop()` is never
-        // undefined here — the fallback it replaced could not be taken.
-        buffer = lines.pop()!
-        lines.forEach((line) => {
+        lines.push(decoder.write(chunk)).forEach((line) => {
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)

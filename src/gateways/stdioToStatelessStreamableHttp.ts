@@ -17,6 +17,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
+import { LineSplitter } from '../lib/lineSplitter.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -104,6 +105,9 @@ export async function stdioToStatelessStreamableHttp(
   const app = express()
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
+    // --header applies to every response, as it does in SSE mode. It used to
+    // reach only the health endpoint.
+    setResponseHeaders({ res, headers })
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
@@ -115,10 +119,6 @@ export async function stdioToStatelessStreamableHttp(
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
-      setResponseHeaders({
-        res,
-        headers,
-      })
       res.send('ok')
     })
   }
@@ -237,14 +237,9 @@ export async function stdioToStatelessStreamableHttp(
       })
 
       const decoder = new StringDecoder('utf8')
-      let buffer = ''
+      const lines = new LineSplitter()
       child.stdout.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk)
-        const lines = buffer.split(/\r?\n/)
-        // `split` always returns at least one element, so `pop()` is never
-        // undefined here — the fallback it replaced could not be taken.
-        buffer = lines.pop()!
-        lines.forEach((line) => {
+        lines.push(decoder.write(chunk)).forEach((line) => {
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)
@@ -359,9 +354,15 @@ export async function stdioToStatelessStreamableHttp(
           logger.info(
             'Non-initialize message detected, sending auto-initialize request first',
           )
+          // Every request after initialize names the version the client
+          // negotiated (from 2025-06-18 on), and the SDK has already refused one
+          // it does not support. Initialize this request's child with it, or the
+          // server treats a current client as a 2024-11-05 one. --protocolVersion
+          // is for clients that do not say.
           const initRequest = createInitializeRequest(
             initializeRequestId,
-            protocolVersion,
+            (req.headers['mcp-protocol-version'] as string | undefined) ??
+              protocolVersion,
           )
           logger.info(
             `StreamableHttp → Child (auto-initialize): ${JSON.stringify(initRequest)}`,

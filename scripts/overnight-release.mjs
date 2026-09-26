@@ -129,6 +129,21 @@ async function batteries() {
         )
       }
     }
+    // Real servers once per cycle, where the lane has them (see the workflow).
+    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.failed)
+      await run(
+        `cycle-${cycle}-real-servers`,
+        [
+          '--import',
+          'tsx',
+          '--test',
+          '--test-concurrency=1',
+          '--test-reporter',
+          './scripts/release-test-reporter.mjs',
+          'scripts/realServers.test.ts',
+        ],
+        25 * 60000,
+      )
     events({ phase: 'cycle-complete', cycle: cycle++ })
     await delay(
       Math.min(60000, Math.max(0, deadline - Date.now())),
@@ -168,6 +183,14 @@ if (
       ['--import', 'tsx', 'scripts/soak-release.test.ts'],
       (seconds + 480) * 1000,
       { SOAK_REPORT: resolve(root, 'resources.jsonl') },
+    ),
+    // Long-lived bridges, WebSocket isolation, cancellation, large replies,
+    // crashes and upstream restarts, with their own resource gates.
+    run(
+      'scenarios',
+      ['--import', 'tsx', 'scripts/soak-scenarios.test.ts'],
+      (seconds + 420) * 1000,
+      { SOAK_REPORT: resolve(root, 'scenarios.jsonl') },
     ),
   )
 const results = await Promise.allSettled(jobs)

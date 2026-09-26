@@ -20,7 +20,9 @@ jobs:
   exercise:
     name: ${{ inputs.label }} / Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 210
+    # Three-hour phases, plus install, the finite continuation check, the
+    # real-server preflight and cooldowns.
+    timeout-minutes: 225
     strategy:
       fail-fast: true
       max-parallel: 12
@@ -41,6 +43,9 @@ jobs:
       # so a raised budget hides nothing. Group test timeouts follow it through
       # gatewayTimeout().
       SUPERGATEWAY_TEST_READY_TIMEOUT: ${{ matrix.os == 'windows-latest' && '30000' || '' }}
+      # Real, pinned MCP servers from npm and PyPI (scripts/realServers.test.ts).
+      # POSIX only: the servers start through a shell command line.
+      SUPERGATEWAY_REAL_SERVERS: ${{ matrix.os != 'windows-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,6 +58,16 @@ jobs:
         run: node --import tsx --test tests/processTree.test.ts
       - name: Install exact published RC and verify its digest
         run: npm exec -- node scripts/install-soak-artifact.mjs
+      - name: Set up uv for the Python servers
+        if: matrix.os != 'windows-latest'
+        uses: astral-sh/setup-uv@v6
+      # Downloads and caches the pinned servers before the clock starts, and
+      # fails fast if a registry is down or a server misbehaves rather than
+      # after hours of soak.
+      - name: Real servers answer identically through every gateway path
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 30
+        run: node --import tsx --test --test-concurrency=1 scripts/realServers.test.ts
       - name: Exercise published RC
         run: node scripts/overnight-release.mjs
       - name: Preserve results, including failures

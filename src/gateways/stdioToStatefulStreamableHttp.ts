@@ -299,6 +299,23 @@ export async function stdioToStatefulStreamableHttp(
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
+        if ('method' in msg && msg.method === 'notifications/cancelled')
+          endCancelled(
+            (msg.params as { requestId?: string | number } | undefined)
+              ?.requestId,
+          )
+      }
+
+      // A server sends nothing for a cancelled call, and the response stream
+      // for it stays open until the call is answered: every cancel in a
+      // long-lived session held a socket until the session ended (measured: 30
+      // cancels, 30 more descriptors). Close that stream, and stop routing
+      // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
+      // older one the stream stays open, as before.
+      const endCancelled = (requestId: string | number | undefined) => {
+        if (!pendingRequests.delete(requestId!)) return
+        if (typeof transport.closeSSEStream === 'function')
+          transport.closeSSEStream(requestId!)
       }
 
       transport.onclose = () => {

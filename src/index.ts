@@ -31,6 +31,7 @@ import { getLogger } from './lib/getLogger.js'
 import { getVersion } from './lib/getVersion.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import { stdioToSharedStreamableHttp } from './gateways/stdioToSharedStreamableHttp.js'
 
 type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
 
@@ -136,6 +137,12 @@ async function main() {
       description:
         'Whether the server is stateful. Only supported for stdio→StreamableHttp.',
     })
+    .option('shared', {
+      type: 'boolean',
+      default: false,
+      description:
+        'Spawn a single shared stdio child process and multiplex all client sessions onto it, instead of one child per session. Only supported with --stateful stdio→StreamableHttp. Use for upstream servers that only tolerate one client connection',
+    })
     .option('sessionTimeout', {
       type: 'number',
       description:
@@ -238,19 +245,36 @@ async function main() {
             sessionTimeout = defaultSessionTimeout
           }
 
-          await stdioToStatefulStreamableHttp({
-            stdioCmd: argv.stdio!,
-            port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
-            logger,
-            corsOrigin: corsOrigin({ argv }),
-            healthEndpoints: argv.healthEndpoint as string[],
-            headers: headers({
-              argv,
+          if (argv.shared) {
+            logger.info('Sharing a single child process across all sessions')
+            await stdioToSharedStreamableHttp({
+              stdioCmd: argv.stdio!,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
               logger,
-            }),
-            sessionTimeout,
-          })
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              sessionTimeout,
+            })
+          } else {
+            await stdioToStatefulStreamableHttp({
+              stdioCmd: argv.stdio!,
+              port: argv.port,
+              streamableHttpPath: argv.streamableHttpPath,
+              logger,
+              corsOrigin: corsOrigin({ argv }),
+              healthEndpoints: argv.healthEndpoint as string[],
+              headers: headers({
+                argv,
+                logger,
+              }),
+              sessionTimeout,
+            })
+          }
         } else {
           logger.info('Running stateless server')
 

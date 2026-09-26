@@ -314,8 +314,13 @@ export async function stdioToStatefulStreamableHttp(
       // older one the stream stays open, as before.
       const endCancelled = (requestId: string | number | undefined) => {
         if (!pendingRequests.delete(requestId!)) return
-        if (typeof transport.closeSSEStream === 'function')
-          transport.closeSSEStream(requestId!)
+        // Typed by hand: the SDK matrix builds against versions that do not
+        // declare it.
+        const closable = transport as unknown as {
+          closeSSEStream?: (requestId: string | number) => void
+        }
+        if (typeof closable.closeSSEStream === 'function')
+          closable.closeSSEStream(requestId!)
       }
 
       transport.onclose = () => {

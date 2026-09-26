@@ -105,6 +105,9 @@ export async function stdioToStatelessStreamableHttp(
   const app = express()
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
+    // --header applies to every response, as it does in SSE mode. It used to
+    // reach only the health endpoint.
+    setResponseHeaders({ res, headers })
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
@@ -116,10 +119,6 @@ export async function stdioToStatelessStreamableHttp(
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
-      setResponseHeaders({
-        res,
-        headers,
-      })
       res.send('ok')
     })
   }

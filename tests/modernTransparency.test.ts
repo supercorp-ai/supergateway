@@ -170,6 +170,16 @@ for (const wrapped of [false, true]) {
       )
       await subscription.close()
       assert.equal(await subscription.closed, 'local')
+      // close() resolves once the cancellation is sent, not once the server
+      // has read it, and a change the server sent in between still reaches
+      // the handler above. The server drops the subscription as soon as it
+      // reads the cancellation and answers in order, so once a later call
+      // returns, every earlier change has been counted. (2026-07-28 has no
+      // ping, and tools/call is never served from the client's cache.)
+      await peer.callTool(
+        { name: 'inspect', arguments: {} },
+        { timeout: requestTimeout(3000) },
+      )
       const count = changes.length
       await delay(200)
       assert.equal(

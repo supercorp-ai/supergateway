@@ -171,8 +171,10 @@ test('stateless reverse requests preserve pending calls, reject before init matc
 
   // Notification-only input has no HTTP response stream. Reverse requests must
   // still receive errors locally without creating a phantom client request.
+  // (Not notifications/initialized: the gateway drops the client's copy,
+  // since it initializes this child itself, so that one reaches no child.)
   await b.request('POST', '/mcp', {
-    body: { jsonrpc: '2.0', method: 'notifications/initialized' },
+    body: { jsonrpc: '2.0', method: 'notifications/roots/list_changed' },
   })
   const oneWay = b.children[1]
   const init = JSON.parse(oneWay.writes[0])

@@ -58,6 +58,16 @@ const portable = [
   'sseDisconnectSurvival',
   'statelessNotificationsE2e',
   'utf8ChunkBoundariesE2e',
+  // Behaviour new since 4.0.0: what the bridges relay and cancel,
+  // per-connection WebSocket children, and the stateless handshake.
+  'bridgeServerInitiated',
+  'bridgeCancellation',
+  'wsClientIdentity',
+  'resourcesAndPrompts',
+  'statelessProtocolVersion',
+  'statelessInitializedNotification',
+  'httpResponseHeaders',
+  'httpBodyErrors',
 ]
 const lifecycle = [
   'ownedProcessGroupsE2e',

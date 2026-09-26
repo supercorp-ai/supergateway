@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
 
 // Stateless mode gives every request a fresh child and initializes it itself.
@@ -8,6 +10,21 @@ import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
 // that believed the client was on 2024-11-05. From 2025-06-18 on a client names
 // its version in every request's MCP-Protocol-Version header; the child now
 // gets that one, and --protocolVersion only when the request does not say.
+//
+// The SDK refuses a header version it does not support before the gateway sees
+// the request (2025-11-25 needs SDK 1.24+), so send only the ones the gateway's
+// SDK accepts. Resolved from the gateway, as in protocolVersionMatrix.test.ts.
+const gatewayRequire = createRequire(
+  process.env.SUPERGATEWAY_TEST_ENTRY ?? import.meta.url,
+)
+const { SUPPORTED_PROTOCOL_VERSIONS } = await import(
+  pathToFileURL(gatewayRequire.resolve('@modelcontextprotocol/sdk/types.js'))
+    .href
+)
+const HEADER_VERSIONS = ['2025-06-18', '2025-11-25'].filter((version) =>
+  SUPPORTED_PROTOCOL_VERSIONS.includes(version),
+)
+
 const initializedWith = async (
   url: string,
   headers: Record<string, string>,
@@ -49,7 +66,7 @@ for (const flag of [undefined, '2025-03-26']) {
       ])
       await gateway.ready()
       const url = `http://127.0.0.1:${port}/mcp`
-      for (const version of ['2025-06-18', '2025-11-25'])
+      for (const version of HEADER_VERSIONS)
         assert.equal(
           await initializedWith(url, { 'mcp-protocol-version': version }),
           version,

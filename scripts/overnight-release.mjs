@@ -144,6 +144,20 @@ async function batteries() {
         ],
         25 * 60000,
       )
+    // The Inspector CLI through every path it speaks, on the same switch.
+    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.failed)
+      await run(
+        `cycle-${cycle}-inspector`,
+        [
+          '--import',
+          'tsx',
+          '--test',
+          '--test-reporter',
+          './scripts/release-test-reporter.mjs',
+          'scripts/inspectorClient.test.ts',
+        ],
+        25 * 60000,
+      )
     events({ phase: 'cycle-complete', cycle: cycle++ })
     await delay(
       Math.min(60000, Math.max(0, deadline - Date.now())),

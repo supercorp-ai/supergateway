@@ -22,7 +22,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { WebSocket } from 'ws'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+} from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -283,15 +286,26 @@ test(
       ws: `ws://127.0.0.1:${ports.ws}/message`,
     }
 
-    // The two bridges stay connected for the whole run.
+    // The two bridges stay connected for the whole run, with their heap capped
+    // at about three times the live heap measured in them (44-45 MiB). Left
+    // alone, V8 grows a bridge carrying 4 MB replies to ~270 MiB RSS within
+    // minutes with no growth in live objects, which an RSS gate cannot tell
+    // from a leak; capped, they held 165-207 MiB under the same load, and a
+    // real leak ends in an out-of-memory crash the soak reports.
+    const bridgeEnv = {
+      ...getDefaultEnvironment(),
+      NODE_OPTIONS: '--max-old-space-size=128',
+    }
     const bridgeTransports = {
       sse: new StdioClientTransport({
         command: process.execPath,
         args: [entry!, '--sse', url.sse, '--logLevel', 'none'],
+        env: bridgeEnv,
       }),
       http: new StdioClientTransport({
         command: process.execPath,
         args: [entry!, '--streamableHttp', url.stateful, '--logLevel', 'none'],
+        env: bridgeEnv,
       }),
     }
     const bridges = {

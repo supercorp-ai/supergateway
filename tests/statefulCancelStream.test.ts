@@ -2,6 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -16,6 +19,24 @@ import {
 // A server sends nothing for a cancelled call, and in stateful HTTP the
 // response stream for that call stayed open until the session ended: every
 // cancel held a socket (measured: 30 cancels, 30 more descriptors).
+
+// Closing the stream needs the SDK's closeSSEStream (1.23.1+); the old-SDK CI
+// columns keep the stream open, as before. Ask the gateway's own SDK, as
+// protocolVersionMatrix.test.ts does, not the test runner's.
+const gatewayRequire = createRequire(
+  process.env.SUPERGATEWAY_TEST_ENTRY
+    ? resolve(process.env.SUPERGATEWAY_TEST_ENTRY)
+    : import.meta.url,
+)
+const { StreamableHTTPServerTransport } = await import(
+  pathToFileURL(
+    gatewayRequire.resolve(
+      '@modelcontextprotocol/sdk/server/streamableHttp.js',
+    ),
+  ).href
+)
+const canCloseStreams =
+  typeof StreamableHTTPServerTransport.prototype.closeSSEStream === 'function'
 
 const descriptors = (pid: number) =>
   process.platform === 'linux'
@@ -63,10 +84,11 @@ test(
       await assert.rejects(call)
     }
     await delay(1000)
-    assert.ok(
-      descriptors(gateway.child.pid!) <= before + 4,
-      'twenty cancelled calls left their streams open',
-    )
+    if (canCloseStreams)
+      assert.ok(
+        descriptors(gateway.child.pid!) <= before + 4,
+        'twenty cancelled calls left their streams open',
+      )
     // Notifications ride the call in flight; a cancelled call is no longer one.
     await client.callTool({
       name: 'note',

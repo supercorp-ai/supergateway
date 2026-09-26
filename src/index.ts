@@ -38,6 +38,11 @@ type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
 // used for why "never" was the wrong default.
 const defaultSessionTimeout = 30 * 60 * 1000
 
+// Express routes only match paths that start with `/`. `--ssePath sse` used to
+// register a route no request could reach, so every request got a 404, and
+// the startup log printed `http://localhost:8000sse`.
+const routePath = (path: string) => (path.startsWith('/') ? path : `/${path}`)
+
 async function main() {
   const argv = yargs(hideBin(process.argv))
     .version(getVersion())
@@ -82,16 +87,19 @@ async function main() {
       type: 'string',
       default: '/sse',
       description: '(stdio→SSE) Path for SSE subscriptions',
+      coerce: routePath,
     })
     .option('messagePath', {
       type: 'string',
       default: '/message',
       description: '(stdio→SSE, stdio→WS) Path for messages',
+      coerce: routePath,
     })
     .option('streamableHttpPath', {
       type: 'string',
       default: '/mcp',
       description: '(stdio→StreamableHttp) Path for StreamableHttp',
+      coerce: routePath,
     })
     .option('logLevel', {
       choices: ['debug', 'info', 'none'] as const,
@@ -108,6 +116,8 @@ async function main() {
       default: [],
       description:
         'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz',
+      coerce: (paths: unknown[]) =>
+        paths.map((path) => routePath(String(path))),
     })
     .option('header', {
       type: 'array',

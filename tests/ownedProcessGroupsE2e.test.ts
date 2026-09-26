@@ -38,13 +38,11 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           // the peer, so neither wrapper exit nor transport closure proves cleanup.
           process.kill(peer.parent, 'SIGTERM')
           await stopped(b.pid)
-          if (mode === 'ws') assert.equal((await b.gateway.exited).code, 1)
-          else
-            assert.equal(
-              b.gateway.child.exitCode,
-              null,
-              'gateway remains available after one session child exits',
-            )
+          assert.equal(
+            b.gateway.child.exitCode,
+            null,
+            'gateway remains available after one session child exits',
+          )
         } else {
           if (trigger === 'stdin-close') b.gateway.child.stdin.end()
           else {

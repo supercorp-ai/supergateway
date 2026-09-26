@@ -1,5 +1,5 @@
 // Exercise the public library entry points in their own process because they
-// own signal handlers and (for WebSocket startup failure) process exit.
+// own signal handlers.
 import { stdioToWs } from '../../dist/gateways/stdioToWs.js'
 import { stdioToStatelessStreamableHttp } from '../../dist/gateways/stdioToStatelessStreamableHttp.js'
 

@@ -20,13 +20,14 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
 - **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
-- **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
+- **`--port 8000`**: Port to listen on (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: `8000`)
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE clients (stdio→SSE mode; optional)
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
+- **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
@@ -46,6 +47,7 @@ npx -y supergateway \
 
 - **Subscribe to events**: `GET http://localhost:8000/sse`
 - **Send messages**: `POST http://localhost:8000/message`
+- Each SSE connection gets its own server process.
 
 ## SSE → stdio
 
@@ -124,6 +126,7 @@ npx -y supergateway \
 ```
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
+- Each WebSocket connection gets its own server process.
 
 ## Shutdown
 

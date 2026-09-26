@@ -23,6 +23,8 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       protocolVersion: '2024-11-05',
     }
     enableFakeTimers(t)
+    let wsHandlers: any
+    const wsDisconnects: unknown[][] = []
     if (mode === 'sse') {
       const { stdioToSse } = await import('../src/gateways/stdioToSse.js')
       await stdioToSse(args)
@@ -39,7 +41,20 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
     } else {
       t.mock.module(
         new URL('../src/server/websocket.js', import.meta.url).href,
-        { namedExports: { WebSocketServerTransport: class {} } },
+        {
+          namedExports: {
+            WebSocketServerTransport: class {
+              constructor(_options: unknown, handlers: unknown) {
+                wsHandlers = handlers
+              }
+              start() {}
+              send() {}
+              disconnect(...args: unknown[]) {
+                wsDisconnects.push(args)
+              }
+            },
+          },
+        },
       )
       t.mock.module('http', {
         namedExports: {
@@ -61,11 +76,12 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
     //
     // The SSE gateway builds its `Server` per session rather than at startup —
     // a single shared one served one connection per process and crashed on the
-    // second (#112, #138, #153) — so at this point it has none. The other three
-    // still build theirs up front.
+    // second (#112, #138, #153) — so at this point it has none. WebSocket builds
+    // none at all: it relays each connection to its own child. The two HTTP
+    // modes still build theirs up front.
     assert.deepEqual(
       b.servers,
-      mode === 'sse'
+      mode === 'sse' || mode === 'ws'
         ? []
         : [
             [
@@ -76,6 +92,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
     )
     const connected =
       mode === 'sse' ? await b.request('GET', '/events') : undefined
+    if (mode === 'ws') wsHandlers.onconnection('client-1')
     const before = b.info.length
     b.children[0].stdout.emit('data', Buffer.from('\n \r\n\t\n'))
     // map: empty-frames
@@ -157,14 +174,17 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         codes.push(code)
         return undefined as never
       })
-      // Provide a close boundary only for this shutdown observation.
-      Object.assign(b.connections[0], { close: async () => {} })
-      // map: ws-child-exit
+      // map: ws-child-exit — ends that connection, not the gateway
       b.children[0].emit('exit', 19, null)
       await new Promise((resolve) => setImmediate(resolve))
-      assert.deepEqual(codes, [19])
+      assert.deepEqual(codes, [])
+      assert.deepEqual(wsDisconnects, [
+        ['client-1', 'MCP server process exited'],
+      ])
       // map: ws-child-diagnostic
-      assert.deepEqual(b.errors.at(-1), ['Child exited: code=19, signal=null'])
+      assert.deepEqual(b.info.at(-1), [
+        'Child exited (client client-1): code=19, signal=null',
+      ])
     }
   })
 }

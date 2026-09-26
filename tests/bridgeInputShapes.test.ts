@@ -81,9 +81,11 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     // A non-request frame that arrives before the upstream client exists has
     // nowhere to go. It must be reported rather than thrown, and above all must
     // not be written back down stdout to the client that just sent it.
+    // (Not a cancel: bridges handle those themselves, see
+    // cancellableRequests.ts, so a cancel never reaches this relay.)
     await stdio.onmessage({
       jsonrpc: '2.0' as const,
-      method: 'notifications/cancelled',
+      method: 'notifications/roots/list_changed',
     })
     // map: pre-connect-frame
     assert.deepEqual(upstream, [], 'nothing is sent before the client connects')

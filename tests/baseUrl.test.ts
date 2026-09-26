@@ -115,3 +115,20 @@ test(
     assert.match(data, /^\/message\?sessionId=[\w-]+$/)
   },
 )
+
+// A base URL is often written with a trailing slash. Joined as text it gave
+// `/gateway//message`, and for a bare origin `//message`, which a client reads
+// as a protocol-relative URL: `new URL('//message?…', 'http://host/sse')` is
+// `http://message/?…`, so every POST went to a host named "message".
+for (const [baseUrl, expected] of [
+  ['https://pub.example/gateway/', /^\/gateway\/message\?sessionId=[\w-]+$/],
+  ['https://pub.example/', /^\/message\?sessionId=[\w-]+$/],
+] as const) {
+  test(
+    `--baseUrl ${baseUrl} does not double the slash`,
+    { timeout: 20000 },
+    async (t) => {
+      assert.match(await endpointEvent(t, ['--baseUrl', baseUrl]), expected)
+    },
+  )
+}

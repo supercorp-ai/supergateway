@@ -4,6 +4,10 @@ import type { TestContext } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js'
+// The `ws` client, not the global one: `WebSocket` is undefined on Node 20,
+// which the compat job still covers, and the SDK's transport needs one.
+import { WebSocket } from 'ws'
 import {
   LoggingMessageNotificationSchema,
   ToolListChangedNotificationSchema,
@@ -27,7 +31,7 @@ import { launchGateway, unusedPort } from './helpers/gateway-process.js'
  *
  * `reverse-peer.mjs` exercises all six from the server side.
  *
- * Stateful HTTP and SSE relay all six. Stateless HTTP delivers notifications
+ * Stateful HTTP, SSE and WebSocket relay all six. Stateless HTTP delivers notifications
  * and declines unsupported reverse requests without hanging (GW-026).
  * Batched progress callbacks expose a separate upstream SDK defect (GW-027).
  */
@@ -52,6 +56,14 @@ const MODES = [
     path: '/mcp',
     sse: false,
     works: false,
+  },
+  {
+    label: 'WebSocket',
+    args: ['--outputTransport', 'ws'],
+    path: '/message',
+    sse: false,
+    ws: true,
+    works: true,
   },
 ] as const
 
@@ -119,10 +131,16 @@ async function connect(
   }))
 
   t.after(() => client.close().catch(() => {}))
+  if ('ws' in mode) {
+    globalThis.WebSocket ??= WebSocket as unknown as typeof globalThis.WebSocket
+    url.protocol = 'ws:'
+  }
   await client.connect(
-    mode.sse
-      ? new SSEClientTransport(url)
-      : new StreamableHTTPClientTransport(url),
+    'ws' in mode
+      ? new WebSocketClientTransport(url)
+      : mode.sse
+        ? new SSEClientTransport(url)
+        : new StreamableHTTPClientTransport(url),
   )
   return { client, logs, progress, toolsChanged: () => changed }
 }

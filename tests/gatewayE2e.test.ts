@@ -642,7 +642,7 @@ test(
 
 for (const withHealthAndCors of [true, false]) {
   test(
-    `WebSocket CLI routes clients, broadcasts and late replies (${withHealthAndCors ? 'health/CORS enabled' : 'defaults'})`,
+    `WebSocket CLI gives each client its own child and keeps them apart (${withHealthAndCors ? 'health/CORS enabled' : 'defaults'})`,
     { timeout: 20000 },
     async (t) => {
       const port = await unusedPort()
@@ -688,16 +688,12 @@ for (const withHealthAndCors of [true, false]) {
       assert.equal(initialized.result.serverInfo.name, 'mock-server')
       // The response socket, stdout and stderr are independent pipes: receiving
       // an RPC reply does not imply that diagnostics have reached the parent.
+      const nonJson = /Child non-JSON \(client .+\): peer startup diagnostic/
+      const stderr = /Child stderr \(client .+\): peer stderr diagnostic/
       await gateway.waitFor(
-        () =>
-          gateway
-            .errors()
-            .includes('Child non-JSON: peer startup diagnostic') &&
-          gateway.output().includes('Child stderr: peer stderr diagnostic'),
+        () => nonJson.test(gateway.errors()) && stderr.test(gateway.output()),
         'relay peer stdout/stderr diagnostics',
       )
-      assert.match(gateway.errors(), /Child non-JSON: peer startup diagnostic/)
-      assert.match(gateway.output(), /Child stderr: peer stderr diagnostic/)
       sockets[0].send(
         JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
       )
@@ -738,21 +734,18 @@ for (const withHealthAndCors of [true, false]) {
         }),
       )
       await gateway.waitFor(
-        () =>
-          delivered.every((messages) =>
-            messages.some(
-              (message) => message.method === 'notifications/message',
-            ),
-          ) && delivered[0].some((message) => message.id === 9),
-        'broadcast the peer notification',
+        () => delivered[0].some((message) => message.id === 9),
+        'answer the announcing client',
       )
-      for (const messages of delivered) {
-        assert.equal(
-          messages.find((message) => message.method === 'notifications/message')
-            .params.data,
-          'hello subscribers',
-        )
-      }
+      // The notification comes from the announcing client's own child, so it
+      // reaches that client and no other.
+      assert.equal(
+        delivered[0].find(
+          (message) => message.method === 'notifications/message',
+        ).params.data,
+        'hello subscribers',
+      )
+      assert.equal(delivered[1].length, 0, 'the other client hears nothing')
       assert.equal(
         delivered[0].find((message) => message.id === 9).result.content[0].text,
         'announced',
@@ -770,12 +763,14 @@ for (const withHealthAndCors of [true, false]) {
         () => gateway.output().includes('"name":"delayed"'),
         'forward delayed request',
       )
+      // A client that leaves takes its child with it, mid-request; the other
+      // client's child is untouched.
       const closed = once(sockets[0], 'close')
       sockets[0].close()
       await closed
       await gateway.waitFor(
-        () => gateway.output().includes('"text":"delayed result"'),
-        'receive the late reply after disconnect',
+        () => /Child exited \(client .+\)/.test(gateway.output()),
+        'stop the departed client’s child',
       )
       const alive = await request(sockets[1], {
         jsonrpc: '2.0',
@@ -802,7 +797,7 @@ for (const withHealthAndCors of [true, false]) {
 }
 
 test(
-  'WebSocket CLI reports invalid health route configuration and cleans up its child',
+  'WebSocket CLI reports invalid health route configuration',
   { timeout: 10000 },
   async (t) => {
     const gateway = launchGateway(t, [
@@ -814,6 +809,6 @@ test(
       '/[',
     ])
     assert.equal((await gateway.exited).code, 1)
-    assert.match(gateway.errors(), /Failed to start/)
+    assert.match(gateway.errors(), /Fatal error/)
   },
 )

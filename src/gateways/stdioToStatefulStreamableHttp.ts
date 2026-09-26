@@ -16,6 +16,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
+import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
 
 export interface StdioToStreamableHttpArgs {
@@ -85,7 +86,7 @@ export async function stdioToStatefulStreamableHttp(
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
-  app.use(express.json({ limit: '4mb' }))
+  app.use(express.json({ limit: '4mb' }), jsonBodyErrors)
 
   if (corsOrigin) {
     app.use(

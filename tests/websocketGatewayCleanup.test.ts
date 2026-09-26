@@ -5,26 +5,36 @@ import { EventEmitter } from 'node:events'
 
 // Observe calls at process and transport boundaries. Do not emit real signals
 // or exit the test runner; the gateway's signal wiring and cleanup remain real.
-test('WebSocket gateway cleans up before exit on shutdown, child failure and startup failure', async (t) => {
+test('WebSocket gateway stops every connection’s child on shutdown, and a failing child ends only its own connection', async (t) => {
   t.mock.method(process.stdin, 'resume', () => process.stdin)
   const events: string[] = [],
-    errors: string[] = []
-  const handlers = new Map<string, () => void>()
-  let child: Child
-  let fail: 'spawn' | 'connect' | 'close' | undefined
+    errors: unknown[][] = []
+  const signals = new Map<string, () => void>()
+  let spawnFails = false
   class Child extends EventEmitter {
     stdout = new EventEmitter()
     stderr = new EventEmitter()
-    stdin = { write() {} }
+    stdin = Object.assign(new EventEmitter(), { write() {} })
+    constructor(readonly name: string) {
+      super()
+    }
     kill() {
-      events.push('child.kill')
+      events.push(`kill:${this.name}`)
       return true
     }
   }
+  let handlers: any
   class Transport {
+    constructor(_options: unknown, h: unknown) {
+      handlers = h
+    }
+    start() {}
+    send() {}
+    disconnect(clientId: string, reason: string) {
+      events.push(`disconnect:${clientId}:${reason}`)
+    }
     async close() {
       events.push('transport.close')
-      if (fail === 'close') throw new Error('close failed')
     }
   }
   const originalOn = process.on
@@ -37,7 +47,7 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
       listener: (...args: any[]) => void,
     ) {
       if (['SIGINT', 'SIGTERM', 'SIGHUP'].includes(event)) {
-        handlers.set(event, listener)
+        signals.set(event, listener)
         return this
       }
       return originalOn.call(this, event, listener)
@@ -53,7 +63,7 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
       listener: (...args: any[]) => void,
     ) {
       if (event === 'close') {
-        handlers.set('stdin.close', listener)
+        signals.set('stdin.close', listener)
         return this
       }
       stdinOn.call(this, event, listener)
@@ -65,21 +75,14 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
     return undefined as never
   })
   const trackChild = observeChildSignals(t)
+  const spawned: Child[] = []
   t.mock.module('child_process', {
     namedExports: {
       spawn() {
-        if (fail === 'spawn') throw new Error('spawn failed')
-        child = new Child()
+        if (spawnFails) throw new Error('spawn failed')
+        const child = new Child(`c${spawned.length}`)
+        spawned.push(child)
         return trackChild(child)
-      },
-    },
-  })
-  t.mock.module('@modelcontextprotocol/sdk/server/index.js', {
-    namedExports: {
-      Server: class {
-        async connect() {
-          if (fail === 'connect') throw new Error('connect failed')
-        }
       },
     },
   })
@@ -97,54 +100,59 @@ test('WebSocket gateway cleans up before exit on shutdown, child failure and sta
     messagePath: '/ws',
     logger: {
       info() {},
-      error: (message: unknown) => errors.push(String(message)),
+      error: (...message: unknown[]) => errors.push(message),
     },
     healthEndpoints: [],
     corsOrigin: false,
   }
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
 
+  // map: shutdown — every connection's child, then exit 0
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'stdin.close']) {
     await stdioToWs(args)
+    handlers.onconnection('a')
+    handlers.onconnection('b')
+    const [a, b] = spawned.slice(-2)
     events.length = 0
-    handlers.get(signal)!()
-    await new Promise((resolve) => setImmediate(resolve))
+    signals.get(signal)!()
+    await settle()
     assert.deepEqual(
       events,
-      ['transport.close', 'child.kill', 'exit:0'],
+      ['transport.close', `kill:${a.name}`, `kill:${b.name}`, 'exit:0'],
       signal,
     )
   }
-  await stdioToWs(args)
-  events.length = 0
-  child.emit('exit', 17, null)
-  await new Promise((resolve) => setImmediate(resolve))
-  assert.deepEqual(events, ['child.kill', 'transport.close', 'exit:17'])
 
+  // map: child failures end their own connection, and the gateway stays up
   await stdioToWs(args)
+  handlers.onconnection('errors')
+  handlers.onconnection('stdin')
+  handlers.onconnection('healthy')
+  const [failed, broken, healthy] = spawned.slice(-3)
   events.length = 0
-  child.emit('exit', null, 'SIGKILL')
-  await new Promise((resolve) => setImmediate(resolve))
-  assert.deepEqual(events, ['child.kill', 'transport.close', 'exit:1'])
+  failed.emit('error', new Error('ENOENT'))
+  broken.stdin.emit('error', new Error('EPIPE'))
+  await settle()
+  assert.deepEqual(events, [
+    `kill:${failed.name}`,
+    'disconnect:errors:MCP server process failed',
+    `kill:${broken.name}`,
+    'disconnect:stdin:MCP server process failed',
+  ])
+  assert.deepEqual(
+    errors.slice(-2).map((entry) => entry[0]),
+    ['Child failure (client errors):', 'Child stdin failure (client stdin):'],
+  )
+  assert.ok(!events.some((event) => event.startsWith('exit')))
+  assert.ok(!events.includes(`kill:${healthy.name}`))
 
-  for (const failure of ['connect', 'spawn'] as const) {
-    fail = failure
-    events.length = 0
-    await stdioToWs(args)
-    assert.deepEqual(
-      events,
-      failure === 'connect'
-        ? ['transport.close', 'child.kill', 'exit:1']
-        : ['exit:1'],
-    )
-    assert.equal(errors.at(-1), `Failed to start: ${failure} failed`)
-  }
-  fail = undefined
-  await stdioToWs(args)
-  fail = 'close'
+  // map: spawn failure — the connection is refused, the gateway stays up
+  spawnFails = true
   events.length = 0
-  handlers.get('SIGTERM')!()
-  await new Promise((resolve) => setImmediate(resolve))
-  await Promise.resolve() // Drain the transport.close rejection handler.
-  assert.deepEqual(events, ['transport.close', 'child.kill', 'exit:0'])
-  assert.equal(errors.at(-1), 'Error stopping WebSocket server: close failed')
+  handlers.onconnection('unlucky')
+  assert.deepEqual(events, ['disconnect:unlucky:MCP server process failed'])
+  assert.deepEqual(errors.at(-1), [
+    'Failed to start the MCP server (client unlucky):',
+    new Error('spawn failed'),
+  ])
 })

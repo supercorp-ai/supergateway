@@ -483,6 +483,12 @@ test(
     emit({ phase: 'active-complete', round, restarts, crashes })
 
     // The bridges' sessions hold one child each on the gateways behind them.
+    // Let them idle first, as the gateways get a cooldown: sampled straight
+    // after the load, a bridge's RSS is wherever its GC sawtooth happened to
+    // be. Measured over 8 minutes, the HTTP bridge swung between 87 and 255 MiB
+    // with no trend, its live heap stayed at 44-45 MiB, and 30 seconds of idle
+    // brought it from 228 to 166 MiB; a 4-minute run failed the gate on a peak.
+    await delay(30000)
     const beforeClose = sample('bridges-idle', round)
     for (const b of Object.values(bridges)) await b.client.close()
     await delay(15000)
@@ -495,14 +501,20 @@ test(
         `${row.mode}: descriptor growth`,
       )
     }
-    // RSS: compare a warmed-up sample with the final one, as soak-release does.
-    const warm = warmSamples[Math.min(2, warmSamples.length - 1)]
-    if (warm)
+    // RSS: the settled final against the warm-up envelope, the highest of the
+    // first three warm samples. With 4 MB replies every process's RSS is a
+    // sawtooth, so a single reference sample decides the verdict by where it
+    // lands: the stateful gateway once sampled 111 MiB at round 40, below its
+    // own 142 MiB idle baseline, and then failed with a settled 155 MiB. A leak
+    // still has to outgrow the envelope by a fifth plus 16 MiB.
+    const warm = warmSamples.slice(0, 3)
+    if (warm.length)
       for (const [index, row] of beforeClose.entries()) {
         const final = row.mode.startsWith('bridge-') ? row : settled[index]
+        const reference = Math.max(...warm.map((rows) => rows[index].rssKiB))
         assert.ok(
-          final.rssKiB <= warm[index].rssKiB * 1.2 + 16 * 1024,
-          `${row.mode}: RSS kept growing after warm-up`,
+          final.rssKiB <= reference * 1.2 + 16 * 1024,
+          `${row.mode}: RSS kept growing after warm-up (${final.rssKiB} KiB, warm-up peak ${reference} KiB)`,
         )
       }
     emit({ phase: 'complete', seconds, round, restarts, crashes })

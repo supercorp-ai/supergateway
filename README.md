@@ -47,6 +47,7 @@ npx -y supergateway \
 
 - **Subscribe to events**: `GET http://localhost:8000/sse`
 - **Send messages**: `POST http://localhost:8000/message`
+- Each SSE connection gets its own server process.
 
 ## SSE → stdio
 
@@ -125,6 +126,7 @@ npx -y supergateway \
 ```
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
+- Each WebSocket connection gets its own server process.
 
 ## Shutdown
 

@@ -7,20 +7,24 @@ import { initialize } from './helpers/gateway-process.js'
 // are controlled so every byte boundary is delivered without pipe coalescing.
 test('all stdout readers preserve every UTF-8 byte split and keep child decoder state separate', async (t) => {
   const b = observeGateway(t)
-  const ws: { sent: unknown[] }[] = []
+  // One WebSocket gateway, a child per connection; what reaches each client.
+  let wsHandlers: { onconnection: (clientId: string) => void }
+  const wsSent = new Map<string, unknown[]>()
   t.mock.module('http', {
     namedExports: { createServer: () => ({ listen() {} }) },
   })
   t.mock.module(new URL('../src/server/websocket.js', import.meta.url).href, {
     namedExports: {
       WebSocketServerTransport: class {
-        sent: unknown[] = []
-        constructor() {
-          ws.push(this)
+        constructor(_options: unknown, handlers: typeof wsHandlers) {
+          wsHandlers = handlers
         }
-        async send(message: unknown) {
-          this.sent.push(structuredClone(message))
+        start() {}
+        send(message: unknown, clientId: string) {
+          wsSent.get(clientId)!.push(structuredClone(message))
         }
+        disconnect() {}
+        async close() {}
       },
     },
   })
@@ -67,16 +71,25 @@ test('all stdout readers preserve every UTF-8 byte split and keep child decoder 
     await start(common)
     let opened = false
     const open = async () => {
+      if (mode === 'ws') {
+        const clientId = `client-${wsSent.size}`
+        wsSent.set(clientId, [])
+        wsHandlers.onconnection(clientId)
+        return {
+          child: b.children.at(-1)!,
+          transport: { sent: wsSent.get(clientId)! },
+        }
+      }
       if (mode === 'stateful' || mode === 'stateless') {
         await b.request('POST', '/mcp', { body: initialize() })
       } else {
         if (opened) await start(common)
-        if (mode === 'sse') await b.request('GET', '/sse')
+        await b.request('GET', '/sse')
       }
       opened = true
       return {
         child: b.children.at(-1)!,
-        transport: mode === 'ws' ? ws.at(-1)! : b.transports.at(-1)!,
+        transport: b.transports.at(-1)!,
       }
     }
     const a = await open(),

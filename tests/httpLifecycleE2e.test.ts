@@ -81,6 +81,8 @@ for (const stateful of [false, true]) {
   )
 }
 
+// The child belongs to one connection, so its failure ends that connection
+// with a reason, and the gateway stays up for everyone else.
 test(
   'WebSocket gateway propagates child failure while a request is pending',
   { timeout: 10000 },
@@ -109,8 +111,13 @@ test(
     socket.send(JSON.stringify(tool(2, 'hold')))
     const held = await control.started
     held.end('exit')
-    assert.equal((await gateway.exited).code, 17)
-    await closed
+    const [code, reason] = await closed
+    assert.equal(code, 1011)
+    assert.equal(String(reason), 'MCP server process exited')
+    assert.equal(gateway.child.exitCode, null, 'the gateway stays up')
+    const next = new WebSocket(`ws://127.0.0.1:${port}/message`)
+    t.after(() => next.terminate())
+    await once(next, 'open')
   },
 )
 

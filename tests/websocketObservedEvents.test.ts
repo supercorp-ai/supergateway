@@ -2,23 +2,23 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { observeGateway } from './helpers/observed-gateway.js'
 
-test('WebSocket gateway reports connections, peer traffic and asynchronous send failure', async (t) => {
+test('WebSocket gateway gives each connection its own child and routes to that client only', async (t) => {
   const b = observeGateway(t)
-  let transport: Transport
-  const sent: any[][] = []
-  let failure: Error | undefined
+  let handlers: any
+  const sent: any[][] = [],
+    disconnected: any[][] = []
   class Transport {
-    onmessage?: (message: any) => void
-    onconnection?: (id: string) => void
-    ondisconnection?: (id: string) => void
-    onerror?: (error: Error) => void
-    constructor() {
-      transport = this
+    constructor(_options: unknown, h: unknown) {
+      handlers = h
     }
-    async send(...args: any[]) {
+    start() {}
+    send(...args: any[]) {
       sent.push(args)
-      if (failure) throw failure
     }
+    disconnect(...args: any[]) {
+      disconnected.push(args)
+    }
+    async close() {}
   }
   t.mock.module(new URL('../src/server/websocket.js', import.meta.url).href, {
     namedExports: { WebSocketServerTransport: Transport },
@@ -52,26 +52,19 @@ test('WebSocket gateway reports connections, peer traffic and asynchronous send 
     ['Listening on port 8141'],
     ['WebSocket endpoint: ws://localhost:8141/wire'],
   ])
-  // map: setup
+  // map: setup — no child until a client connects
   assert.deepEqual(
     {
       spawns: b.spawns,
       listens: b.listens,
       cors: b.corsOptions,
       routes: [...b.routes.keys()],
-      connected: b.connections[0] === transport!,
     },
     {
-      spawns: [
-        [
-          'peer --ws-test',
-          { shell: true, detached: process.platform !== 'win32' },
-        ],
-      ],
+      spawns: [],
       listens: [8141],
       cors: [{ origin: '*' }],
       routes: ['GET /health'],
-      connected: true,
     },
   )
   const health = await b.request('GET', '/health')
@@ -80,52 +73,76 @@ test('WebSocket gateway reports connections, peer traffic and asynchronous send 
     { code: health.res.code, body: health.res.body },
     { code: 200, body: 'ok' },
   )
-  transport!.onconnection!('client-17')
-  transport!.ondisconnection!('client-17')
-  // map: connection-events
-  assert.deepEqual(b.info.slice(-2), [
-    ['New WebSocket connection: client-17'],
-    ['WebSocket connection closed: client-17'],
+
+  handlers.onconnection('client-A')
+  handlers.onconnection('client-B')
+  // map: one child per connection
+  assert.equal(b.spawns.length, 2)
+  assert.deepEqual(b.spawns[0], [
+    'peer --ws-test',
+    { shell: true, detached: process.platform !== 'win32' },
   ])
-  transport!.onerror!(new Error('frame rejected'))
-  // map: transport-error
-  assert.deepEqual(b.errors.at(-1), ['WebSocket error: frame rejected'])
-  const message = { jsonrpc: '2.0', id: 'client-17:9', method: 'ping' }
-  transport!.onmessage!(message)
+  const [childA, childB] = b.children
+
+  // Ids are not rewritten: each child serves one client.
+  const request = { jsonrpc: '2.0', id: 9, method: 'ping' }
+  handlers.onmessage(request, 'client-A')
   // map: request
   assert.deepEqual(
-    { line: b.children[0].writes.at(-1), log: b.info.at(-1) },
+    { a: childA.writes, b: childB.writes, log: b.info.at(-1) },
     {
-      line: JSON.stringify(message) + '\n',
-      log: [`WebSocket → Child: ${JSON.stringify(message)}`],
+      a: [JSON.stringify(request) + '\n'],
+      b: [],
+      log: [`WebSocket → Child (client client-A): ${JSON.stringify(request)}`],
     },
   )
-  const reply = { jsonrpc: '2.0', id: message.id, result: {} }
-  b.children[0].stdout.emit(
+
+  // Everything a child says goes to its own client: replies, notifications
+  // and the server's own requests alike.
+  const reply = { jsonrpc: '2.0', id: 9, result: {} }
+  const log = { jsonrpc: '2.0', method: 'notifications/message', params: {} }
+  childA.stdout.emit(
     'data',
-    Buffer.from('\n \n' + JSON.stringify(reply) + '\n'),
+    Buffer.from(
+      '\n \n' + JSON.stringify(reply) + '\n' + JSON.stringify(log) + '\n',
+    ),
   )
-  // map: reply
-  assert.deepEqual(
-    { sent, log: b.info.at(-1) },
-    {
-      sent: [[reply, message.id]],
-      log: [`Child → WebSocket: ${JSON.stringify(reply)}`],
-    },
-  )
-  failure = new Error('socket write failed')
-  b.children[0].stdout.emit('data', Buffer.from(JSON.stringify(reply) + '\n'))
-  await Promise.resolve() // Wait for the asynchronous send rejection handler.
-  // map: send-failure
-  assert.deepEqual(b.errors.at(-1), ['Failed to broadcast message:', failure])
-  b.children[0].stdout.emit('data', Buffer.from('bad-json\n'))
-  b.children[0].stderr.emit('data', Buffer.from('socket warning\n'))
+  // map: routed to the owner
+  assert.deepEqual(sent, [
+    [reply, 'client-A'],
+    [log, 'client-A'],
+  ])
+
+  childA.stdout.emit('data', Buffer.from('bad-json\n'))
+  childA.stderr.emit('data', Buffer.from('socket warning\n'))
   // map: peer-diagnostics
   assert.deepEqual(
     { error: b.errors.at(-1), info: b.info.at(-1) },
     {
-      error: ['Child non-JSON: bad-json'],
-      info: ['Child stderr: socket warning\n'],
+      error: ['Child non-JSON (client client-A): bad-json'],
+      info: ['Child stderr (client client-A): socket warning\n'],
     },
   )
+
+  handlers.onerror(new Error('frame rejected'))
+  // map: transport-error
+  assert.deepEqual(b.errors.at(-1), ['WebSocket error: frame rejected'])
+
+  // A child that exits ends its own connection and no other.
+  childB.emit('exit', 3, null)
+  // map: child-exit
+  assert.deepEqual(disconnected, [['client-B', 'MCP server process exited']])
+  handlers.onmessage(request, 'client-B')
+  assert.deepEqual(childB.writes, [], 'nothing reaches an ended child')
+  assert.deepEqual(b.info.at(-1), [
+    'Dropped a message for ended client client-B',
+  ])
+
+  // A client that leaves stops its child; a second ending is a no-op.
+  handlers.ondisconnection('client-A')
+  handlers.ondisconnection('client-A')
+  // map: client-disconnect
+  assert.equal(childA.kills, 1)
+  assert.deepEqual(disconnected.at(-1), ['client-A', 'Client disconnected'])
+  assert.equal(disconnected.length, 2)
 })

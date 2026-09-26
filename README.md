@@ -27,7 +27,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
-- **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
+- **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself and the client's request doesn't name one (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.

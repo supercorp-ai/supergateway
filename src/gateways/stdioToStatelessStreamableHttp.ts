@@ -355,9 +355,15 @@ export async function stdioToStatelessStreamableHttp(
           logger.info(
             'Non-initialize message detected, sending auto-initialize request first',
           )
+          // Every request after initialize names the version the client
+          // negotiated (from 2025-06-18 on), and the SDK has already refused one
+          // it does not support. Initialize this request's child with it, or the
+          // server treats a current client as a 2024-11-05 one. --protocolVersion
+          // is for clients that do not say.
           const initRequest = createInitializeRequest(
             initializeRequestId,
-            protocolVersion,
+            (req.headers['mcp-protocol-version'] as string | undefined) ??
+              protocolVersion,
           )
           logger.info(
             `StreamableHttp → Child (auto-initialize): ${JSON.stringify(initRequest)}`,

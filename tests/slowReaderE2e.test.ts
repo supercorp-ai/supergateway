@@ -185,7 +185,23 @@ for (const paused of [false, true]) {
         JSON.parse(healthy.replies.get(3).result.content[0].text).pid,
         healthyPid,
       )
-      await control.wait('burst-done')
+      // The peer reports the burst done once the gateway has read all of it.
+      // When this failed under machine load it was never a slow burst (those
+      // took under 0.6 s): the gateway had died of heap exhaustion mid-burst,
+      // queueing notifications for a reader that fell behind (GW-033). Say so,
+      // rather than report a missing burst-done five seconds later.
+      await Promise.race([
+        control.wait('burst-done'),
+        gateway.exited.then(({ code, signal }) => {
+          throw Error(
+            `The gateway exited (${signal ?? `code ${code}`}) during the burst, ` +
+              `after the ${paused ? 'paused' : 'draining'} reader got ` +
+              `${slow.count()} of 8192 notifications. A reader that falls ` +
+              `behind still makes the gateway queue its output (GW-033).\n` +
+              gateway.errors().slice(-2000),
+          )
+        }),
+      ])
       if (!paused || !slow.response.destroyed) {
         if (paused) {
           const deadline = Date.now() + 15000

@@ -51,27 +51,46 @@ test('SSE bridge applies configured headers whether or not the event source supp
     headers,
   })
   const wrapped = remotes[0].options.eventSourceInit.fetch
-  // The event source owns this call. It may pass its own request init, and it
-  // may equally call fetch with the URL alone.
+  // The event source owns this call. The SDK passes a `Headers` object, but a
+  // caller may pass a plain object, or call fetch with the URL alone.
+  await wrapped('http://127.0.0.1:54321/events', {
+    headers: new Headers({
+      Accept: 'text/event-stream',
+      'mcp-protocol-version': '2025-06-18',
+      'X-Trace': 'from the sdk',
+    }),
+    cache: 'no-store',
+  })
   await wrapped('http://127.0.0.1:54321/events', {
     headers: { Accept: 'text/event-stream' },
-    cache: 'no-store',
   })
   await wrapped('http://127.0.0.1:54321/events')
   fetchMock.mock.restore()
+  const sent = (call: { init: { headers: Headers } }) =>
+    Object.fromEntries(call.init.headers)
   // map: headers-merged-over-supplied-init
+  // Spreading a `Headers` object yields `{}`, so the SDK's own headers used to
+  // vanish: the stream request went out as `Accept: */*`.
   assert.deepEqual(
-    calls[0].init,
+    sent(calls[0]),
     {
-      headers: { Accept: 'text/event-stream', ...headers },
-      cache: 'no-store',
+      accept: 'text/event-stream',
+      'mcp-protocol-version': '2025-06-18',
+      authorization: 'Bearer configured',
+      'x-trace': 'sse',
     },
-    'supplied init is preserved and the configured headers are merged on top of its own',
+    'the SDK’s headers survive, and a configured header wins over its own',
   )
+  assert.equal(calls[0].init.cache, 'no-store', 'the rest of init is kept')
+  assert.deepEqual(sent(calls[1]), {
+    accept: 'text/event-stream',
+    authorization: 'Bearer configured',
+    'x-trace': 'sse',
+  })
   // map: headers-applied-without-init
   assert.deepEqual(
-    calls[1].init,
-    { headers },
+    sent(calls[2]),
+    { authorization: 'Bearer configured', 'x-trace': 'sse' },
     'a call with no init still carries the configured headers rather than sending none',
   )
 })

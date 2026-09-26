@@ -217,7 +217,9 @@ async function main() {
 
           let sessionTimeout: null | number
           if (typeof argv.sessionTimeout === 'number') {
-            if (argv.sessionTimeout <= 0) {
+            // Negated so that NaN (`--sessionTimeout 30m`) fails too: `NaN <= 0`
+            // is false, and it used to switch the default timeout off.
+            if (!(argv.sessionTimeout > 0)) {
               logger.error(
                 `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
               )

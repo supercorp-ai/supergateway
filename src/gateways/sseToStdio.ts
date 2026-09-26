@@ -90,10 +90,13 @@ export async function sseToStdio(args: SseToStdioArgs) {
     eventSourceInit: {
       fetch: async (...props: Parameters<typeof fetch>) => {
         const [url, init = {}] = props
-        const response = await fetch(url, {
-          ...init,
-          headers: { ...init.headers, ...headers },
-        })
+        // The SDK passes a `Headers` object, and spreading one yields `{}`: the
+        // stream request lost `Accept: text/event-stream` (sent as `*/*`) and
+        // every other header the SDK set. Merge, and let --header win.
+        const merged = new Headers(init.headers)
+        for (const [name, value] of Object.entries(headers))
+          merged.set(name, value)
+        const response = await fetch(url, { ...init, headers: merged })
         if (response.ok) streamOpened = true
         return response
       },

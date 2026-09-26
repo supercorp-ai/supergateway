@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   JSONRPCMessage,
   isInitializeRequest,
+  isInitializedNotification,
 } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -330,6 +331,15 @@ export async function stdioToStatelessStreamableHttp(
       transport.onmessage = (msg: JSONRPCMessage) => {
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         else hasOneWayMessage = true
+        // This child is initialized by the gateway, which sends its own
+        // notifications/initialized. The client's copy would be a second one,
+        // and a server that sets up on initialized would do it twice. (The
+        // bridges drop it for the same reason; see relayClientMessage.) One
+        // carrying an id is a request, and is answered like any other.
+        if (!('id' in msg) && isInitializedNotification(msg)) {
+          logger.info('Client initialized; this child was initialized here')
+          return
+        }
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
 
         // Auto-initialize anything that is not itself an initialize request.

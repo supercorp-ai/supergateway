@@ -6,6 +6,7 @@ import {
 } from './modernSdk.js'
 import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
+import { LineSplitter } from './lineSplitter.js'
 
 /** A request-owned pipe whose shutdown also reaps the child's descendants. */
 export class OwnedStdioTransport implements Transport {
@@ -42,13 +43,10 @@ export class OwnedStdioTransport implements Transport {
     child.stderr.on('data', (chunk: Buffer) => {
       this.logger.error('Child stderr:', chunk.toString('utf8'))
     })
-    let buffer = ''
+    const lines = new LineSplitter()
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
-      buffer += chunk
-      const lines = buffer.split(/\r?\n/)
-      buffer = lines.pop()!
-      for (const line of lines) {
+      for (const line of lines.push(chunk)) {
         if (!line.trim()) continue
         let message: JSONRPCMessage
         try {

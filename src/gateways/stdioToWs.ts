@@ -8,6 +8,7 @@ import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { LineSplitter } from '../lib/lineSplitter.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -113,14 +114,9 @@ export async function stdioToWs(args: StdioToWsArgs) {
         })
 
         const decoder = new StringDecoder('utf8')
-        let buffer = ''
+        const lines = new LineSplitter()
         child.stdout.on('data', (chunk: Buffer) => {
-          buffer += decoder.write(chunk)
-          const lines = buffer.split(/\r?\n/)
-          // `split` always returns at least one element, so `pop()` is never
-          // undefined here.
-          buffer = lines.pop()!
-          lines.forEach((line) => {
+          lines.push(decoder.write(chunk)).forEach((line) => {
             if (!line.trim()) return
             try {
               const message = JSON.parse(line)

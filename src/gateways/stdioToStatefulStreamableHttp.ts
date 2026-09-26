@@ -18,6 +18,7 @@ import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
+import { LineSplitter } from '../lib/lineSplitter.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -259,14 +260,9 @@ export async function stdioToStatefulStreamableHttp(
       })
 
       const decoder = new StringDecoder('utf8')
-      let buffer = ''
+      const lines = new LineSplitter()
       child.stdout.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk)
-        const lines = buffer.split(/\r?\n/)
-        // `split` always returns at least one element, so `pop()` is never
-        // undefined here — the fallback it replaced could not be taken.
-        buffer = lines.pop()!
-        lines.forEach((line) => {
+        lines.push(decoder.write(chunk)).forEach((line) => {
           if (!line.trim()) return
           try {
             const jsonMsg = JSON.parse(line)

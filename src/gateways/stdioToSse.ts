@@ -175,7 +175,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
       response: res,
     }
 
+    // The client's calls the child has not answered yet.
+    const pending = new Set<string | number>()
+
     sseTransport.onmessage = (msg: JSONRPCMessage) => {
+      if ('id' in msg && 'method' in msg) pending.add(msg.id!)
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
       child.stdin.write(JSON.stringify(msg) + '\n')
     }
@@ -200,13 +204,34 @@ export async function stdioToSse(args: StdioToSseArgs) {
       })
     }
 
+    // A child that fails with calls in flight used to end the session
+    // silently, and the SSE client waited out its own timeout on each one (60
+    // seconds by default). Answer them first, as stateful HTTP does, then end.
+    const fail = () => {
+      // `send` writes to the stream before it returns, so the replies are
+      // queued ahead of the close. One that cannot be sent is a stream already
+      // gone; the session ends regardless, and at once, so no new message is
+      // accepted for a server that is not there.
+      void Promise.allSettled(
+        [...pending].map((id) =>
+          sseTransport.send({
+            jsonrpc: '2.0',
+            id,
+            error: { code: -32603, message: 'MCP server process failed' },
+          }),
+        ),
+      )
+      pending.clear()
+      endSession(() => {})
+    }
+
     child.on('error', (err) => {
       logger.error(`Child failure (session ${sessionId}):`, err)
-      endSession(() => {})
+      fail()
     })
     child.stdin.on('error', (err) => {
       logger.error(`Child stdin failure (session ${sessionId}):`, err)
-      endSession(() => {})
+      fail()
     })
     child.on('exit', (code, signal) => {
       const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
@@ -215,7 +240,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
         return
       }
       logger.error(detail)
-      endSession(() => {})
+      fail()
     })
 
     const decoder = new StringDecoder('utf8')
@@ -225,6 +250,8 @@ export async function stdioToSse(args: StdioToSseArgs) {
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)
+          if ('id' in jsonMsg && !('method' in jsonMsg))
+            pending.delete(jsonMsg.id)
           logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
           if (!sessions[sessionId]) return
           sseTransport.send(jsonMsg).catch((err) => {

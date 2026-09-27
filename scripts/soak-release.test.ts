@@ -106,7 +106,7 @@ function launchGateway(
 const modernVersion = '2026-07-28'
 test(
   'installed release candidate: calls, reconnects, cancellations and idle resource recovery',
-  { timeout: (seconds + 450) * 1000 },
+  { timeout: (seconds + 500) * 1000 },
   async (t) => {
     assert.ok(
       process.env.SUPERGATEWAY_TEST_ENTRY,
@@ -480,8 +480,15 @@ test(
     }
     await durableTransport.terminateSession()
     await durableClient.close()
+    // Past the gateway's 65-second keep-alive (#243). Node advertises it as
+    // `Keep-Alive: timeout=65` and undici keeps its idle sockets that long, so
+    // after 30 seconds this observer still held its own reusable connections:
+    // 4.1.0-rc.0's SSE gateway sat at 24 descriptors against a baseline of 15,
+    // all of them established connections that closed at 65 s (4.0.0 closed
+    // them within 5 s). Idle connections a live client may reuse are not a
+    // leak; what is still open after they expire is.
     const settled = []
-    for (let n = 0; n < 6; n++) {
+    for (let n = 0; n < 15; n++) {
       await delay(5000)
       settled.push(sample('cooldown', round))
     }
@@ -505,7 +512,7 @@ test(
           `${row.mode}: RSS kept growing after warm-up`,
         )
     }
-    // Original five modes keep their original 30-second cooldown and RSS gate.
+    // Original five modes keep their RSS gate, after the 75-second cooldown.
     // Continuations intentionally retain children for five idle minutes.
     const continuationIndex = gateways.findIndex(
       (gateway) => gateway.mode === 'continuation',

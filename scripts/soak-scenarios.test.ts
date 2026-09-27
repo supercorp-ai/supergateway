@@ -499,7 +499,9 @@ test(
     // The bridges' sessions hold one child each on the gateways behind them.
     sample('bridges-idle', round)
     for (const b of Object.values(bridges)) await b.client.close()
-    await delay(15000)
+    // Past the gateways' 65-second keep-alive, which this process's clients
+    // honour; see the resource soak's cooldown.
+    await delay(70000)
     const settled = sample('cooldown', round, false)
     for (const [index, row] of settled.entries()) {
       if (row.mode.startsWith('bridge-')) continue

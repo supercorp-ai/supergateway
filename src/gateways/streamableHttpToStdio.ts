@@ -12,6 +12,7 @@ import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
+import { setTimeout as delay } from 'node:timers/promises'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
@@ -51,7 +52,13 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info('Connecting to Streamable HTTP...')
 
-  onSignals({ logger })
+  onSignals({
+    logger,
+    // A stateful upstream keeps this session, and the server process behind it,
+    // until the session is ended or times out (30 minutes by default). Ending
+    // it is the client's job, and the bridge is the client.
+    cleanup: () => endUpstreamSession(),
+  })
 
   let mcpClient: Client | undefined
   let mcpTransport: StreamableHTTPClientTransport | undefined
@@ -196,6 +203,15 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   })
 
   const inFlight = new CancellableRequests(logger)
+
+  // Bounded: an upstream that does not answer must not hold up the exit.
+  const endUpstreamSession = async () => {
+    if (!mcpTransport?.sessionId) return
+    const ended = mcpTransport.terminateSession().catch((err) => {
+      logger.error('Failed to end the upstream session:', err)
+    })
+    await Promise.race([ended, delay(2000, undefined, { ref: false })])
+  }
 
   const handleStdioMessage = async (message: JSONRPCMessage) => {
     const isRequest = 'method' in message && 'id' in message

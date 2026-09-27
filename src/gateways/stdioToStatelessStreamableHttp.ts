@@ -20,6 +20,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -323,6 +324,7 @@ export async function stdioToStatelessStreamableHttp(
             logger.error(`Child non-JSON: ${line}`)
           }
         })
+        holdOutput(child.stdout, drained([res]))
       })
 
       child.stderr.on('data', (chunk: Buffer) => {

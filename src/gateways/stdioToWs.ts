@@ -10,6 +10,7 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -117,16 +118,18 @@ export async function stdioToWs(args: StdioToWsArgs) {
         const decoder = new StringDecoder('utf8')
         const lines = new LineSplitter()
         child.stdout.on('data', (chunk: Buffer) => {
+          let sent: Promise<void> | undefined
           lines.push(decoder.write(chunk)).forEach((line) => {
             if (!line.trim()) return
             try {
               const message = JSON.parse(line)
               logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
-              wsTransport.send(message, clientId)
+              sent = wsTransport.send(message, clientId)
             } catch {
               logger.error(`Child non-JSON (client ${clientId}): ${line}`)
             }
           })
+          holdOutput(child.stdout, sent)
         })
 
         child.stderr.on('data', (chunk: Buffer) => {

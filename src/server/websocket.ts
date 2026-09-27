@@ -3,6 +3,10 @@ import { v4 as uuidv4 } from 'uuid'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Server } from 'http'
 
+// Node's default for a writable stream, and the point where an HTTP response
+// reports that it needs to drain.
+const HIGH_WATER_MARK = 16 * 1024
+
 /**
  * The WebSocket endpoint: one entry per connected client, messages passed
  * through unchanged and addressed by client.
@@ -59,10 +63,20 @@ export class WebSocketServerTransport {
   /**
    * Send to one client. A client that is gone, or closing, is skipped: its
    * `close` event removes it and reports the disconnection.
+   *
+   * Returns a promise that settles once this message has left the gateway
+   * when the client is behind by more than a stream's default buffer, so the
+   * caller can stop reading the child until then; undefined otherwise.
    */
-  send(message: JSONRPCMessage, clientId: string): void {
+  send(message: JSONRPCMessage, clientId: string): Promise<void> | undefined {
     const ws = this.clients.get(clientId)
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
+    if (ws?.readyState !== WebSocket.OPEN) return
+    let flushed!: () => void
+    const sent = new Promise<void>((resolve) => (flushed = resolve))
+    // Called once the frame is written out, or with an error if the socket
+    // goes first.
+    ws.send(JSON.stringify(message), () => flushed())
+    if (ws.bufferedAmount > HIGH_WATER_MARK) return sent
   }
 
   /** End one client's connection, e.g. when its child exits. */

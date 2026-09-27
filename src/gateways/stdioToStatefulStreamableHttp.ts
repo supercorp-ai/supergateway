@@ -20,6 +20,7 @@ import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -116,6 +117,20 @@ export async function stdioToStatefulStreamableHttp(
   // inheritance, which fixes the class rather than the names.
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const liveness = new Map<string, SessionLivenessProbe>()
+  // Each session's open responses (its POSTs and its GET stream), so its child
+  // is held while any of them is backed up.
+  const openResponses = new WeakMap<
+    StreamableHTTPServerTransport,
+    Set<express.Response>
+  >()
+  const watch = (
+    transport: StreamableHTTPServerTransport,
+    res: express.Response,
+  ) => {
+    const responses = openResponses.get(transport)!
+    responses.add(res)
+    res.once('close', () => responses.delete(res))
+  }
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -199,6 +214,8 @@ export async function stdioToStatefulStreamableHttp(
         )
       }
       await server.connect(transport)
+      const responses = new Set<express.Response>()
+      openResponses.set(transport, responses)
       const child = spawn(stdioCmd, children.spawnOptions)
       const stop = children.own(child)
       const pendingRequests = new Set<string | number>()
@@ -289,6 +306,7 @@ export async function stdioToStatefulStreamableHttp(
             logger.error(`Child non-JSON: ${line}`)
           }
         })
+        holdOutput(child.stdout, drained(responses))
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -389,6 +407,7 @@ export async function stdioToStatefulStreamableHttp(
 
     res.on('finish', () => handleResponseEnd('finished'))
     res.on('close', () => handleResponseEnd('closed'))
+    watch(transport, res)
 
     // Handle the request
     await transport.handleRequest(req, res, req.body)
@@ -436,6 +455,7 @@ export async function stdioToStatefulStreamableHttp(
     res.on('close', () => handleResponseEnd('closed'))
 
     const transport = transports.get(sessionId)!
+    watch(transport, res)
     await transport.handleRequest(req, res)
   }
 

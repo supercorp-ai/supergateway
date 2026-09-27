@@ -16,6 +16,7 @@ import {
 import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { OwnedStdioTransport } from './ownedStdioTransport.js'
+import { drained } from './outputBackpressure.js'
 import {
   CONTINUATION_TIMEOUT,
   RETAINED_CHILD_LIMIT,
@@ -251,6 +252,7 @@ export function createModernHttp(args: {
               route.messageKind === 'request' ? route.message.id : undefined,
           })
           .catch(fail)
+        child.hold(drained([res]))
       }
       transport.onerror = (error) =>
         logger.error('Modern HTTP transport error:', error)

@@ -7,6 +7,7 @@ import {
 import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { LineSplitter } from './lineSplitter.js'
+import { holdOutput } from './outputBackpressure.js'
 
 /** A request-owned pipe whose shutdown also reaps the child's descendants. */
 export class OwnedStdioTransport implements Transport {
@@ -58,6 +59,11 @@ export class OwnedStdioTransport implements Transport {
         this.onmessage?.(message)
       }
     })
+  }
+
+  /** Stop reading the child's output until `drained` settles. */
+  hold(drained: Promise<void> | undefined): void {
+    holdOutput(this.child!.stdout, drained)
   }
 
   async send(message: JSONRPCMessage): Promise<void> {

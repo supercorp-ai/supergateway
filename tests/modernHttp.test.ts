@@ -43,6 +43,9 @@ mock.module(
           b.sent.push(message)
           await b.send(message)
         }
+        // The relay's output hold; stdio-level behaviour is tested with a
+        // real child in slowClientBackpressure.test.ts.
+        hold() {}
         async finish() {
           await b.finish()
         }

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
@@ -25,6 +26,35 @@ export interface RealServer {
    * everything observed. Keep it narrow: whatever it masks, the soak cannot see.
    */
   normalize?: (json: string) => string
+}
+
+/**
+ * An `npx -y <pinned package>` command as the same package started with
+ * `node`, installed once per machine; any other command unchanged.
+ *
+ * Every gateway path that starts a child per request or connection launched
+ * npx again each time: about fifteen launches per server in stateless mode.
+ * npx can stall past a minute on the registry, which is what a soak measured
+ * (the Inspector waited 60.8 s per call on Linux; a stateless
+ * `read_multiple_files` hit the client's 60 s timeout in 4.1.0-rc.0's first
+ * phase, the same step having passed on that lane an hour earlier). The soak
+ * measures the gateway, so it starts the pinned package the way npx would
+ * after resolving it.
+ */
+export function withoutNpx(argv: string[]): string[] {
+  if (argv[0] !== 'npx' || argv[1] !== '-y') return argv
+  const spec = argv[2]
+  const root = join(tmpdir(), `supergateway-soak-${spec.replace(/\W+/g, '-')}`)
+  const dir = join(root, 'node_modules', spec.slice(0, spec.lastIndexOf('@')))
+  if (!existsSync(join(dir, 'package.json')))
+    execFileSync(
+      'npm',
+      ['install', '--prefix', root, '--no-audit', '--no-fund', spec],
+      { stdio: 'ignore', timeout: 5 * 60000 },
+    )
+  const { bin } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  const main = typeof bin === 'string' ? bin : Object.values(bin)[0]
+  return [process.execPath, join(dir, main as string), ...argv.slice(3)]
 }
 
 const tool = (name: string, args: Record<string, unknown> = {}) =>

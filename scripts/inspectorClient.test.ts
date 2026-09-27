@@ -13,11 +13,11 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
-import { realServers } from './real-servers/servers.js'
+import { realServers, withoutNpx } from './real-servers/servers.js'
 
 const enabled =
   process.env.SUPERGATEWAY_REAL_SERVERS === '1' && process.platform !== 'win32'
@@ -38,26 +38,6 @@ function installInspector() {
       { stdio: 'ignore', timeout: 5 * 60000 },
     )
   return bin
-}
-
-// The server as a plain `node` command. Launched by the Inspector through
-// `npx`, each direct call on Linux took 60.8 s to exit, against 2.1 s with
-// `node` and 0.5 s through a gateway. The two direct runs' 18 calls then
-// outran the test's 20 minutes on ubuntu-latest (4.1.0-rc.0 soak canary).
-// Same pinned package, installed once per machine, for every path.
-function installServer(spec: string) {
-  const root = join(tmpdir(), `supergateway-soak-${spec.replace(/\W+/g, '-')}`)
-  const name = spec.slice(0, spec.lastIndexOf('@'))
-  const dir = join(root, 'node_modules', name)
-  if (!existsSync(join(dir, 'package.json')))
-    execFileSync(
-      'npm',
-      ['install', '--prefix', root, '--no-audit', '--no-fund', spec],
-      { stdio: 'ignore', timeout: 5 * 60000 },
-    )
-  const { bin } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
-  const main = typeof bin === 'string' ? bin : Object.values(bin)[0]
-  return [process.execPath, join(dir, main as string)]
 }
 
 // The same questions realServers.test.ts asks server-everything, as Inspector
@@ -241,7 +221,9 @@ test(
       ({ name }) => name === 'server-everything',
     )!
     const bin = installInspector()
-    const argv = installServer(server.argv.at(-1)!)
+    // Launched by the Inspector through npx, each direct call on Linux took
+    // 60.8 s to exit, against 2.1 s with node (see withoutNpx).
+    const argv = withoutNpx(server.argv)
     const direct = () => observe(bin, argv, [], server.normalize)
 
     // As in realServers.test.ts: two direct runs must agree before any

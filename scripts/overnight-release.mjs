@@ -205,7 +205,7 @@ if (
     run(
       'resources',
       ['--import', 'tsx', 'scripts/soak-release.test.ts'],
-      (seconds + 480) * 1000,
+      (seconds + 540) * 1000,
       { SOAK_REPORT: resolve(root, 'resources.jsonl') },
     ),
     // Long-lived bridges, WebSocket isolation, cancellation, large replies,

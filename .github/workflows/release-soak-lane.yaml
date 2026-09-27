@@ -38,14 +38,20 @@ jobs:
         node: [20, 22, 24, 26]
     env:
       SOAK_DIRECTORY: .release/overnight
-      # Both soaks so far died to a Windows gateway that was still running and
+      # Both 4.0.0 soaks died to a Windows gateway that was still running and
       # had written nothing after eight seconds, on a runner the poll counter
-      # showed was being scheduled about five times slower than it asked for.
-      # Give only that platform room to absorb the stall; the failure message
-      # still reports how long the gateway took and how badly it was scheduled,
-      # so a raised budget hides nothing. Group test timeouts follow it through
-      # gatewayTimeout().
-      SUPERGATEWAY_TEST_READY_TIMEOUT: ${{ matrix.os == 'windows-latest' && '30000' || '' }}
+      # showed was being scheduled about five times slower than it asked for,
+      # so Windows got room to absorb the stall. Since the scenario soak runs
+      # beside the test groups for whole phases, every platform slows the same
+      # way: in 4.1.0-rc.0's first phase the direct SDK controls, which involve
+      # no gateway, took 3-4x their canary time on macOS and up to 3.7x on
+      # Linux, and a fixed 3 s probe budget failed there. The soak looks for
+      # leaks, crashes and hangs over hours, not latency, so every lane gets
+      # the same room; a hang still fails, and the readiness failure still
+      # reports how long the gateway took and how badly it was scheduled.
+      # Group and request timeouts follow it through gatewayTimeout() and
+      # requestTimeout().
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
       # Real, pinned MCP servers from npm and PyPI (scripts/realServers.test.ts).
       # POSIX only: the servers start through a shell command line.
       SUPERGATEWAY_REAL_SERVERS: ${{ matrix.os != 'windows-latest' && '1' || '' }}

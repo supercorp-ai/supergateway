@@ -16,11 +16,20 @@ on:
 permissions:
   contents: read
 
+# Shared by both jobs, so a release still bumps the version in one place here.
+env:
+  SUPERGATEWAY_SOAK_CONFIRMED: '1'
+  SOAK_SECONDS: ${{ inputs.seconds }}
+  SOAK_PACKAGE_VERSION: 4.0.0
+  SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
+
 jobs:
   exercise:
     name: ${{ inputs.label }} / Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 210
+    # Three-hour phases, plus install, the finite continuation check, the
+    # real-server and Inspector preflight and cooldowns.
+    timeout-minutes: 240
     strategy:
       fail-fast: true
       max-parallel: 12
@@ -28,11 +37,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 22, 24, 26]
     env:
-      SUPERGATEWAY_SOAK_CONFIRMED: '1'
-      SOAK_SECONDS: ${{ inputs.seconds }}
       SOAK_DIRECTORY: .release/overnight
-      SOAK_PACKAGE_VERSION: 4.0.0
-      SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
       # Both soaks so far died to a Windows gateway that was still running and
       # had written nothing after eight seconds, on a runner the poll counter
       # showed was being scheduled about five times slower than it asked for.
@@ -41,6 +46,9 @@ jobs:
       # so a raised budget hides nothing. Group test timeouts follow it through
       # gatewayTimeout().
       SUPERGATEWAY_TEST_READY_TIMEOUT: ${{ matrix.os == 'windows-latest' && '30000' || '' }}
+      # Real, pinned MCP servers from npm and PyPI (scripts/realServers.test.ts).
+      # POSIX only: the servers start through a shell command line.
+      SUPERGATEWAY_REAL_SERVERS: ${{ matrix.os != 'windows-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,6 +61,16 @@ jobs:
         run: node --import tsx --test tests/processTree.test.ts
       - name: Install exact published RC and verify its digest
         run: npm exec -- node scripts/install-soak-artifact.mjs
+      - name: Set up uv for the Python servers
+        if: matrix.os != 'windows-latest'
+        uses: astral-sh/setup-uv@v6
+      # Downloads and caches the pinned servers and Inspector before the clock
+      # starts, and fails fast if a registry is down or a server misbehaves
+      # rather than after hours of soak.
+      - name: Real servers and the Inspector agree through every gateway path
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 45
+        run: node --import tsx --test --test-concurrency=1 scripts/realServers.test.ts scripts/inspectorClient.test.ts
       - name: Exercise published RC
         run: node scripts/overnight-release.mjs
       - name: Preserve results, including failures
@@ -64,5 +82,65 @@ jobs:
             .release/overnight/
             .release/public-soak/package-lock.json
             .release/public-soak/artifact.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The exercise lanes run only the Node battery driver. This job keeps the
+  # Python and Go SDKs and the Ruby client talking to the same candidate for the
+  # whole phase, through every output transport. The toolchains and client
+  # versions are the ones the cross-client CI job pins (tests.yaml).
+  languages:
+    name: ${{ inputs.label }} / Python, Go and Ruby clients / ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 225
+    env:
+      SOAK_DIRECTORY: .release/languages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install exact published RC and verify its digest
+        run: npm exec -- node scripts/install-soak-artifact.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install the Python MCP client
+        run: pip install 'mcp==2.2.0'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Build the Go driver
+        run: |
+          mkdir -p "$RUNNER_TEMP/gobattery"
+          cp tests/clients/battery.go "$RUNNER_TEMP/gobattery/main.go"
+          cd "$RUNNER_TEMP/gobattery"
+          go mod init battery
+          go get github.com/modelcontextprotocol/go-sdk@v0.2.0
+          go mod tidy
+          go build -o "$RUNNER_TEMP/go-battery" .
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Install the Ruby MCP client
+        run: gem install ruby-mcp-client -v 2.1.0
+      - name: Exercise published RC with the Python, Go and Ruby clients
+        run: |
+          printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
+          printf '#!/bin/sh\nexec ruby "%s/tests/clients/battery.rb" "$@"\n' "$PWD" > "$RUNNER_TEMP/rbbattery"
+          chmod +x "$RUNNER_TEMP/pybattery" "$RUNNER_TEMP/rbbattery"
+          node scripts/soak-languages.mjs
+        env:
+          SOAK_BATTERY_PYTHON: ${{ runner.temp }}/pybattery
+          SOAK_BATTERY_GO: ${{ runner.temp }}/go-battery
+          SOAK_BATTERY_RUBY: ${{ runner.temp }}/rbbattery
+      - name: Preserve results, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ inputs.label }}-languages
+          path: .release/languages/
           retention-days: 14
           if-no-files-found: warn

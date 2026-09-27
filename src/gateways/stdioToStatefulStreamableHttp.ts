@@ -19,6 +19,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -299,6 +300,28 @@ export async function stdioToStatefulStreamableHttp(
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
+        if ('method' in msg && msg.method === 'notifications/cancelled')
+          endCancelled(
+            (msg.params as { requestId?: string | number } | undefined)
+              ?.requestId,
+          )
+      }
+
+      // A server sends nothing for a cancelled call, and the response stream
+      // for it stays open until the call is answered: every cancel in a
+      // long-lived session held a socket until the session ended (measured: 30
+      // cancels, 30 more descriptors). Close that stream, and stop routing
+      // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
+      // older one the stream stays open, as before.
+      const endCancelled = (requestId: string | number | undefined) => {
+        if (!pendingRequests.delete(requestId!)) return
+        // Typed by hand: the SDK matrix builds against versions that do not
+        // declare it.
+        const closable = transport as unknown as {
+          closeSSEStream?: (requestId: string | number) => void
+        }
+        if (typeof closable.closeSSEStream === 'function')
+          closable.closeSSEStream(requestId!)
       }
 
       transport.onclose = () => {
@@ -422,10 +445,12 @@ export async function stdioToStatefulStreamableHttp(
   // Handle DELETE requests for session termination
   app.delete(streamableHttpPath, handleSessionRequest)
 
-  app.listen(port, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
-    )
-  })
+  keepConnectionsAlive(
+    app.listen(port, () => {
+      logger.info(`Listening on port ${port}`)
+      logger.info(
+        `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      )
+    }),
+  )
 }

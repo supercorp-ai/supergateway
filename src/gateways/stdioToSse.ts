@@ -14,6 +14,8 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -263,6 +265,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
           logger.error(`Child non-JSON (session ${sessionId}): ${line}`)
         }
       })
+      holdOutput(child.stdout, drained([res]))
     })
     child.stderr.on('data', (chunk: Buffer) => {
       logger.error(
@@ -310,9 +313,11 @@ export async function stdioToSse(args: StdioToSseArgs) {
     }
   })
 
-  app.listen(port, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
-    logger.info(`POST messages: http://localhost:${port}${messagePath}`)
-  })
+  keepConnectionsAlive(
+    app.listen(port, () => {
+      logger.info(`Listening on port ${port}`)
+      logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
+      logger.info(`POST messages: http://localhost:${port}${messagePath}`)
+    }),
+  )
 }

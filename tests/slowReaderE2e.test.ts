@@ -82,7 +82,7 @@ async function stream(t: TestContext, base: string) {
 
 for (const paused of [false, true]) {
   test(
-    `SSE ${paused ? 'paused' : 'draining'} reader survives 128 MiB of small valid notifications with a 96 MiB gateway heap`,
+    `SSE ${paused ? 'paused' : 'draining'} reader survives 128 MiB of small valid notifications with a 160 MiB gateway heap`,
     { timeout: 90000 },
     async (t) => {
       const control = await faultControl(t)
@@ -102,7 +102,17 @@ for (const paused of [false, true]) {
           '/health',
         ],
         {
-          NODE_OPTIONS: '--max-old-space-size=96',
+          // 160, not 96. A burst the reader keeps up with allocates about 2 GB
+          // of short-lived strings in under a second. On a CPU-starved host
+          // the collector fell behind and the heap passed 96 MiB with garbage
+          // it had not had time to reclaim: V8 "Reached heap limit", while a
+          // snapshot at that limit held 35 MiB live. It failed that way with
+          // or without output backpressure, and never at 160 (35 runs under
+          // 15 busy loops). 160 still fails a gateway that queues the burst on
+          // its heap. Output queued outside the heap, which is where it went
+          // before the gateway held a slow client's child (GW-033), is caught
+          // by slowClientBackpressure.test.ts instead.
+          NODE_OPTIONS: '--max-old-space-size=160',
           FAULT_CONTROL: control.url,
         },
       )
@@ -185,7 +195,19 @@ for (const paused of [false, true]) {
         JSON.parse(healthy.replies.get(3).result.content[0].text).pid,
         healthyPid,
       )
-      await control.wait('burst-done')
+      // A gateway that dies mid-burst fails here at once, with its own report,
+      // rather than as a missing burst-done five seconds later.
+      await Promise.race([
+        control.wait('burst-done'),
+        gateway.exited.then(({ code, signal }) => {
+          throw Error(
+            `The gateway exited (${signal ?? `code ${code}`}) during the burst, ` +
+              `after the ${paused ? 'paused' : 'draining'} reader got ` +
+              `${slow.count()} of 8192 notifications.\n` +
+              gateway.errors().slice(-2000),
+          )
+        }),
+      ])
       if (!paused || !slow.response.destroyed) {
         if (paused) {
           const deadline = Date.now() + 15000

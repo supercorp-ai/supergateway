@@ -19,6 +19,8 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -115,6 +117,20 @@ export async function stdioToStatefulStreamableHttp(
   // inheritance, which fixes the class rather than the names.
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const liveness = new Map<string, SessionLivenessProbe>()
+  // Each session's open responses (its POSTs and its GET stream), so its child
+  // is held while any of them is backed up.
+  const openResponses = new WeakMap<
+    StreamableHTTPServerTransport,
+    Set<express.Response>
+  >()
+  const watch = (
+    transport: StreamableHTTPServerTransport,
+    res: express.Response,
+  ) => {
+    const responses = openResponses.get(transport)!
+    responses.add(res)
+    res.once('close', () => responses.delete(res))
+  }
 
   // Session access counter for timeout management
   const sessionCounter = sessionTimeout
@@ -198,6 +214,8 @@ export async function stdioToStatefulStreamableHttp(
         )
       }
       await server.connect(transport)
+      const responses = new Set<express.Response>()
+      openResponses.set(transport, responses)
       const child = spawn(stdioCmd, children.spawnOptions)
       const stop = children.own(child)
       const pendingRequests = new Set<string | number>()
@@ -288,6 +306,7 @@ export async function stdioToStatefulStreamableHttp(
             logger.error(`Child non-JSON: ${line}`)
           }
         })
+        holdOutput(child.stdout, drained(responses))
       })
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -299,6 +318,28 @@ export async function stdioToStatefulStreamableHttp(
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
         child.stdin.write(JSON.stringify(msg) + '\n')
+        if ('method' in msg && msg.method === 'notifications/cancelled')
+          endCancelled(
+            (msg.params as { requestId?: string | number } | undefined)
+              ?.requestId,
+          )
+      }
+
+      // A server sends nothing for a cancelled call, and the response stream
+      // for it stays open until the call is answered: every cancel in a
+      // long-lived session held a socket until the session ended (measured: 30
+      // cancels, 30 more descriptors). Close that stream, and stop routing
+      // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
+      // older one the stream stays open, as before.
+      const endCancelled = (requestId: string | number | undefined) => {
+        if (!pendingRequests.delete(requestId!)) return
+        // Typed by hand: the SDK matrix builds against versions that do not
+        // declare it.
+        const closable = transport as unknown as {
+          closeSSEStream?: (requestId: string | number) => void
+        }
+        if (typeof closable.closeSSEStream === 'function')
+          closable.closeSSEStream(requestId!)
       }
 
       transport.onclose = () => {
@@ -366,6 +407,7 @@ export async function stdioToStatefulStreamableHttp(
 
     res.on('finish', () => handleResponseEnd('finished'))
     res.on('close', () => handleResponseEnd('closed'))
+    watch(transport, res)
 
     // Handle the request
     await transport.handleRequest(req, res, req.body)
@@ -413,6 +455,7 @@ export async function stdioToStatefulStreamableHttp(
     res.on('close', () => handleResponseEnd('closed'))
 
     const transport = transports.get(sessionId)!
+    watch(transport, res)
     await transport.handleRequest(req, res)
   }
 
@@ -422,10 +465,12 @@ export async function stdioToStatefulStreamableHttp(
   // Handle DELETE requests for session termination
   app.delete(streamableHttpPath, handleSessionRequest)
 
-  app.listen(port, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
-    )
-  })
+  keepConnectionsAlive(
+    app.listen(port, () => {
+      logger.info(`Listening on port ${port}`)
+      logger.info(
+        `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      )
+    }),
+  )
 }

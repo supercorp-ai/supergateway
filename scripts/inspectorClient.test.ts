@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
-import { realServers, withoutNpx } from './real-servers/servers.js'
+import { realServers, installedCommand } from './real-servers/servers.js'
 
 const enabled =
   process.env.SUPERGATEWAY_REAL_SERVERS === '1' && process.platform !== 'win32'
@@ -222,8 +222,8 @@ test(
     )!
     const bin = installInspector()
     // Launched by the Inspector through npx, each direct call on Linux took
-    // 60.8 s to exit, against 2.1 s with node (see withoutNpx).
-    const argv = withoutNpx(server.argv)
+    // 60.8 s to exit, against 2.1 s with node (see installedCommand).
+    const argv = installedCommand(server.argv)
     const direct = () => observe(bin, argv, [], server.normalize)
 
     // As in realServers.test.ts: two direct runs must agree before any

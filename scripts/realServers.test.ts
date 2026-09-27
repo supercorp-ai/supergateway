@@ -23,7 +23,7 @@ import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
 import {
   prepareFixtures,
   realServers,
-  withoutNpx,
+  installedCommand,
   type RealServer,
 } from './real-servers/servers.js'
 
@@ -98,7 +98,7 @@ const gatewayFor = async (
     t,
     [
       '--stdio',
-      withoutNpx(server.argv).map(shellWord).join(' '),
+      installedCommand(server.argv).map(shellWord).join(' '),
       '--port',
       String(port),
       ...output,
@@ -194,26 +194,41 @@ for (const server of realServers(fixtures)) {
         server.env?.(mkdtempSync(join(root, `run-${runs++}-`))) ?? {}
       const direct = (env: Record<string, string>) =>
         new StdioClientTransport({
-          command: withoutNpx(server.argv)[0],
-          args: withoutNpx(server.argv).slice(1),
+          command: installedCommand(server.argv)[0],
+          args: installedCommand(server.argv).slice(1),
           env: { ...(process.env as Record<string, string>), ...env },
           stderr: 'ignore',
         })
 
+      // A connection that fails outright says where: 4.1.0-rc.0's soak lost a
+      // phase to a bare "Connection closed" that could have been the direct
+      // server or any bridge.
+      const at = async <T>(where: string, work: () => Promise<T>) => {
+        try {
+          return await work()
+        } catch (error) {
+          throw new Error(
+            `${server.name} ${where}: ${(error as Error).message}`,
+            { cause: error },
+          )
+        }
+      }
+
       // The oracle is only as good as the script: two direct runs must agree
       // before any difference can be blamed on the gateway.
-      const expected = await observe(direct(envFor()), server)
+      const expected = await at('direct', () =>
+        observe(direct(envFor()), server),
+      )
       assert.deepEqual(
-        await observe(direct(envFor()), server),
+        await at('direct, second run', () => observe(direct(envFor()), server)),
         expected,
         `${server.name}: the script is not deterministic without a gateway`,
       )
 
       for (const path of PATHS) {
         const env = envFor()
-        const observed = await observe(
-          await path.connect(t, server, env),
-          server,
+        const observed = await at(`through ${path.name}`, async () =>
+          observe(await path.connect(t, server, env), server),
         )
         assert.deepEqual(
           observed,

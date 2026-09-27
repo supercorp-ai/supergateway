@@ -29,32 +29,58 @@ export interface RealServer {
 }
 
 /**
- * An `npx -y <pinned package>` command as the same package started with
- * `node`, installed once per machine; any other command unchanged.
+ * A pinned `npx -y` or `uvx` command as the same package, installed once per
+ * machine and started directly; any other command unchanged.
  *
- * Every gateway path that starts a child per request or connection launched
- * npx again each time: about fifteen launches per server in stateless mode.
- * npx can stall past a minute on the registry, which is what a soak measured
- * (the Inspector waited 60.8 s per call on Linux; a stateless
- * `read_multiple_files` hit the client's 60 s timeout in 4.1.0-rc.0's first
- * phase, the same step having passed on that lane an hour earlier). The soak
- * measures the gateway, so it starts the pinned package the way npx would
- * after resolving it.
+ * Package runners resolve against their registry on every launch, and the
+ * soak launches a server again for every stateless request, connection and
+ * cycle. Each stall ended a soak: npx waited 60.8 s per call under the
+ * Inspector on Linux, a stateless `read_multiple_files` hit the client's 60 s
+ * timeout, and after eight clean cycles both uvx servers closed their pipes
+ * together in cycle 8 of 4.1.0-rc.0's first phase while every npm server
+ * passed. The soak measures the gateway, so it starts each pinned package the
+ * way its runner would after resolving it.
  */
-export function withoutNpx(argv: string[]): string[] {
-  if (argv[0] !== 'npx' || argv[1] !== '-y') return argv
-  const spec = argv[2]
+export function installedCommand(argv: string[]): string[] {
+  const [runner, ...rest] = argv
+  const spec = runner === 'npx' && rest[0] === '-y' ? rest[1] : rest[0]
+  if (!(runner === 'npx' && rest[0] === '-y') && runner !== 'uvx') return argv
+  const args = rest.slice(runner === 'npx' ? 2 : 1)
   const root = join(tmpdir(), `supergateway-soak-${spec.replace(/\W+/g, '-')}`)
-  const dir = join(root, 'node_modules', spec.slice(0, spec.lastIndexOf('@')))
+  const at = spec.lastIndexOf('@')
+  const name = spec.slice(0, at)
+  const install = (command: string, commandArgs: string[]) =>
+    execFileSync(command, commandArgs, { stdio: 'ignore', timeout: 5 * 60000 })
+  if (runner === 'uvx') {
+    const bin = join(root, 'bin', name)
+    if (!existsSync(bin)) {
+      install('uv', ['venv', '--quiet', root])
+      install('uv', [
+        ...[
+          'pip',
+          'install',
+          '--quiet',
+          '--python',
+          join(root, 'bin', 'python'),
+        ],
+        `${name}==${spec.slice(at + 1)}`,
+      ])
+    }
+    return [bin, ...args]
+  }
+  const dir = join(root, 'node_modules', name)
   if (!existsSync(join(dir, 'package.json')))
-    execFileSync(
-      'npm',
-      ['install', '--prefix', root, '--no-audit', '--no-fund', spec],
-      { stdio: 'ignore', timeout: 5 * 60000 },
-    )
+    install('npm', [
+      'install',
+      '--prefix',
+      root,
+      '--no-audit',
+      '--no-fund',
+      spec,
+    ])
   const { bin } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const main = typeof bin === 'string' ? bin : Object.values(bin)[0]
-  return [process.execPath, join(dir, main as string), ...argv.slice(3)]
+  return [process.execPath, join(dir, main as string), ...args]
 }
 
 const tool = (name: string, args: Record<string, unknown> = {}) =>

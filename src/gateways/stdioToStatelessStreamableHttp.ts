@@ -19,6 +19,7 @@ import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained, holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToStreamableHttpArgs {
@@ -480,10 +481,12 @@ export async function stdioToStatelessStreamableHttp(
     )
   })
 
-  app.listen(port, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(
-      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
-    )
-  })
+  keepConnectionsAlive(
+    app.listen(port, () => {
+      logger.info(`Listening on port ${port}`)
+      logger.info(
+        `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+      )
+    }),
+  )
 }

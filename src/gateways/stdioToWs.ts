@@ -9,6 +9,7 @@ import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { holdOutput } from '../lib/outputBackpressure.js'
 
 export interface StdioToWsArgs {
@@ -64,7 +65,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // http.createServer is the documented pattern, so this is a declaration
   // artifact rather than a floating promise.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  const httpServer = createServer(app)
+  const httpServer = keepConnectionsAlive(createServer(app))
 
   // A connection's child is stopped once, whichever ending comes first: the
   // client leaving, the child exiting, or its stdio failing.

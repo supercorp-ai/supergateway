@@ -24,7 +24,9 @@ test('stateful response completion releases once and cleanup cancels session tim
     delete(path: string, handler: Handler) {
       routes.set(`DELETE ${path}`, handler)
     },
-    listen() {},
+    listen() {
+      return {}
+    },
   }
   class Response extends EventEmitter {
     code = 200

@@ -137,9 +137,18 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
             { capabilities: {} },
           ],
         ],
-        signals: [{ logger }],
+        // The Streamable HTTP bridge also ends its upstream session on the way
+        // out; the SSE bridge's session ends with its event stream.
+        signals: [
+          mode === 'sse' ? { logger } : { logger, cleanup: signals[0].cleanup },
+        ],
       },
     )
+    if (mode !== 'sse') {
+      assert.equal(typeof signals[0].cleanup, 'function')
+      // Before any connection there is no session to end.
+      assert.equal(await signals[0].cleanup(), undefined)
+    }
     const original = Client.prototype.request
     const input = initialize(41)
     await stdio.onmessage(input)

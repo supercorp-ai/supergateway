@@ -20,7 +20,7 @@ permissions:
 env:
   SUPERGATEWAY_SOAK_CONFIRMED: '1'
   SOAK_SECONDS: ${{ inputs.seconds }}
-  SOAK_PACKAGE_VERSION: 4.0.0
+  SOAK_PACKAGE_VERSION: 4.1.0-rc.0
   SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
 
 jobs:

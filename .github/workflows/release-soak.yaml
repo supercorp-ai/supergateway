@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       sha256:
-        description: Verified SHA-256 of the published 4.0.0 tarball
+        description: Verified SHA-256 of the published 4.1.0-rc.0 tarball
         required: true
         type: string
       duration:
-        description: Run canaries only, or the approved six-hour campaign
+        description: Run canaries only, the six-hour campaign, or the 25-hour one
         type: choice
-        options: [canary, six-hours]
+        options: [canary, six-hours, twenty-five-hours]
         default: canary
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
 
   first:
     needs: canary
-    if: inputs.duration == 'six-hours'
+    if: inputs.duration != 'canary'
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -40,4 +40,70 @@ jobs:
     with:
       seconds: 10800
       label: second-three-hours
+      sha256: ${{ inputs.sha256 }}
+
+  # The 25-hour campaign continues from the six-hour one, one phase after
+  # another: a hosted job runs at most six hours, and each phase starts only
+  # if the one before it passed.
+  third:
+    needs: second
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.second.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-6-to-9
+      sha256: ${{ inputs.sha256 }}
+
+  fourth:
+    needs: third
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.third.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-9-to-12
+      sha256: ${{ inputs.sha256 }}
+
+  fifth:
+    needs: fourth
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fourth.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-12-to-15
+      sha256: ${{ inputs.sha256 }}
+
+  sixth:
+    needs: fifth
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fifth.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-15-to-18
+      sha256: ${{ inputs.sha256 }}
+
+  seventh:
+    needs: sixth
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.sixth.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-18-to-21
+      sha256: ${{ inputs.sha256 }}
+
+  eighth:
+    needs: seventh
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.seventh.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 10800
+      label: hours-21-to-24
+      sha256: ${{ inputs.sha256 }}
+
+  ninth:
+    needs: eighth
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.eighth.result == 'success' }}
+    uses: ./.github/workflows/release-soak-lane.yaml
+    with:
+      seconds: 3600
+      label: hour-24-to-25
       sha256: ${{ inputs.sha256 }}

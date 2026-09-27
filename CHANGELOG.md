@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.1.0-rc.0
+
+### Improvements and fixes
+
+- Give each WebSocket connection its own server process, as SSE connections now have: clients no longer receive each other's notifications or requests.
+- Relay server-initiated requests (sampling, roots, elicitation), notifications, cancellation and string request ids through WebSocket and the `--sse` and `--streamableHttp` bridges, and stop cutting bridged calls off after 60 seconds.
+- Stop reading a server's output while its client is not reading, instead of holding it all in memory. One slow client can no longer exhaust the gateway's memory and take every other client down with it.
+- Fail an SSE client's in-flight calls as soon as its server process exits, instead of leaving them to time out.
+- Close a cancelled call's stream in stateful Streamable HTTP, instead of holding a connection open until the session ends.
+- Keep idle HTTP connections for 65 seconds, longer than common load balancers keep theirs, to avoid intermittent connection resets and 502s.
+- End the upstream session when a `--streamableHttp` bridge exits, and reconnect a bridge after its upstream restarts.
+- Report an SSE upstream that never sends its endpoint event, instead of hanging.
+- Stateless Streamable HTTP: accept JSON-RPC batches, start each server with the client's protocol version, and deliver `notifications/initialized` once.
+- Accept request bodies up to 4 MB in the Streamable HTTP modes, as SSE already did, and answer a rejected body with a JSON-RPC error instead of an HTML page.
+- Apply `--header` to every HTTP response, accept a `--sessionTimeout` of up to 30 days, and refuse a non-numeric one.
+- Route path flags given without a leading slash, and handle a `--baseUrl` that ends in a slash.
+- Refuse credentials in an upstream URL, with guidance to send them with `--header` instead, and never print them.
+- Read large server output and large upstream events in linear time.
+
 ## 4.0.0
 
 ### Breaking changes

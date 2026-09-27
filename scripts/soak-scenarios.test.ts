@@ -512,11 +512,11 @@ test(
       )
     }
     // RSS: each gateway's settled final against the warm-up envelope, the
-    // highest of the first three warm samples. With 4 MB replies every
-    // process's RSS is a sawtooth, so a single reference sample decides the
-    // verdict by where it lands: the stateful gateway once sampled 111 MiB at
-    // round 40, below its own 142 MiB idle baseline, and then failed with a
-    // settled 155 MiB. A leak still has to outgrow the envelope by a fifth plus
+    // highest warm sample in the first fifth of the run (at least three). With
+    // 4 MB replies every process's RSS is a sawtooth, so a single reference
+    // sample decides the verdict by where it lands: the stateful gateway once
+    // sampled 111 MiB at round 40, below its own 142 MiB idle baseline, and
+    // then failed with a settled 155 MiB. A leak still has to outgrow the envelope by a fifth plus
     // 16 MiB. The bridges are left to their heap cap: their RSS is recorded,
     // but it climbs with V8's heap sizing whether or not anything leaks.
     //
@@ -525,7 +525,19 @@ test(
     // WebSocket gateway's trough (97 MiB, between 112 at baseline and 160 at
     // round 10) and failed a settled 135 MiB. The three-hour phases take
     // hundreds of samples, so they keep the gate.
-    const warm = warmSamples.slice(0, 3)
+    //
+    // The first fifth, not the first three. Over a three-hour phase every
+    // gateway climbs for its first hour or so and then holds: in 4.1.0-rc.0's
+    // first phase SSE went 136 -> 228 MiB and stayed there, stateless 134 ->
+    // 277-312 MiB flat for the last two hours, with descriptors and children
+    // flat throughout. Three samples from the first minute judged that warm
+    // plateau against a cold start and failed stateless (settled 300 MiB
+    // against 176). Against the first fifth it passes (reference 299 MiB),
+    // and growth of more than about a fifth beyond it still fails.
+    const warm = warmSamples.slice(
+      0,
+      Math.max(3, Math.floor(warmSamples.length / 5)),
+    )
     if (warm.length < 3) emit({ phase: 'rss-not-judged', warm: warm.length })
     else
       for (const [index, row] of settled.entries()) {

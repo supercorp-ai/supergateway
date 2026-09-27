@@ -10,6 +10,7 @@ import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/webso
 import { WebSocket } from 'ws'
 import {
   LoggingMessageNotificationSchema,
+  ProgressNotificationSchema,
   ToolListChangedNotificationSchema,
   CreateMessageRequestSchema,
   ListRootsRequestSchema,
@@ -149,12 +150,26 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 500))
 const textOf = (reply: unknown) =>
   (reply as Reply).content?.find((c) => c.type === 'text')?.text ?? ''
 
-async function progressSeenBy(o: Observed) {
+// What the gateway delivered, counted by a handler of the client's own. The
+// SDK's per-call `onprogress` loses a notification that shares a read with the
+// result (GW-027, below); spacing the peer's notifications 150 ms apart kept
+// them in separate reads until a starved soak runner (4.1.0-rc.0, macOS /
+// Node 20, cycle 4) read the last one with the result and saw [1, 2]. The
+// GW-027 test keeps `onprogress`, so a fixed SDK still shows up there.
+async function progressSeenBy(
+  o: Observed,
+  via: 'handler' | 'onprogress' = 'handler',
+) {
   const seen: number[] = []
+  if (via === 'handler')
+    o.client.setNotificationHandler(ProgressNotificationSchema, (n) => {
+      seen.push(n.params.progress)
+    })
   const done = await o.client.callTool(
     { name: 'progress', arguments: {} },
     undefined,
-    { onprogress: (p) => seen.push(p.progress) },
+    // Also what makes the SDK send a progress token.
+    { onprogress: (p) => void (via === 'onprogress' && seen.push(p.progress)) },
   )
   await settle()
   assert.match(
@@ -259,7 +274,7 @@ knownBugTest(
   { timeout: 90000 },
   async (t) => {
     const o = await connect(t, MODES[1], '0')
-    assert.deepEqual(await progressSeenBy(o), [1, 2, 3])
+    assert.deepEqual(await progressSeenBy(o, 'onprogress'), [1, 2, 3])
   },
 )
 

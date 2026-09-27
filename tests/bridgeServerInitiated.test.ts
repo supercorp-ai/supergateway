@@ -8,6 +8,7 @@ import {
   ElicitRequestSchema,
   ListRootsRequestSchema,
   LoggingMessageNotificationSchema,
+  ProgressNotificationSchema,
   PromptListChangedNotificationSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
@@ -106,10 +107,16 @@ for (const kind of BRIDGES) {
       await upstream.waitFor(() => logs.length >= 3, 'relay three log messages')
       assert.deepEqual(logs, ['log-info', 'log-warning', 'log-error'])
 
+      // Counted by a handler of the client's own: the SDK's `onprogress` drops
+      // a notification read together with the result (GW-027, upstream), which
+      // a loaded soak runner makes likely. `onprogress` still sends the token.
       const progress: number[] = []
+      client.setNotificationHandler(ProgressNotificationSchema, (n) => {
+        progress.push(n.params.progress)
+      })
       await client.callTool({ name: 'progress', arguments: {} }, undefined, {
         ...CALL,
-        onprogress: (p) => progress.push(p.progress),
+        onprogress: () => {},
       })
       await upstream.waitFor(() => progress.length >= 3, 'relay progress')
       assert.deepEqual(progress, [1, 2, 3])

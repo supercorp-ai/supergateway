@@ -38,6 +38,8 @@ jobs:
         node: [20, 22, 24, 26]
     env:
       SOAK_DIRECTORY: .release/overnight
+      # The scenario soak has runners of its own (the scenarios job below).
+      SOAK_SKIP_SCENARIOS: '1'
       # Both 4.0.0 soaks died to a Windows gateway that was still running and
       # had written nothing after eight seconds, on a runner the poll counter
       # showed was being scheduled about five times slower than it asked for,
@@ -148,5 +150,46 @@ jobs:
         with:
           name: soak-${{ inputs.label }}-languages
           path: .release/languages/
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The scenario soak (scripts/soak-scenarios.test.ts) for the whole phase, on
+  # runners of its own. Beside the test groups it starved them: in the
+  # 4.1.0-rc.0 soak the groups ran 2.5x slower on average and up to 11x, and
+  # timing-bound tests failed on macOS that pass alone. It keeps its own
+  # resource gates here, on both POSIX platforms.
+  scenarios:
+    name: ${{ inputs.label }} / scenarios / Node 24 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 225
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      SOAK_DIRECTORY: .release/scenarios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install exact published RC and verify its digest
+        run: npm exec -- node scripts/install-soak-artifact.mjs
+      - name: Scenario soak against the published RC
+        run: |
+          mkdir -p "$SOAK_DIRECTORY"
+          node --import tsx --test scripts/soak-scenarios.test.ts 2>&1 | tee "$SOAK_DIRECTORY/scenarios.log"
+          exit "${PIPESTATUS[0]}"
+        shell: bash
+        env:
+          SOAK_REPORT: ${{ github.workspace }}/.release/scenarios/scenarios.jsonl
+      - name: Preserve results, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ inputs.label }}-scenarios-${{ matrix.os }}
+          path: .release/scenarios/
           retention-days: 14
           if-no-files-found: warn

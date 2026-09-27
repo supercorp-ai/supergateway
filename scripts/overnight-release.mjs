@@ -94,6 +94,8 @@ events({
   sha256: artifact.sha256,
   resourceSoak:
     process.platform !== 'win32' && process.env.SOAK_SKIP_RESOURCE !== '1',
+  scenarioSoak:
+    process.platform !== 'win32' && process.env.SOAK_SKIP_SCENARIOS !== '1',
 })
 writeFileSync(resolve(root, 'pid'), String(process.pid))
 async function batteries() {
@@ -208,8 +210,17 @@ if (
       (seconds + 540) * 1000,
       { SOAK_REPORT: resolve(root, 'resources.jsonl') },
     ),
-    // Long-lived bridges, WebSocket isolation, cancellation, large replies,
-    // crashes and upstream restarts, with their own resource gates.
+  )
+// Long-lived bridges, WebSocket isolation, cancellation, large replies,
+// crashes and upstream restarts, with their own resource gates. The hosted
+// soak runs this on runners of its own (SOAK_SKIP_SCENARIOS there): beside the
+// test groups for whole phases it slowed them 2.5x on average and up to 11x.
+if (
+  !commands.failed &&
+  process.platform !== 'win32' &&
+  process.env.SOAK_SKIP_SCENARIOS !== '1'
+)
+  jobs.push(
     run(
       'scenarios',
       ['--import', 'tsx', 'scripts/soak-scenarios.test.ts'],

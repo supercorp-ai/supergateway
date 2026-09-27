@@ -303,7 +303,9 @@ export const initialize = (id: number | string = 1) => ({
 export async function rpc(url: string, message: object, session?: string) {
   const response = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(5000),
+    // Setup, like the other request budgets: a loaded soak runner once took
+    // longer than a fixed five seconds to start a stateful session's child.
+    signal: AbortSignal.timeout(requestTimeout(5000)),
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',

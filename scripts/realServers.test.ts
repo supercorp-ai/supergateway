@@ -23,6 +23,7 @@ import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
 import {
   prepareFixtures,
   realServers,
+  withoutNpx,
   type RealServer,
 } from './real-servers/servers.js'
 
@@ -97,7 +98,7 @@ const gatewayFor = async (
     t,
     [
       '--stdio',
-      server.argv.map(shellWord).join(' '),
+      withoutNpx(server.argv).map(shellWord).join(' '),
       '--port',
       String(port),
       ...output,
@@ -193,8 +194,8 @@ for (const server of realServers(fixtures)) {
         server.env?.(mkdtempSync(join(root, `run-${runs++}-`))) ?? {}
       const direct = (env: Record<string, string>) =>
         new StdioClientTransport({
-          command: server.argv[0],
-          args: server.argv.slice(1),
+          command: withoutNpx(server.argv)[0],
+          args: withoutNpx(server.argv).slice(1),
           env: { ...(process.env as Record<string, string>), ...env },
           stderr: 'ignore',
         })

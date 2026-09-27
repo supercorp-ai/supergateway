@@ -517,8 +517,15 @@ test(
     // settled 155 MiB. A leak still has to outgrow the envelope by a fifth plus
     // 16 MiB. The bridges are left to their heap cap: their RSS is recorded,
     // but it climbs with V8's heap sizing whether or not anything leaks.
+    //
+    // Only with the full three. A one-minute canary reaches about round 26,
+    // which leaves a single warm sample; the 4.1.0-rc.0 canary's landed on the
+    // WebSocket gateway's trough (97 MiB, between 112 at baseline and 160 at
+    // round 10) and failed a settled 135 MiB. The three-hour phases take
+    // hundreds of samples, so they keep the gate.
     const warm = warmSamples.slice(0, 3)
-    if (warm.length)
+    if (warm.length < 3) emit({ phase: 'rss-not-judged', warm: warm.length })
+    else
       for (const [index, row] of settled.entries()) {
         const reference = Math.max(...warm.map((rows) => rows[index].rssKiB))
         assert.ok(

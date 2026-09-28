@@ -4,9 +4,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { faultControl } from './helpers/fault-control.js'
 import {
+  gatewayTimeout,
   initialize,
   rpc,
   launchGateway,
+  requestTimeout,
   unusedPort,
 } from './helpers/gateway-process.js'
 
@@ -27,8 +29,15 @@ const processFailure = (error: any) => {
   assert.equal(error.data, undefined, 'process diagnostics stay in server logs')
   return true
 }
+// Scaled like the other request budgets. The held call's clock starts before
+// the test has seen a second client's child start, so on a starved soak runner
+// (4.1.0-rc.0, macOS / Node 20: this test ran 1.1-6.1 s in earlier phases and
+// 7.8 s when it failed) a fixed four seconds ran out before the exit was even
+// triggered. A call the gateway never settles still times out and fails.
 const call = (client: Client, name: string) =>
-  client.callTool({ name, arguments: {} }, undefined, { timeout: 4000 })
+  client.callTool({ name, arguments: {} }, undefined, {
+    timeout: requestTimeout(4000),
+  })
 
 for (const stateful of [false, true]) {
   const mode = stateful ? 'stateful' : 'stateless'
@@ -39,7 +48,7 @@ for (const stateful of [false, true]) {
   ]) {
     test(
       `${mode} SDK initialize receives a protocol error after ${exit} (#139)`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const gateway = launchGateway(t, [
@@ -56,7 +65,7 @@ for (const stateful of [false, true]) {
         await gateway.ready()
         const { client, transport } = sdk(t, `http://127.0.0.1:${port}/mcp`)
         await assert.rejects(
-          client.connect(transport, { timeout: 4000 }),
+          client.connect(transport, { timeout: requestTimeout(4000) }),
           processFailure,
         )
         assert.equal(gateway.child.exitCode, null)
@@ -69,7 +78,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${mode} SDK child exit settles pending calls and preserves another active client`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const control = await faultControl(t)
       const port = await unusedPort()

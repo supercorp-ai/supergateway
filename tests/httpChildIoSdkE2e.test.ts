@@ -3,7 +3,12 @@ import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { faultControl } from './helpers/fault-control.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  requestTimeout,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 // An HTTP response ending is not a JSON-RPC reply. The SDK can keep a call
 // pending after EOF, so require an actual protocol error before its timeout.
@@ -11,7 +16,7 @@ for (const stateful of [true, false]) {
   for (const fault of ['spawn', 'stdin'] as const) {
     test(
       `${stateful ? 'stateful' : 'stateless'} SDK receives a protocol error on child ${fault} failure`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const control = await faultControl(t)
         const port = await unusedPort()
@@ -58,14 +63,14 @@ for (const stateful of [true, false]) {
         }
         if (fault === 'spawn') {
           await assert.rejects(
-            client.connect(transport, { timeout: 2500 }),
+            client.connect(transport, { timeout: requestTimeout(2500) }),
             failed,
           )
         } else {
           await client.connect(transport)
           const call = (name: string) =>
             client.callTool({ name, arguments: {} }, undefined, {
-              timeout: 2500,
+              timeout: requestTimeout(2500),
             })
           let held: Promise<void> | undefined
           if (stateful) {

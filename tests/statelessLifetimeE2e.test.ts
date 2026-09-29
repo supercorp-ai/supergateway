@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { faultControl } from './helpers/fault-control.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -63,7 +64,7 @@ const pidFrom = (message: any) =>
 
 test(
   'stateless successful and error replies release each request child, including ID zero',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const b = await setup(t)
     for (const message of [
@@ -93,7 +94,7 @@ test(
 
 test(
   'stateless completion preserves concurrent in-flight work with the same request ID',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const b = await setup(t)
     const first = rpc(b.url, call('shared', 'hold'))
@@ -125,7 +126,7 @@ test(
 
 test(
   'stateless disconnect preserves in-flight work and releases the child after its reply',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const b = await setup(t)
     const abort = new AbortController()
@@ -156,7 +157,7 @@ test(
 
 test(
   'stateless HTTP 202 preserves notification delivery before bounded stdin shutdown',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const b = await setup(t, { LIFETIME_INIT_HOLD: '1' })
     const reply = await rpc(b.url, {

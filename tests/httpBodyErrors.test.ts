@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
+  requestTimeout,
   unusedPort,
 } from './helpers/gateway-process.js'
 
@@ -12,7 +14,7 @@ import {
 for (const stateful of [false, true]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} HTTP answers a rejected body as JSON-RPC, not HTML`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
@@ -33,7 +35,7 @@ for (const stateful of [false, true]) {
             accept: 'application/json, text/event-stream',
           },
           body,
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(requestTimeout(5000)),
         })
         const text = await response.text()
         assert.doesNotMatch(text, /<html|node_modules|at JSON\.parse/i)

@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   unusedPort,
@@ -23,7 +24,7 @@ const call = {
 
 test(
   'UTF-8 fixture emits an intact JSON value when decoded as a byte stream',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const peer = spawn(
       process.execPath,
@@ -45,7 +46,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
     // Direct streaming and whole writes remain paired controls.
     test(
       `${mode} preserves Unicode with ${split ? 'split' : 'whole'} UTF-8 characters on child stdout`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const gateway = launchGateway(

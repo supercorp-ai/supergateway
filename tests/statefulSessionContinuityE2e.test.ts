@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import fc from 'fast-check'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -68,7 +70,7 @@ async function setup(t: TestContext, timeout?: number) {
     const response = await fetch(url, {
       method: 'DELETE',
       headers: { 'mcp-session-id': session },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(requestTimeout(3000)),
     })
     await response.text()
     assert.equal(response.status, 200)
@@ -95,7 +97,7 @@ async function setup(t: TestContext, timeout?: number) {
 
 test(
   'stateful sessions preserve the same peer and application state across a three-second response gap',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const b = await setup(t)
     const a = await b.open(),
@@ -119,7 +121,7 @@ test(
 
 test(
   'closing an HTTP connection and a GET stream does not terminate a stateful session with no idle timeout',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const b = await setup(t)
     const a = await b.open()
@@ -132,7 +134,7 @@ test(
         'mcp-session-id': a.session,
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/list' }),
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(requestTimeout(3000)),
     })
     assert.equal(response.status, 200)
     await response.text()
@@ -148,7 +150,7 @@ test(
 
 test(
   'an open GET stream prevents idle expiry and a new request cancels pending expiry',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const b = await setup(t, 1200)
     const a = await b.open()
@@ -183,7 +185,7 @@ test(
 
 test(
   'stateful session identity survives seeded interleavings of calls, stream disconnects and another session ending',
-  { timeout: 90000 },
+  { timeout: gatewayTimeout(90000) },
   async (t) => {
     // Two sessions always exist; unlike a random open/use/close array this cannot
     // degenerate into mostly no-ops. Every use checks both identity and state.
@@ -233,7 +235,7 @@ test(
 
 test(
   'simultaneous calls with equal IDs in different stateful sessions preserve each peer and result',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const b = await setup(t)
     const a = await b.open(),

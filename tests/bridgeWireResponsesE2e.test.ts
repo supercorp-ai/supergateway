@@ -1,6 +1,7 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   stdioRpc,
@@ -33,7 +34,7 @@ const call = (id: number, name: string, args = {}) => ({
 for (const protocol of ['sse', 'streamableHttp']) {
   test(
     `${protocol} ignores malformed event responses and preserves later reply correlation`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const bridge = await connect(t, protocol)
       const recovered = await stdioRpc(bridge, call(101, 'malformed-events'))
@@ -69,7 +70,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
 
   test(
     `GW-011: ${protocol} preserves a successful result with a hasOwnProperty extension`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const bridge = await connect(t, protocol)
       const result = await stdioRpc(bridge, call(101, 'shadow'))
@@ -94,7 +95,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
 
   test(
     `GW-012: ${protocol} preserves upstream error details`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const bridge = await connect(t, protocol)
       const failure = await stdioRpc(bridge, call(101, 'error-data'))
@@ -109,7 +110,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
 
 test(
   'HTTP bridge rejects malformed JSON error envelopes and remains usable',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const bridge = await connect(t, 'streamableHttp')
     for (const variant of [0, 1, 2]) {

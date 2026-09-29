@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -11,7 +13,7 @@ import { lifecycleControl, pendingRpc } from './helpers/lifecycle-control.js'
 for (const stateful of [false, true]) {
   test(
     `GW-004: ${stateful ? 'stateful' : 'stateless'} HTTP survives a legitimate reply after its client disconnects`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const control = await lifecycleControl(t)
       const port = await unusedPort()
@@ -55,7 +57,7 @@ for (const stateful of [false, true]) {
       // A completed health roundtrip confirms the gateway remains responsive
       // after disconnect, before the actual MCP tool is allowed to finish.
       const before = await fetch(base + '/health', {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(requestTimeout(2000)),
       })
       assert.equal(before.status, 200)
       await before.text()

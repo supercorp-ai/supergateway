@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
+  requestTimeout,
   unusedPort,
 } from './helpers/gateway-process.js'
 
@@ -11,7 +13,7 @@ import {
 for (const mode of ['sse', 'stateful', 'stateless']) {
   test(
     `${mode} preserves a header named length and an ordinary custom header`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const base = `http://127.0.0.1:${port}`
@@ -34,7 +36,7 @@ for (const mode of ['sse', 'stateful', 'stateless']) {
       ])
       await gateway.ready()
       const response = await fetch(base + '/health', {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(requestTimeout(3000)),
       })
       assert.equal(response.status, 200)
       assert.equal(response.headers.get('length'), 'custom-value')
@@ -42,7 +44,7 @@ for (const mode of ['sse', 'stateful', 'stateless']) {
       assert.equal(await response.text(), 'ok')
       if (mode === 'sse') {
         const stream = await fetch(base + '/sse', {
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(requestTimeout(3000)),
         })
         const reader = stream.body!.getReader()
         t.after(() => reader.cancel().catch(() => {}))

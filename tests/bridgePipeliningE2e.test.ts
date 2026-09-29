@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -12,7 +13,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
   for (const premature of ['tools/list', 'malformed initialize']) {
     test(
       `${protocol} keeps pipelined ${premature} replies isolated and remains usable`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const upstream = launchGateway(t, [

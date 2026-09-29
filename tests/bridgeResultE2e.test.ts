@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   stdioRpc,
@@ -10,7 +11,7 @@ import {
 for (const protocol of ['sse', 'streamableHttp']) {
   test(
     `GW-002: ${protocol} bridge preserves an error-named field inside a successful result`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const upstream = launchGateway(t, [

@@ -1,7 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * A client's `notifications/cancelled` names the client's own request id, and
@@ -23,7 +27,7 @@ const BRIDGES = [
 for (const kind of BRIDGES) {
   test(
     `${kind.flag} bridge cancels the request the client named`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
       const upstream = launchGateway(t, [

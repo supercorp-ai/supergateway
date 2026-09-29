@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
+import { gatewayTimeout } from './helpers/gateway-process.js'
 
 function alive(pid: number) {
   try {
@@ -20,7 +21,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   for (const wrapped of [false, true]) {
     test(
       `${mode} parent-only SIGTERM stops ${wrapped ? 'a wrapped background MCP peer' : 'a cooperative direct peer'}`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const b = await auditClient(
           t,

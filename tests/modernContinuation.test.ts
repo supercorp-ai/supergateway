@@ -11,7 +11,12 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  requestTimeout,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 const VERSION = '2026-07-28'
 const ROOTS = { roots: [{ uri: 'file:///scratch', name: 'scratch' }] }
@@ -71,13 +76,19 @@ async function connect(t: TestContext, url: string) {
     { name: 'continuation', version: '1' },
     {
       capabilities: { roots: {} },
-      versionNegotiation: { mode: { pin: VERSION } },
+      // Scaled like the other modern clients. The SDK's own default is a fixed
+      // 5 s, which a starved soak runner exceeded (4.1.0-rc.0, macOS / Node 24,
+      // hour 17 of the 25-hour soak).
+      versionNegotiation: {
+        mode: { pin: VERSION },
+        probe: { timeoutMs: requestTimeout(5000) },
+      },
     },
   )
   client.setRequestHandler('roots/list', async () => ROOTS)
   t.after(() => client.close())
   await client.connect(new StreamableHTTPClientTransport(new URL(url)), {
-    timeout: 5000,
+    timeout: requestTimeout(5000),
   })
   return client
 }
@@ -85,7 +96,7 @@ async function connect(t: TestContext, url: string) {
 async function callRoots(client: Client, rounds = 1) {
   const result = await client.callTool(
     { name: 'roots', arguments: { rounds } },
-    { timeout: 10000 },
+    { timeout: requestTimeout(10000) },
   )
   return JSON.parse((result.content as any[])[0].text)
 }
@@ -94,7 +105,7 @@ async function callRoots(client: Client, rounds = 1) {
 async function post(url: string, id: number, params: Record<string, unknown>) {
   const res = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(requestTimeout(5000)),
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
@@ -147,7 +158,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${label}: signed continuation state resumes on the process that minted it`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { gateway, url, pids } = await setup(t, stateful)
       const client = await connect(t, url)
@@ -174,7 +185,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${label}: every round of a longer operation reaches the same process`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { gateway, url, pids, trace } = await setup(t, stateful)
       const client = await connect(t, url)
@@ -207,7 +218,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${label}: concurrent operations each resume on their own process`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { gateway, url, pids } = await setup(t, stateful)
       const clients = await Promise.all([connect(t, url), connect(t, url)])
@@ -232,7 +243,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${label}: an abandoned operation keeps its process waiting until the gateway shuts down`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { gateway, url, pids } = await setup(t, stateful)
       const first = await post(url, 1, {})
@@ -253,7 +264,7 @@ for (const stateful of [false, true]) {
 
   test(
     `${label}: identical unsigned state from three processes stays isolated`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const { url, pids } = await setup(t, stateful, {
         CONTINUATION_CONSTANT_STATE: '1',

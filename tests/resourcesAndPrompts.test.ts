@@ -13,7 +13,11 @@ import {
 // The `ws` client, not the global one: `WebSocket` is undefined on Node 20,
 // which the compat job still covers, and the SDK's transport needs one.
 import { WebSocket } from 'ws'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * Every other test exercises tools. MCP servers also expose resources and
@@ -86,7 +90,7 @@ async function connect(t: TestContext, mode: (typeof MODES)[number]) {
 for (const mode of MODES) {
   test(
     `${mode.label}: resources and prompts cross the gateway`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       const { client, gateway } = await connect(t, mode)
 

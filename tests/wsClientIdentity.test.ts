@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 // 20, which the compat job still covers.
 import { WebSocket } from 'ws'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -58,7 +59,7 @@ const launch = async (t: Parameters<typeof launchGateway>[0]) => {
 // right.
 test(
   'a WebSocket client does not receive another client’s replies',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { port, gateway } = await launch(t)
     const asking = await connect(port, t)
@@ -104,7 +105,7 @@ test(
  */
 test(
   'GW-018: a WebSocket client’s string request id survives the round trip',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { port, gateway } = await launch(t)
     const client = await connect(port, t)
@@ -130,7 +131,7 @@ test(
 // as `<clientId>:<id>`, so no server request ever completed.
 test(
   'a server request with a string id reaches the client and its reply reaches the server',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -173,7 +174,7 @@ test(
 // the tool ran on.
 test(
   'a WebSocket client’s cancel reaches the request it named',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -230,7 +231,7 @@ test(
 // anything. A log line can carry anything a tool prints.
 test(
   'a WebSocket client never receives another client’s notifications',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(
@@ -298,7 +299,7 @@ test(
 // server's state does not carry from one client to the next either.
 test(
   'each WebSocket connection gets its own server process',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

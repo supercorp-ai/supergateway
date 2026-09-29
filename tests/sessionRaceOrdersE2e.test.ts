@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -23,7 +25,7 @@ for (const order of [
 ] as const) {
   test(
     `stateful ${order} settles affected work while another session retains its peer`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const control = await faultControl(t)
       const port = await unusedPort()
@@ -59,7 +61,7 @@ for (const order of [
         const response = await fetch(url, {
           method: 'DELETE',
           headers: { 'mcp-session-id': aSession },
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(requestTimeout(2000)),
         })
         await response.text()
         return response.status

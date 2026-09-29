@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { processInfo, stopped, reapAfter } from './helpers/process-tree.js'
 import { auditClient } from './helpers/audit-client.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -17,7 +18,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   ] as const) {
     test(
       `${mode} cleans a TERM-resistant descendant after ${trigger}`,
-      { timeout: 15000, skip: process.platform === 'win32' },
+      { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
       async (t) => {
         const b = await auditClient(
           t,
@@ -65,7 +66,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
 for (const termination of ['DELETE', 'idle-expiry']) {
   test(
     `stateful ${termination} stops only its owned group and preserves a second session`,
-    { timeout: 15000, skip: process.platform === 'win32' },
+    { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(

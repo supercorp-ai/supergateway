@@ -13,7 +13,12 @@ import {
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  requestTimeout,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * The two bridges in the server→client direction: stdio client ⇄ bridge ⇄
@@ -33,7 +38,7 @@ const BRIDGES = [
 ] as const
 
 // Bounded: a relay that drops a request must fail the test, not hang it.
-const CALL = { timeout: 10000 }
+const CALL = { timeout: requestTimeout(10000) }
 
 async function bridge(
   t: TestContext,
@@ -78,7 +83,7 @@ const textOf = (reply: unknown) =>
 for (const kind of BRIDGES) {
   test(
     `${kind.flag} bridge relays the server's notifications and requests`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       const { client, upstream, connect } = await bridge(
         t,
@@ -138,7 +143,7 @@ for (const kind of BRIDGES) {
 
   test(
     `${kind.flag} bridge relays resource updates and list changes`,
-    { timeout: 60000 },
+    { timeout: gatewayTimeout(60000) },
     async (t) => {
       const { client, upstream, connect } = await bridge(
         t,

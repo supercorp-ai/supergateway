@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -9,7 +10,7 @@ import {
 
 test(
   'GW-004: stateful HTTP survives an unsolicited response and serves the valid request',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

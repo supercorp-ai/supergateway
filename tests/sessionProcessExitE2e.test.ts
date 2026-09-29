@@ -4,8 +4,10 @@ import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { WebSocket } from 'ws'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -27,7 +29,7 @@ async function processExited(pid: number) {
 for (const ending of ['DELETE', 'idle timeout'] as const) {
   test(
     `stateful ${ending} terminates the actual stdio peer process`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
@@ -58,7 +60,7 @@ for (const ending of ['DELETE', 'idle timeout'] as const) {
         const deleted = await fetch(url, {
           method: 'DELETE',
           headers: { 'mcp-session-id': session },
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(requestTimeout(3000)),
         })
         assert.equal(deleted.status, 200)
         await deleted.text()
@@ -80,7 +82,7 @@ for (const ending of ['DELETE', 'idle timeout'] as const) {
 
 test(
   'WebSocket SIGTERM shuts down the gateway and its actual stdio peer',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

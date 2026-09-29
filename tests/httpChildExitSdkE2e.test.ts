@@ -6,9 +6,9 @@ import { faultControl } from './helpers/fault-control.js'
 import {
   gatewayTimeout,
   initialize,
-  rpc,
   launchGateway,
   requestTimeout,
+  rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
 
@@ -149,7 +149,7 @@ for (const stateful of [false, true]) {
 
 test(
   'stateless SDK receives the original call error when automatic initialization crashes',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -171,7 +171,7 @@ test(
 for (const stateful of [false, true]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} preserves a complete reply immediately before child exit`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

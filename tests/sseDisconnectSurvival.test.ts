@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 
@@ -12,7 +16,7 @@ const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
  */
 test(
   'an abruptly dropped SSE client does not take the gateway down',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

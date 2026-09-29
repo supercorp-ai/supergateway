@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -14,7 +15,7 @@ import {
 for (const stateful of [false, true]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} HTTP sends --header on MCP responses, not only health`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

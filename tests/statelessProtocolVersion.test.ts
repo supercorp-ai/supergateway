@@ -2,7 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  requestTimeout,
+  rpc,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 // Stateless mode gives every request a fresh child and initializes it itself.
 // It used --protocolVersion (default 2024-11-05) for every one of them, so a
@@ -31,7 +37,7 @@ const initializedWith = async (
 ) => {
   const response = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(requestTimeout(5000)),
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
@@ -52,7 +58,7 @@ const initializedWith = async (
 for (const flag of [undefined, '2025-03-26']) {
   test(
     `stateless HTTP initializes each child with the client's version (--protocolVersion ${flag ?? 'default'})`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

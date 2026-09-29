@@ -7,9 +7,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { WebSocket } from 'ws'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -20,7 +22,7 @@ const noisyPeerCommand = 'node tests/helpers/noisy-mcp-server.js stdio'
 // transport dispatches them. Rejection must preserve an established session.
 test(
   'stateful HTTP rejects malformed envelopes before and after initialization',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const port = await unusedPort()
     const url = `http://127.0.0.1:${port}/mcp`
@@ -125,7 +127,7 @@ for (const [name, args, error] of [
   ],
   ['invalid upstream URL', ['--streamableHttp', 'not-a-url'], /Fatal error/],
 ] as const) {
-  test(`CLI rejects ${name}`, { timeout: 10000 }, async (t) => {
+  test(`CLI rejects ${name}`, { timeout: gatewayTimeout(10000) }, async (t) => {
     const gateway = launchGateway(t, [...args])
     assert.equal((await gateway.exited).code, 1)
     assert.match(gateway.errors(), error)
@@ -134,7 +136,7 @@ for (const [name, args, error] of [
 
 test(
   'CLI none logging suppresses diagnostics without changing failure status',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const gateway = launchGateway(t, ['--logLevel', 'none'])
     assert.equal((await gateway.exited).code, 1)
@@ -146,7 +148,7 @@ test(
 for (const stateful of [true, false]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} HTTP: health, headers, CORS and session validation`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const base = `http://127.0.0.1:${port}`
@@ -205,7 +207,7 @@ for (const stateful of [true, false]) {
           const response = await fetch(base + '/mcp', {
             method,
             headers: session ? { 'mcp-session-id': session } : {},
-            signal: AbortSignal.timeout(5000),
+            signal: AbortSignal.timeout(requestTimeout(5000)),
           })
           // Stateful separates the two cases: an absent header is a 400,
           // while a session id the gateway does not hold is a 404 so the
@@ -288,7 +290,7 @@ for (const stateful of [true, false]) {
 
 test(
   'stateful HTTP expires idle sessions and accepts a fresh session afterward',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const port = await unusedPort()
     const url = `http://127.0.0.1:${port}/mcp`
@@ -325,7 +327,7 @@ test(
 
 test(
   'stateful HTTP keeps an active SSE session alive and cleans up after DELETE',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const port = await unusedPort()
     const url = `http://127.0.0.1:${port}/mcp`
@@ -393,7 +395,7 @@ for (const protocol of ['sse', 'streamableHttp'] as const) {
   for (const explicitClientInfo of [true, false]) {
     test(
       `${protocol} → stdio preserves results and errors with ${explicitClientInfo ? 'explicit' : 'default'} client metadata`,
-      { timeout: 20000 },
+      { timeout: gatewayTimeout(20000) },
       async (t) => {
         const port = await unusedPort()
         const upstream = launchGateway(t, [
@@ -471,7 +473,7 @@ for (const protocol of ['sse', 'streamableHttp'] as const) {
   }
   test(
     `${protocol} → stdio maps upstream HTTP failures and recovers on the next request`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const upstream = launchGateway(t, [
@@ -590,7 +592,7 @@ for (const protocol of ['sse', 'streamableHttp'] as const) {
 
 test(
   'SSE CLI forwards MCP requests and rejects missing or closed sessions',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const port = await unusedPort()
     const base = `http://127.0.0.1:${port}`
@@ -658,7 +660,7 @@ test(
 for (const withHealthAndCors of [true, false]) {
   test(
     `WebSocket CLI gives each client its own child and keeps them apart (${withHealthAndCors ? 'health/CORS enabled' : 'defaults'})`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
@@ -813,7 +815,7 @@ for (const withHealthAndCors of [true, false]) {
 
 test(
   'WebSocket CLI reports invalid health route configuration',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const gateway = launchGateway(t, [
       '--stdio',

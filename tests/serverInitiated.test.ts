@@ -17,7 +17,12 @@ import {
   ElicitRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { knownBugTest } from './helpers/known-bug.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  requestTimeout,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * The other direction.
@@ -217,7 +222,7 @@ async function assertReverseDirectionWorks(o: Observed) {
 for (const mode of MODES.filter((m) => m.works)) {
   test(
     `${mode.label}: notifications, sampling, roots and elicitation all cross backwards`,
-    { timeout: 90000 },
+    { timeout: gatewayTimeout(90000) },
     async (t) => {
       await assertReverseDirectionWorks(await connect(t, mode))
     },
@@ -227,7 +232,7 @@ for (const mode of MODES.filter((m) => m.works)) {
 for (const mode of MODES.filter((m) => m.works)) {
   test(
     `${mode.label}: every progress notification reaches the caller`,
-    { timeout: 90000 },
+    { timeout: gatewayTimeout(90000) },
     async (t) => {
       assert.deepEqual(await progressSeenBy(await connect(t, mode)), [1, 2, 3])
     },
@@ -271,7 +276,7 @@ const stateless = MODES.find((m) => !m.works)!
 knownBugTest(
   'GW-027',
   'SSE: progress notifications batched with the result are not lost',
-  { timeout: 90000 },
+  { timeout: gatewayTimeout(90000) },
   async (t) => {
     const o = await connect(t, MODES[1], '0')
     assert.deepEqual(await progressSeenBy(o, 'onprogress'), [1, 2, 3])
@@ -281,7 +286,7 @@ knownBugTest(
 // GW-026: route notifications through the active POST response.
 test(
   `${stateless.label}: a notification emitted during a call reaches the client`,
-  { timeout: 90000 },
+  { timeout: gatewayTimeout(90000) },
   async (t) => {
     const o = await connect(t, stateless)
     const logged = await o.client.callTool({ name: 'log', arguments: {} })
@@ -299,14 +304,14 @@ test(
 // checks or from the gateway rejection. Raw-peer tests prove the wire error.
 test(
   `${stateless.label}: a server-initiated request fails fast instead of hanging`,
-  { timeout: 90000 },
+  { timeout: gatewayTimeout(90000) },
   async (t) => {
     const o = await connect(t, stateless)
     for (const tool of ['sample', 'roots', 'elicit']) {
       const reply = await o.client.callTool(
         { name: tool, arguments: {} },
         undefined,
-        { timeout: 8000 },
+        { timeout: requestTimeout(8000) },
       )
       assert.equal(
         reply.isError,
@@ -323,7 +328,7 @@ test(
 
 test(
   'stateless HTTP: progress and tool-list notifications reach the active caller',
-  { timeout: 90000 },
+  { timeout: gatewayTimeout(90000) },
   async (t) => {
     const o = await connect(t, stateless)
     assert.deepEqual(await progressSeenBy(o), [1, 2, 3])

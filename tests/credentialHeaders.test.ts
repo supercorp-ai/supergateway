@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -112,7 +113,7 @@ async function bridgeWithCredentials(t: Parameters<typeof launchGateway>[0]) {
 
 test(
   'configured headers and the bearer token reach the upstream',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { requests } = await bridgeWithCredentials(t)
     assert.equal(requests[0]['x-user-id'], '123')
@@ -138,7 +139,7 @@ for (const mode of [
   test(
     `${mode} startup redacts credentials and preserves ordinary headers`,
     {
-      timeout: 15000,
+      timeout: gatewayTimeout(15000),
     },
     async (t) => {
       const port = await unusedPort()
@@ -201,7 +202,7 @@ for (const mode of [
  */
 test(
   'a malformed header is reported without its value',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { server } = recordingUpstream()
     const upstreamPort = await unusedPort()

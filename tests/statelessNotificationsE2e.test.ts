@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -10,7 +11,7 @@ import {
 
 test(
   'stateless HTTP does not invent replies for notifications and remains usable',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

@@ -2,13 +2,19 @@
 
 ## 4.1.0
 
-No breaking changes and no new flags. Upgrading from 4.0.0:
+No breaking changes to flags or protocol, and no new flags. Upgrading from 4.0.0:
+
+### Behaviour change
+
+- Each SSE and WebSocket connection now gets its own server process, as stateful Streamable HTTP sessions already did. Clients no longer share server state or see each other's replies, notifications or requests. A client that reconnects gets a fresh server, so in-memory server state does not survive a reconnect, and the gateway runs one server per live connection. Deployments that relied on every client sharing one server should review this before upgrading.
 
 ### Improvements and fixes
 
-- Give each WebSocket connection its own server process, as SSE connections now have: clients no longer receive each other's notifications or requests.
 - Relay server-initiated requests (sampling, roots, elicitation), notifications, cancellation and string request ids through WebSocket and the `--sse` and `--streamableHttp` bridges, and stop cutting bridged calls off after 60 seconds.
 - Stop reading a server's output while its client is not reading, instead of holding it all in memory. One slow client can no longer exhaust the gateway's memory and take every other client down with it.
+- A malformed or oversized POST to an SSE session is answered with an error and no longer ends that session.
+- Escape U+2028 and U+2029 in SSE JSON, so clients that split on Unicode line separators no longer cut a message in two.
+- With `--sessionTimeout`, ping idle stateful event streams, so a session whose client vanished behind a proxy that keeps the stream open is still ended.
 - Fail an SSE client's in-flight calls as soon as its server process exits, instead of leaving them to time out.
 - Close a cancelled call's stream in stateful Streamable HTTP, instead of holding a connection open until the session ends.
 - Keep idle HTTP connections for 65 seconds, longer than common load balancers keep theirs, to avoid intermittent connection resets and 502s.

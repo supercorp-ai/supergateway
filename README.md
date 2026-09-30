@@ -316,6 +316,15 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributors
 
+- [@aleleba](https://github.com/aleleba)
+- [@bimax](https://github.com/bimax)
+- [@essentialols](https://github.com/essentialols)
+- [@gcoinstash-cmd](https://github.com/gcoinstash-cmd)
+- [@nullStack65](https://github.com/nullStack65)
+- [@srijan](https://github.com/srijan)
+- [@TheItschi](https://github.com/TheItschi)
+- [@wowsofine](https://github.com/wowsofine)
+- [@yanziwei](https://github.com/yanziwei)
 - [@tttcoding666](https://github.com/tttcoding666)
 - [@aneasystone](https://github.com/aneasystone)
 - [@luyunfeng-bytedance](https://github.com/luyunfeng-bytedance)

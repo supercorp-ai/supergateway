@@ -1,6 +1,6 @@
 # Release candidate soak
 
-Use the exact published `4.1.0-rc.0` tarball and its verified SHA-256 from the
+Use the exact published `4.1.0` tarball and its verified SHA-256 from the
 npm publication workflow. The installer rejects an absent or mismatched digest;
 it does not follow the moving `next` tag. Installation keeps normal npm dependency
 resolution and archives the resolved production lockfile.
@@ -52,7 +52,7 @@ processes. It is not one uninterrupted six-hour gateway lifetime.
 For an uninterrupted local six-hour run, install the same public artifact using
 `scripts/install-soak-artifact.mjs`, then run `scripts/overnight-release.mjs` with
 `SOAK_SECONDS=21600`. Set `SUPERGATEWAY_TEST_ENTRY` to the generated `entry.txt`
-path, `SOAK_PACKAGE_VERSION=4.1.0-rc.0`, the verified `SOAK_PACKAGE_SHA256`, and
+path, `SOAK_PACKAGE_VERSION=4.1.0`, the verified `SOAK_PACKAGE_SHA256`, and
 `SUPERGATEWAY_SOAK_CONFIRMED=1`. Use Node 24 for the macOS memory follow-up.
 
 The original five resource modes retain their 30-second cooldown and existing

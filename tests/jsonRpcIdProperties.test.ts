@@ -4,7 +4,11 @@ import fc from 'fast-check'
 // The `ws` client, not the global one: `WebSocket` is undefined on Node 18 and
 // 20, which the compat job still covers.
 import { WebSocket } from 'ws'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * A gateway must hand back the id the client sent, unchanged and of the same
@@ -30,7 +34,7 @@ const jsonRpcId = fc.oneof(
 
 test(
   'the SSE gateway returns the request id unchanged, whatever its type',
-  { timeout: 120000 },
+  { timeout: gatewayTimeout(120000) },
   async (t) => {
     await fc.assert(
       fc.asyncProperty(
@@ -112,7 +116,7 @@ test(
 
 test(
   'the WebSocket gateway returns the request id unchanged, whatever its type',
-  { timeout: 120000 },
+  { timeout: gatewayTimeout(120000) },
   async (t) => {
     await fc.assert(
       fc.asyncProperty(

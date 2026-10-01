@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
+  gatewayTimeout,
   launchGateway,
   unusedPort,
   peerCommand,
@@ -40,7 +41,7 @@ type Reply = { content: Array<{ type: string; text: string }> }
 
 test(
   'a gateway in front of a gateway answers exactly as one gateway does',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     const directPort = await unusedPort()
     const direct = launchGateway(t, [
@@ -122,7 +123,7 @@ test(
  */
 test(
   'a composed chain keeps concurrent callers apart',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     const innerPort = await unusedPort()
     const inner = launchGateway(t, [

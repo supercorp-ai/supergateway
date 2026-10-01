@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fc from 'fast-check'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * Every gateway accumulates the child's stdout and splits it on newlines:
@@ -28,7 +32,7 @@ const chunkPlan = fc.array(fc.integer({ min: 1, max: 47 }), {
 
 test(
   'a reply survives any chunking of the child’s stdout',
-  { timeout: 120000 },
+  { timeout: gatewayTimeout(120000) },
   async (t) => {
     await fc.assert(
       fc.asyncProperty(

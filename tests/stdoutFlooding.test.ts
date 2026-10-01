@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { knownBugTest } from './helpers/known-bug.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * GW-028: a child that writes a long newline-free run to stdout kills the
@@ -54,7 +58,7 @@ for (const mode of CASES) {
   knownBugTest(
     'GW-028',
     `${mode.label}: survives a child that floods stdout without a newline`,
-    { timeout: 180000 },
+    { timeout: gatewayTimeout(180000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(

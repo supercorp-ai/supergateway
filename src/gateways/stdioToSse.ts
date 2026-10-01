@@ -1,11 +1,13 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
 import express from 'express'
 import bodyParser from 'body-parser'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import {
+  JSONRPCMessage,
+  isInitializeRequest,
+} from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { onSignals } from '../lib/onSignals.js'
@@ -13,10 +15,14 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
-import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { drained, holdOutput } from '../lib/outputBackpressure.js'
+import { drained } from '../lib/outputBackpressure.js'
 import { ChildInitialization } from '../lib/childInitialization.js'
+import {
+  ChildHandoff,
+  ChildLink,
+  type ChildOwner,
+} from '../lib/childHandoff.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -71,6 +77,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   )
 
   const children = new OwnedChildProcesses(logger)
+  const handoff = new ChildHandoff(logger)
   onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
   // One `Server` per session, not one per process.
@@ -170,8 +177,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     // wrap this could not be false, so it was an obligation no test could ever
     // discharge rather than a defence against anything.
     const sessionId = sseTransport.sessionId
-    const child = spawn(stdioCmd, children.spawnOptions)
-    const stopChild = children.own(child)
+    const label = `Session ${sessionId}`
     sessions[sessionId] = {
       server: sessionServer,
       transport: sseTransport,
@@ -180,23 +186,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
     // The client's calls the child has not answered yet.
     const pending = new Set<string | number>()
-
-    // A reconnected client carries on without initializing its new child.
-    const initialization = new ChildInitialization(
-      (msg) => child.stdin.write(JSON.stringify(msg) + '\n'),
-      logger,
-      `Session ${sessionId}`,
-    )
-
-    sseTransport.onmessage = (msg: JSONRPCMessage, extra) => {
-      if ('id' in msg && 'method' in msg) pending.add(msg.id!)
-      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      const version = extra?.requestInfo?.headers['mcp-protocol-version']
-      initialization.fromClient(
-        msg,
-        typeof version === 'string' ? version : undefined,
-      )
-    }
+    // Whether all the client has sent is its initialize request, which is when
+    // a child it abandons can be handed to an identical retry (GW-035).
+    let received = 0
+    let onlyInitialize = false
 
     // Closing the session's own `Server` is what releases its transport. Without
     // it the object stays connected and the next `connect` on it would throw
@@ -207,12 +200,16 @@ export async function stdioToSse(args: StdioToSseArgs) {
     // the session *before* closing is what stops that round trip becoming
     // unbounded recursion — the hazard @RussellZager identified on #113 — and
     // it is also why the ending that started it is the only one logged.
-    const endSession = (report: () => void) => {
+    //
+    // Only a client leaving can hand its child on; a session that ends because
+    // its child failed stops it.
+    const endSession = (report: () => void, clientLeft = false) => {
       if (!sessions[sessionId]) return
       report()
       const { server } = sessions[sessionId]
       delete sessions[sessionId]
-      void stopChild()
+      if (clientLeft) handoff.release(link, onlyInitialize, label)
+      else void link.stop()
       server.close().catch((err) => {
         logger.error(`Failed to close session ${sessionId}:`, err)
       })
@@ -239,56 +236,78 @@ export async function stdioToSse(args: StdioToSseArgs) {
       endSession(() => {})
     }
 
-    child.on('error', (err) => {
-      logger.error(`Child failure (session ${sessionId}):`, err)
-      fail()
-    })
-    child.stdin.on('error', (err) => {
-      logger.error(`Child stdin failure (session ${sessionId}):`, err)
-      fail()
-    })
-    child.on('exit', (code, signal) => {
-      const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
-      if (!sessions[sessionId]) {
-        logger.info(detail)
-        return
-      }
-      logger.error(detail)
-      fail()
-    })
-
-    const decoder = new StringDecoder('utf8')
-    const lines = new LineSplitter()
-    child.stdout.on('data', (chunk: Buffer) => {
-      lines.push(decoder.write(chunk)).forEach((line) => {
-        if (!line.trim()) return
-        try {
-          const jsonMsg = JSON.parse(line)
-          if (initialization.fromChild(jsonMsg)) return
-          if ('id' in jsonMsg && !('method' in jsonMsg))
-            pending.delete(jsonMsg.id)
-          logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
-          if (!sessions[sessionId]) return
-          sseTransport.send(jsonMsg).catch((err) => {
-            endSession(() =>
-              logger.error(`Failed to send to session ${sessionId}:`, err),
-            )
-          })
-        } catch {
-          logger.error(`Child non-JSON (session ${sessionId}): ${line}`)
+    const owner: ChildOwner = {
+      message: (jsonMsg) => {
+        if (initialization.fromChild(jsonMsg)) return
+        if ('id' in jsonMsg && !('method' in jsonMsg))
+          pending.delete(jsonMsg.id)
+        logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
+        if (!sessions[sessionId]) return
+        sseTransport.send(jsonMsg).catch((err) => {
+          endSession(() =>
+            logger.error(`Failed to send to session ${sessionId}:`, err),
+          )
+        })
+      },
+      nonJson: (line) =>
+        logger.error(`Child non-JSON (session ${sessionId}): ${line}`),
+      stderr: (text) =>
+        logger.error(`Child stderr (session ${sessionId}): ${text}`),
+      failure: (kind, err) => {
+        logger.error(
+          `${kind === 'stdin' ? 'Child stdin failure' : 'Child failure'} (session ${sessionId}):`,
+          err,
+        )
+        fail()
+      },
+      exit: (code, signal) => {
+        const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
+        if (!sessions[sessionId]) {
+          logger.info(detail)
+          return
         }
-      })
-      holdOutput(child.stdout, drained([res]))
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      logger.error(
-        `Child stderr (session ${sessionId}): ${chunk.toString('utf8')}`,
+        logger.error(detail)
+        fail()
+      },
+      output: () => drained([res]),
+    }
+
+    const child = spawn(stdioCmd, children.spawnOptions)
+    let link = new ChildLink(child, children.own(child), owner)
+
+    // A reconnected client carries on without initializing its new child.
+    const initialization = new ChildInitialization(
+      (msg) => link.write(msg),
+      logger,
+      label,
+    )
+
+    sseTransport.onmessage = (msg: JSONRPCMessage, extra) => {
+      if ('id' in msg && 'method' in msg) pending.add(msg.id!)
+      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
+      received++
+      onlyInitialize = received === 1 && isInitializeRequest(msg) && 'id' in msg
+      if (onlyInitialize) {
+        const adopted = handoff.adopt(msg, owner, label)
+        if (adopted) {
+          // This session's own child has been sent nothing.
+          handoff.discard(link, label)
+          link = adopted
+          initialization.adopted()
+          return
+        }
+      }
+      const version = extra?.requestInfo?.headers['mcp-protocol-version']
+      initialization.fromClient(
+        msg,
+        typeof version === 'string' ? version : undefined,
       )
-    })
+    }
 
     sseTransport.onclose = () =>
-      endSession(() =>
-        logger.info(`SSE connection closed (session ${sessionId})`),
+      endSession(
+        () => logger.info(`SSE connection closed (session ${sessionId})`),
+        true,
       )
 
     // The SDK also calls `onerror` for a single rejected POST (bad content
@@ -298,8 +317,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
       logger.error(`SSE error (session ${sessionId}):`, err)
 
     req.on('close', () =>
-      endSession(() =>
-        logger.info(`Client disconnected (session ${sessionId})`),
+      endSession(
+        () => logger.info(`Client disconnected (session ${sessionId})`),
+        true,
       ),
     )
   })

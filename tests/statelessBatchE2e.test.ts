@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -10,7 +11,7 @@ import {
 
 test(
   'GW-004/GW-005: stateless HTTP handles zero IDs and interleaved notifications without losing responses',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -62,7 +63,7 @@ test(
 // on that version still send them.
 test(
   'GW-003: stateless HTTP forwards every request in a batch after one initialization',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

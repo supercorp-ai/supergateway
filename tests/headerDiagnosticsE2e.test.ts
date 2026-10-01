@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -30,7 +31,7 @@ for (const mode of ['sse', 'stateful', 'stateless']) {
 
   test(
     `${mode} startup reports configured headers`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(
@@ -44,7 +45,7 @@ for (const mode of ['sse', 'stateful', 'stateless']) {
 
   test(
     `${mode} startup reports no headers as none`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, gatewayArgs(port, []))
@@ -55,7 +56,7 @@ for (const mode of ['sse', 'stateful', 'stateless']) {
 
   test(
     `${mode} startup reports a header named length`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(

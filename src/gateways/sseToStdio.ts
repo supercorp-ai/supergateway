@@ -42,8 +42,7 @@ class SseHandshakeTimeout extends Error {}
 const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
   const clientInfo = message.params?.clientInfo as Implementation | undefined
   const clientCapabilities = message.params?.capabilities as
-    | ClientCapabilities
-    | undefined
+    ClientCapabilities | undefined
 
   return new Client(
     {

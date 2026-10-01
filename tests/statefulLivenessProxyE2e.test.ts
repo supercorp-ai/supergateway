@@ -4,6 +4,7 @@ import { createServer, request as httpRequest } from 'node:http'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -12,7 +13,7 @@ import {
 
 test(
   'a proxy-held GET is closed after its downstream client disappears',
-  { timeout: 110000 },
+  { timeout: gatewayTimeout(110000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 // Issue #91: escape line separators in the SSE wire representation while
 // preserving their exact JSON value for standards-compliant SDK clients.
@@ -11,7 +15,7 @@ const SEPARATORS = 'before\u2028middle\u2029after'
 
 test(
   'legacy SSE and stateless HTTP preserve separator values for SDK clients',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     for (const mode of ['sse', 'stateless'] as const) {
       const port = await unusedPort()
@@ -52,7 +56,7 @@ test(
 
 test(
   'the SDK client receives the original separator characters through the gateway',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -131,7 +135,7 @@ async function callSeparators(t: Parameters<typeof launchGateway>[0]) {
 
 test(
   'SSE escapes U+2028/U+2029 on the wire without changing their JSON value',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     const raw = await callSeparators(t)
     const bytes = Buffer.from(raw, 'utf8')
@@ -161,7 +165,7 @@ test(
 
 test(
   'a Unicode line-splitting client can parse the escaped SSE frame',
-  { timeout: 60000 },
+  { timeout: gatewayTimeout(60000) },
   async (t) => {
     const raw = await callSeparators(t)
 

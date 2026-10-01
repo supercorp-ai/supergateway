@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -55,7 +56,7 @@ const bare = (url: string, method: string, session?: string) =>
 
 test(
   'an idle-expired session is 404 on every method, and the client can re-initialize',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { url } = await start(t)
     const opened = await rpc(url, initialize())
@@ -112,7 +113,7 @@ test(
 
 test(
   'an explicitly deleted session is 404, while a missing header stays 400',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { url } = await start(t)
     const session = (await rpc(url, initialize())).response.headers.get(

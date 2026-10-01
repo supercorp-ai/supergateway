@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -12,7 +13,7 @@ import {
 
 test(
   'an idle SDK client answers a server ping and retains its original stateful peer',
-  { timeout: 45000 },
+  { timeout: gatewayTimeout(45000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -59,7 +60,7 @@ test(
 
 test(
   'the default session timeout probes an SDK client shortly after its GET opens',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -116,7 +117,7 @@ test(
 
 test(
   'an idle client that never answers server pings retains its existing session',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

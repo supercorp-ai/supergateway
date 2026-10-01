@@ -3,6 +3,7 @@ import test from 'node:test'
 // Exercise that compatibility path with real CLI processes and SDK peers.
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -12,7 +13,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
   for (const firstMethod of ['tools/list', 'audit/unknown']) {
     test(
       `GW-001: ${protocol} fallback forwards ${firstMethod} after auto-initialization`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const upstream = launchGateway(t, [

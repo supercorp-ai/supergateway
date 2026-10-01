@@ -34,8 +34,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   second:
-    needs: first
-    if: ${{ !cancelled() && needs.first.result == 'success' }}
+    needs: [canary, first]
+    if: ${{ !cancelled() && inputs.duration != 'canary' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -43,11 +43,14 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   # The 25-hour campaign continues from the six-hour one, one phase after
-  # another: a hosted job runs at most six hours, and each phase starts only
-  # if the one before it passed.
+  # another, because a hosted job runs at most six hours. A phase runs whether
+  # or not the one before it passed: one flaky test used to stop every later
+  # phase and throw away the rest of the campaign. Each failure still fails the
+  # campaign (see verdict), and `gh run rerun --failed` reruns only the lanes
+  # that failed.
   third:
-    needs: second
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.second.result == 'success' }}
+    needs: [canary, second]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -55,8 +58,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   fourth:
-    needs: third
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.third.result == 'success' }}
+    needs: [canary, third]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -64,8 +67,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   fifth:
-    needs: fourth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fourth.result == 'success' }}
+    needs: [canary, fourth]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -73,8 +76,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   sixth:
-    needs: fifth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fifth.result == 'success' }}
+    needs: [canary, fifth]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -82,8 +85,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   seventh:
-    needs: sixth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.sixth.result == 'success' }}
+    needs: [canary, sixth]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -91,8 +94,8 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   eighth:
-    needs: seventh
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.seventh.result == 'success' }}
+    needs: [canary, seventh]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 10800
@@ -100,10 +103,25 @@ jobs:
       sha256: ${{ inputs.sha256 }}
 
   ninth:
-    needs: eighth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.eighth.result == 'success' }}
+    needs: [canary, eighth]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 3600
       label: hour-24-to-25
       sha256: ${{ inputs.sha256 }}
+
+  # Phases no longer depend on each other's success, so the campaign's result
+  # is here: it fails if any phase failed or was cancelled, and lists them.
+  verdict:
+    needs: [canary, first, second, third, fourth, fifth, sixth, seventh, eighth, ninth]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Every phase that ran passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/soak-verdict.mjs

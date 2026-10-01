@@ -8,8 +8,15 @@ resolution and archives the resolved production lockfile.
 The **Published release soak** workflow is manual. Select `canary` first.
 Only select `six-hours` or `twenty-five-hours` after reviewing the canary
 results and receiving approval for the long run. The 25-hour campaign is the
-six-hour one followed by seven more phases (six of three hours, then one hour),
-each starting only if the one before passed. A push does not start this workflow.
+six-hour one followed by seven more phases (six of three hours, then one hour).
+A push does not start this workflow.
+
+A failure costs only what failed. Within a phase, a failed command is recorded
+and everything else runs on to the phase's deadline; a failed lane does not
+cancel the other lanes; and each phase runs after the one before it whether or
+not that one passed, as long as the canary did. The `verdict` job fails the
+campaign if any phase failed and names them: rerun only the failed lanes with
+`gh run rerun <run id> --failed`.
 
 ## Workload
 

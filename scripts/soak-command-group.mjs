@@ -2,10 +2,20 @@ import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { resolve } from 'node:path'
 
-// A failed battery cancels the resource load too, rather than leaving it running
-// until the six-hour deadline. Give each command time to perform its cleanup.
-export function createSoakCommandGroup({ root, events, env }) {
+// By default a failed battery cancels the resource load too, rather than
+// leaving it running until the six-hour deadline. With `keepGoing` a failure is
+// recorded and everything else runs on: a soak phase is hours of evidence, and
+// one flaky command used to throw the rest of it away, and with it every later
+// phase. The phase still fails at the end. Give each command time to perform
+// its cleanup.
+export function createSoakCommandGroup({
+  root,
+  events,
+  env,
+  keepGoing = false,
+}) {
   const active = new Set()
+  const failures = []
   const abort = new AbortController()
   // Why the group stopped, kept apart from what each command then did. A
   // cancelled runner SIGTERMs the whole tree, so every command still running
@@ -61,7 +71,8 @@ export function createSoakCommandGroup({ root, events, env }) {
     if (cancelled)
       throw Error(`${name} was cancelled before it finished (${cancelReason})`)
     if (result.code !== 0 || timedOut) {
-      cancel(`${name} failed`)
+      failures.push(name)
+      if (!keepGoing) cancel(`${name} failed`)
       throw Error(`${name} failed; inspect ${root}/${name}.log`)
     }
   }
@@ -69,8 +80,17 @@ export function createSoakCommandGroup({ root, events, env }) {
     run,
     cancel,
     signal: abort.signal,
+    // Any command failed, or the group was cancelled.
     get failed() {
+      return failures.length > 0 || abort.signal.aborted
+    },
+    // The group was cancelled: start nothing more.
+    get stopped() {
       return abort.signal.aborted
+    },
+    // The commands that failed, in order.
+    get failures() {
+      return [...failures]
     },
     // True only when nothing under this soak failed and the runner stopped us.
     get cancelledExternally() {

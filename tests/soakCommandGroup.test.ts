@@ -163,3 +163,35 @@ test('a genuine failure is never reported as an external cancellation', async (t
   assert.equal(ended.cancelled, false)
   assert.equal(ended.code, 7)
 })
+
+test('with keepGoing a failed soak command is recorded and everything else runs on', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-keep-going-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: process.env,
+    keepGoing: true,
+  })
+  t.after(() => group.cancel('test cleanup'))
+  // Concurrent load that must not be cancelled by another command failing.
+  const load = group.run('load', ['-e', 'setTimeout(() => {}, 1500)'], 10000)
+  await assert.rejects(
+    group.run('flaky', ['-e', 'process.exit(3)'], 5000),
+    /flaky failed/,
+  )
+  assert.equal(group.failed, true)
+  assert.equal(group.stopped, false)
+  // A later command still starts and can pass.
+  await group.run('next', ['-e', 'process.exit(0)'], 5000)
+  await load
+  assert.deepEqual(group.failures, ['flaky'])
+  assert.ok(!events.some((row) => row.phase === 'cancel-commands'))
+  assert.equal(
+    events.filter((row) => row.phase === 'end-command' && row.code === 0)
+      .length,
+    2,
+    'the load and the next command both finished',
+  )
+})

@@ -128,6 +128,44 @@ npx -y supergateway \
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 - Each WebSocket connection gets its own server process.
 
+## Without Node: standalone executables
+
+Each release also ships Supergateway as a single executable with Node built in, so it runs where Node is not installed. It takes the same flags.
+
+**Homebrew** (macOS and Linux):
+
+```bash
+brew install supercorp-ai/tap/supergateway
+```
+
+**macOS (Apple Silicon) and Linux**: download and unpack. Use `linux-x64`, `linux-arm64`, `linux-musl-x64` or `linux-musl-arm64` in place of `darwin-arm64` as needed.
+
+```bash
+curl -fsSL https://github.com/supercorp-ai/supergateway/releases/latest/download/supergateway-darwin-arm64.tar.gz | tar -xz
+```
+
+```bash
+./supergateway --stdio "uvx mcp-server-time" --port 8000
+```
+
+**Windows** (PowerShell):
+
+```powershell
+Invoke-WebRequest https://github.com/supercorp-ai/supergateway/releases/latest/download/supergateway-win-x64.zip -OutFile supergateway.zip; Expand-Archive supergateway.zip .
+```
+
+```powershell
+.\supergateway.exe --stdio "uvx mcp-server-time" --port 8000
+```
+
+Good to know:
+
+- The MCP server you wrap still needs its own runtime: `--stdio "npx -y ..."` needs Node, `--stdio "uvx ..."` needs uv.
+- Linux needs glibc 2.28 or later. On Alpine use the `linux-musl` build and run `apk add libstdc++` first.
+- Intel Macs have no standalone build; `brew install` gives them the npm package on Homebrew's Node instead.
+- The executables are not code-signed by a paid certificate. Downloaded from a browser, macOS Gatekeeper and Windows SmartScreen ask before the first run; `curl`, PowerShell and Homebrew installs are not affected.
+- Every archive is listed in the release's `SHA256SUMS`, and you can check it was built by this repository's CI with `gh attestation verify supergateway-darwin-arm64.tar.gz -R supercorp-ai/supergateway`.
+
 ## Shutdown
 
 Allow more than five seconds for graceful shutdown. Child servers should handle SIGTERM when you stop the gateway with Ctrl-C.

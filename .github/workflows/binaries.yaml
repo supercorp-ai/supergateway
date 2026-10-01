@@ -1,0 +1,267 @@
+name: Standalone binaries
+
+# Standalone executables (#50): supergateway with Node 24 inside, for people
+# who run it without Node, and for `brew install supercorp-ai/tap/supergateway`.
+#
+# Every target is built on its own runner (an executable is the Node it was
+# built with) and then has to pass the end-to-end tests run against it before
+# anything is published. A pull request builds and tests; a published release
+# also attaches the archives, SHA256SUMS and build attestations to the release
+# and points the Homebrew tap at them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to attach binaries to (v<version> must exist)
+        required: true
+        type: string
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/build-binary.mjs'
+      - 'scripts/test-binary.mjs'
+      - 'scripts/brew-formula.mjs'
+      - 'tests/helpers/gateway-process.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/binaries.yaml'
+
+permissions:
+  contents: read
+
+env:
+  # The release tag: the release's own, or v<version> when run by hand.
+  TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || format('v{0}', inputs.version) }}
+
+concurrency:
+  group: binaries-${{ github.ref }}-${{ inputs.version || github.event.release.tag_name || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, runner: ubuntu-latest, archive: tar.gz }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm, archive: tar.gz }
+          - { target: darwin-arm64, runner: macos-latest, archive: tar.gz }
+          - { target: win-x64, runner: windows-latest, archive: zip }
+    env:
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.sha || env.TAG }}
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install the Python MCP SDK the tests use
+        run: pip install 'mcp==2.2.0'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Build the executable
+        shell: bash
+        run: SUPERGATEWAY_BINARY_KEEP=1 node scripts/build-binary.mjs
+      - name: End-to-end tests against the executable
+        shell: bash
+        env:
+          SUPERGATEWAY_TEST_PYTHON: python
+          SUPERGATEWAY_REQUIRE_PYTHON: '1'
+        run: node scripts/test-binary.mjs ".binary/${{ matrix.target }}/supergateway$([ '${{ runner.os }}' = Windows ] && echo .exe)"
+      # The tests above need Node to run, so they cannot show the executable
+      # does not. These run it where Node is not on PATH at all.
+      - name: Runs with no Node on stock Linux images
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          for image in debian:bookworm-slim ubuntu:24.04 python:3.13-slim; do
+            docker run --rm -v "$PWD/.binary/${{ matrix.target }}:/sg:ro" "$image" \
+              sh -c '! command -v node && /sg/supergateway --version'
+          done
+          docker run -d --name sg -p 8000:8000 -v "$PWD/.binary/${{ matrix.target }}:/sg:ro" \
+            debian:bookworm-slim /sg/supergateway --stdio cat --healthEndpoint /healthz --port 8000
+          for _ in $(seq 1 30); do curl -fsS localhost:8000/healthz && break; sleep 1; done
+          test "$(curl -fsS localhost:8000/healthz)" = ok
+          docker rm -f sg
+      - name: Runs with no Node on PATH
+        if: runner.os == 'macOS'
+        run: env -i PATH=/usr/bin:/bin "$PWD/.binary/${{ matrix.target }}/supergateway" --version
+      - name: Runs with no Node on PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\Windows\System32"
+          & ".binary\${{ matrix.target }}\supergateway.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: supergateway-${{ matrix.target }}
+          path: .binary/supergateway-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  # Alpine has no GitHub runner, and JavaScript actions cannot run inside an
+  # Alpine container on arm64, so these build and test in a plain docker run.
+  # Its Node is a musl build; the executable needs `apk add libstdc++`. The
+  # tests' process-tree walk needs procps: BusyBox `ps` has no `-p`.
+  build-musl:
+    name: Build and test ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-musl-x64, runner: ubuntu-latest }
+          - { target: linux-musl-arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.sha || env.TAG }}
+      - name: Build and test in node:24-alpine
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e SUPERGATEWAY_TEST_READY_TIMEOUT=30000 node:24-alpine sh -euc '
+            apk add --no-cache git procps python3 py3-pip >/dev/null
+            pip install --break-system-packages -q "mcp==2.2.0"
+            npm ci
+            npm run build
+            SUPERGATEWAY_BINARY_KEEP=1 node scripts/build-binary.mjs
+            SUPERGATEWAY_TEST_PYTHON=python3 SUPERGATEWAY_REQUIRE_PYTHON=1 \
+              node scripts/test-binary.mjs .binary/${{ matrix.target }}/supergateway
+          '
+      - name: Runs with no Node on bare Alpine
+        run: |
+          docker run --rm -v "$PWD/.binary/${{ matrix.target }}:/sg:ro" alpine:3 \
+            sh -c 'apk add --no-cache libstdc++ >/dev/null && ! command -v node && /sg/supergateway --version'
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: supergateway-${{ matrix.target }}
+          path: .binary/supergateway-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Attach to the release
+    if: github.event_name != 'pull_request'
+    needs: [build, build-musl]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: The release is the version this commit carries
+        run: |
+          version="${TAG#v}"
+          carried=$(node -p 'require("./package.json").version')
+          [ "$version" = "$carried" ] || { echo "v$version carries $carried"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        working-directory: assets
+        run: sha256sum supergateway-* | tee SHA256SUMS
+      - name: Attest how each archive was built
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'assets/supergateway-*'
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v$VERSION" assets/* --clobber
+
+  # Needs HOMEBREW_TAP_TOKEN: a fine-grained token with contents:write on
+  # supercorp-ai/homebrew-tap. GITHUB_TOKEN reaches only this repository.
+  # Without it this says so and stops, and the tap keeps what it has.
+  homebrew:
+    name: Point the Homebrew tap at the release
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Update the formula
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set, so the tap keeps the formula it has."
+            exit 0
+          fi
+          # Intel Macs install the npm package, which is published separately.
+          for i in $(seq 1 40); do
+            npm view "supergateway@$version" version >/dev/null 2>&1 && break
+            [ "$i" = 40 ] && { echo "supergateway@$version is not on npm yet; publish it, then rerun this job"; exit 1; }
+            sleep 30
+          done
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/supercorp-ai/homebrew-tap.git" tap
+          node scripts/brew-formula.mjs "$version" > tap/Formula/supergateway.rb
+          cd tap
+          if git diff --quiet -- Formula/supergateway.rb && git ls-files --error-unmatch Formula/supergateway.rb >/dev/null 2>&1; then
+            echo "The tap already describes $version."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/supergateway.rb
+          git commit -m "supergateway $version"
+          git push
+
+  # A formula that passes `brew audit` can still install nothing; only an
+  # install shows it works. Apple Silicon, Intel (the npm path) and Linux.
+  homebrew-verify:
+    name: Install from the tap on ${{ matrix.runner }}
+    needs: homebrew
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-15-intel, ubuntu-latest]
+    steps:
+      - name: Install and run
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          [ -n "${TAP_TOKEN:-}" ] || { echo "No tap token, so the tap was not updated."; exit 0; }
+          [ "$RUNNER_OS" = Linux ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          version="${VERSION#v}"
+          brew install supercorp-ai/tap/supergateway
+          test "$(supergateway --version)" = "$version"
+          brew test supercorp-ai/tap/supergateway

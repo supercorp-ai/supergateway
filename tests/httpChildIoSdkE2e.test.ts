@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -37,7 +38,7 @@ for (const stateful of [true, false]) {
             ...(fault === 'spawn'
               ? {
                   FAIL_SPAWN_AT: '1',
-                  NODE_OPTIONS: `--import=${new URL('./helpers/native-spawn-failure.mjs', import.meta.url).href}`,
+                  NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
                 }
               : {}),
           },

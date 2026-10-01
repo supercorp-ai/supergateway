@@ -54,6 +54,33 @@ export const requestTimeout = (ms: number) => Math.round(ms * slowHostFactor())
 // inside what the test has left.
 const controlBudget = 2000
 
+/**
+ * The command that runs the gateway: `node dist/index.js` by default, or the
+ * standalone executable (#50) named by SUPERGATEWAY_TEST_BINARY, so the same
+ * tests check the executable a release ships. An executable has no command
+ * line for Node, so Node flags reach it through NODE_OPTIONS, which it honours.
+ */
+export function gatewayCommand(args: string[], nodeArgs: string[] = []) {
+  const binary = process.env.SUPERGATEWAY_TEST_BINARY
+  if (binary)
+    return {
+      command: binary,
+      argv: args,
+      nodeOptions: nodeArgs
+        .map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg))
+        .join(' '),
+    }
+  return {
+    command: process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
+    argv: [
+      ...nodeArgs,
+      process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
+      ...args,
+    ],
+    nodeOptions: '',
+  }
+}
+
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
 export function launchGateway(
@@ -63,19 +90,20 @@ export function launchGateway(
   nodeArgs: string[] = [],
 ) {
   const grouped = process.platform !== 'win32'
-  const child = spawn(
-    process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
-    [
-      ...nodeArgs,
-      process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
-      ...args,
-    ],
-    {
-      stdio: 'pipe',
-      detached: grouped,
-      env: env ? { ...process.env, ...env } : process.env,
+  const { command, argv, nodeOptions } = gatewayCommand(args, nodeArgs)
+  const child = spawn(command, argv, {
+    stdio: 'pipe',
+    detached: grouped,
+    env: {
+      ...process.env,
+      ...env,
+      ...(nodeOptions && {
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, nodeOptions]
+          .filter(Boolean)
+          .join(' '),
+      }),
     },
-  )
+  })
   let output = ''
   let errors = ''
   // A readiness failure reports whatever was captured, and "nothing at all" is

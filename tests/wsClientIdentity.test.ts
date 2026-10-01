@@ -159,9 +159,14 @@ test(
       () => client.ids().includes(7),
       'complete the request once the server’s ping is answered',
     )
+    // This client never initializes, so the gateway initializes the child for
+    // it (GW-034), and this peer pings before answering any request: once for
+    // the gateway's initialize, whose answer the client never sees, then for
+    // the client's own request.
     assert.deepEqual(
       client.received.map((raw) => JSON.parse(raw)),
       [
+        { jsonrpc: '2.0', id: 'srv-ping', method: 'ping' },
         { jsonrpc: '2.0', id: 'srv-ping', method: 'ping' },
         { jsonrpc: '2.0', id: 7, result: { pingAnswered: true } },
       ],

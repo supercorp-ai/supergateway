@@ -19,6 +19,7 @@ import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
+import { errorResponse, resultResponse } from '../lib/bridgeResponses.js'
 import { CancellableRequests } from '../lib/cancellableRequests.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 
@@ -199,12 +200,6 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   const stdioTransport = new StdioServerTransport()
   await stdioServer.connect(stdioTransport)
 
-  const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
-    jsonrpc: '2.0',
-    id: req.id,
-    ...payload,
-  })
-
   const inFlight = new CancellableRequests(logger)
 
   // Bounded: an upstream that does not answer must not hold up the exit.
@@ -298,61 +293,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         if (networkFailure && requestTransport) {
           invalidateUpstream(requestTransport)
         }
-        // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
-        // the SDK's McpError uses falls inside it. A transport error carries
-        // something else entirely: from SDK 1.24 a failed POST throws
-        // StreamableHTTPError whose `code` is the HTTP status, and forwarding
-        // that verbatim put `code: 503` on the wire, which no JSON-RPC client
-        // can interpret. Such a status belongs in the message, where it is
-        // diagnostic rather than protocol.
-        const isProtocolCode =
-          typeof rawCode === 'number' &&
-          Number.isInteger(rawCode) &&
-          rawCode >= -32768 &&
-          rawCode <= -32000
-        const errorCode = isProtocolCode ? rawCode : -32000
-        let errorMsg =
-          err && typeof err === 'object' && 'message' in err
-            ? (err as any).message
-            : 'Internal error'
-        const prefix = `MCP error ${errorCode}:`
-        if (errorMsg.startsWith(prefix)) {
-          errorMsg = errorMsg.slice(prefix.length).trim()
-        }
-        // Older SDKs spelled the status into the message themselves; newer ones
-        // only carry it in the code we just discarded, so keep it either way.
-        if (
-          !isProtocolCode &&
-          typeof rawCode === 'number' &&
-          !errorMsg.includes(`HTTP ${rawCode}`)
-        ) {
-          errorMsg = `HTTP ${rawCode}: ${errorMsg}`
-        }
-        // Keep whatever structured detail the upstream error carried: it is
-        // the part a client can act on, and rebuilding the error without it
-        // discarded the most useful half.
-        const errorData =
-          err && typeof err === 'object' && 'data' in err
-            ? (err as { data?: unknown }).data
-            : undefined
-        const errorResp = wrapResponse(req, {
-          error: {
-            code: errorCode,
-            message: errorMsg,
-            ...(errorData === undefined ? {} : { data: errorData }),
-          },
-        })
+        const errorResp = errorResponse(req, err)
         process.stdout.write(JSON.stringify(errorResp) + '\n')
         return
       }
-      // `request` throws on a protocol error, so anything it returns is a
-      // successful result — including one that happens to carry a field named
-      // `error`, which is application data and not a JSON-RPC error. The old
-      // ternary both misread that data and called `hasOwnProperty` off the
-      // result itself, which a result carrying that key as a string turned
-      // into a crash.
-      inFlight.end(req.id)
-      const response = wrapResponse(req, { result: { ...result } })
+      // See resultResponse: whatever `request` returned is a result.
+      const response = resultResponse(req, result)
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else if (!inFlight.cancel(message)) {

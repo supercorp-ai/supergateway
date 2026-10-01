@@ -19,7 +19,6 @@
  *   npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
  */
 
-import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
@@ -28,155 +27,119 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
-import { getVersion } from './lib/getVersion.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import {
+  inputTransportOf,
+  parseCli,
+  sessionTimeoutOf,
+  type Cli,
+  type InputTransport,
+} from './cli.js'
+import type { Logger } from './types.js'
 
-type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
+type Start = (argv: Cli, logger: Logger) => Promise<void>
 
-// Idle lifetime of a stateful session when the flag is absent. See where it is
-// used for why "never" was the wrong default.
-const defaultSessionTimeout = 30 * 60 * 1000
+const unsupported = (
+  logger: Logger,
+  input: InputTransport,
+  output: unknown,
+) => {
+  logger.error(`Error: ${input}→${output} not supported`)
+  process.exit(1)
+}
 
-// Express routes only match paths that start with `/`. `--ssePath sse` used to
-// register a route no request could reach, so every request got a 404, and
-// the startup log printed `http://localhost:8000sse`.
-const routePath = (path: string) => (path.startsWith('/') ? path : `/${path}`)
+const stdioToStreamableHttp: Start = async (argv, logger) => {
+  // Built when the gateway starts, after the mode is announced and the
+  // timeout checked, so header diagnostics keep their place in the log.
+  const shared = () => ({
+    stdioCmd: argv.stdio!,
+    port: argv.port,
+    streamableHttpPath: argv.streamableHttpPath,
+    logger,
+    corsOrigin: corsOrigin({ argv }),
+    healthEndpoints: argv.healthEndpoint as string[],
+    headers: headers({ argv, logger }),
+  })
+  if (!argv.stateful) {
+    logger.info('Running stateless server')
+    await stdioToStatelessStreamableHttp({
+      ...shared(),
+      protocolVersion: argv.protocolVersion,
+    })
+    return
+  }
+  logger.info('Running stateful server')
+  const timeout = sessionTimeoutOf(argv)
+  if ('error' in timeout) {
+    logger.error(timeout.error)
+    process.exit(1)
+  }
+  await stdioToStatefulStreamableHttp({
+    ...shared(),
+    sessionTimeout: timeout.sessionTimeout,
+  })
+}
+
+// How each input transport starts, given the output the command line chose.
+const start: Record<InputTransport, Start> = {
+  stdio: async (argv, logger) => {
+    if (argv.outputTransport === 'sse')
+      await stdioToSse({
+        stdioCmd: argv.stdio!,
+        port: argv.port,
+        baseUrl: argv.baseUrl,
+        ssePath: argv.ssePath,
+        messagePath: argv.messagePath,
+        logger,
+        corsOrigin: corsOrigin({ argv }),
+        healthEndpoints: argv.healthEndpoint as string[],
+        headers: headers({ argv, logger }),
+      })
+    else if (argv.outputTransport === 'ws')
+      await stdioToWs({
+        stdioCmd: argv.stdio!,
+        port: argv.port,
+        messagePath: argv.messagePath,
+        logger,
+        corsOrigin: corsOrigin({ argv }),
+        healthEndpoints: argv.healthEndpoint as string[],
+      })
+    else if (argv.outputTransport === 'streamableHttp')
+      await stdioToStreamableHttp(argv, logger)
+    else unsupported(logger, 'stdio', argv.outputTransport)
+  },
+  sse: async (argv, logger) => {
+    if (argv.outputTransport === 'stdio')
+      await sseToStdio({
+        sseUrl: argv.sse!,
+        logger,
+        headers: headers({ argv, logger }),
+      })
+    else unsupported(logger, 'sse', argv.outputTransport)
+  },
+  streamableHttp: async (argv, logger) => {
+    if (argv.outputTransport === 'stdio')
+      await streamableHttpToStdio({
+        streamableHttpUrl: argv.streamableHttp!,
+        logger,
+        headers: headers({ argv, logger }),
+      })
+    else unsupported(logger, 'streamableHttp', argv.outputTransport)
+  },
+}
 
 async function main() {
-  const argv = yargs(hideBin(process.argv))
-    .version(getVersion())
-    .option('stdio', {
-      type: 'string',
-      description: 'Command to run an MCP server over Stdio',
-    })
-    .option('sse', {
-      type: 'string',
-      description: 'SSE URL to connect to',
-    })
-    .option('streamableHttp', {
-      type: 'string',
-      description: 'Streamable HTTP URL to connect to',
-    })
-    .option('outputTransport', {
-      type: 'string',
-      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
-      default: () => {
-        const args = hideBin(process.argv)
-
-        if (args.includes('--stdio')) return 'sse'
-        if (args.includes('--sse')) return 'stdio'
-        if (args.includes('--streamableHttp')) return 'stdio'
-
-        return undefined
-      },
-      description:
-        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse or --streamableHttp.',
-    })
-    .option('port', {
-      type: 'number',
-      default: 8000,
-      description: '(stdio→SSE, stdio→WS) Port for output MCP server',
-    })
-    .option('baseUrl', {
-      type: 'string',
-      default: '',
-      description: '(stdio→SSE) Base URL for output MCP server',
-    })
-    .option('ssePath', {
-      type: 'string',
-      default: '/sse',
-      description: '(stdio→SSE) Path for SSE subscriptions',
-      coerce: routePath,
-    })
-    .option('messagePath', {
-      type: 'string',
-      default: '/message',
-      description: '(stdio→SSE, stdio→WS) Path for messages',
-      coerce: routePath,
-    })
-    .option('streamableHttpPath', {
-      type: 'string',
-      default: '/mcp',
-      description: '(stdio→StreamableHttp) Path for StreamableHttp',
-      coerce: routePath,
-    })
-    .option('logLevel', {
-      choices: ['debug', 'info', 'none'] as const,
-      default: 'info',
-      description: 'Logging level',
-    })
-    .option('cors', {
-      type: 'array',
-      description:
-        'Enable CORS. Use --cors with no values to allow all origins, or supply one or more allowed origins (e.g. --cors "http://example.com" or --cors "/example\\.com$/" for regex matching).',
-    })
-    .option('healthEndpoint', {
-      type: 'array',
-      default: [],
-      description:
-        'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz',
-      coerce: (paths: unknown[]) =>
-        paths.map((path) => routePath(String(path))),
-    })
-    .option('header', {
-      type: 'array',
-      default: [],
-      description:
-        'Headers to be added to the request headers, e.g. --header "x-user-id: 123"',
-    })
-    .option('oauth2Bearer', {
-      type: 'string',
-      description:
-        'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
-    })
-    .option('stateful', {
-      type: 'boolean',
-      default: false,
-      description:
-        'Whether the server is stateful. Only supported for stdio→StreamableHttp.',
-    })
-    .option('sessionTimeout', {
-      type: 'number',
-      description:
-        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. Defaults to 30 minutes of idleness; a client that disconnects without terminating its session used to keep its child process alive forever.',
-    })
-    .option('protocolVersion', {
-      type: 'string',
-      description:
-        'MCP protocol version to use for auto-initialization when the request has no MCP-Protocol-Version header. Defaults to "2024-11-05" if not specified.',
-      default: '2024-11-05',
-    })
-    .help()
-    .parseSync()
-
-  // One value rather than three booleans, so the compiler knows the cases are
-  // mutually exclusive and can check that every one is handled. Three
-  // independent flags cannot express that, which is why the old dispatch needed
-  // a runtime `else` nothing could ever reach.
-  const inputTransports: InputTransport[] = []
-  if (argv.stdio) inputTransports.push('stdio')
-  if (argv.sse) inputTransports.push('sse')
-  if (argv.streamableHttp) inputTransports.push('streamableHttp')
-
+  const argv = parseCli(hideBin(process.argv))
   const logger = getLogger({
     logLevel: argv.logLevel,
     outputTransport: argv.outputTransport as string,
   })
-
-  if (inputTransports.length === 0) {
-    logger.error(
-      'Error: You must specify one of --stdio, --sse, or --streamableHttp',
-    )
-    process.exit(1)
-  } else if (inputTransports.length > 1) {
-    logger.error(
-      'Error: Specify only one of --stdio, --sse, or --streamableHttp, not multiple',
-    )
+  const chosen = inputTransportOf(argv)
+  if ('error' in chosen) {
+    logger.error(chosen.error)
     process.exit(1)
   }
-
-  const inputTransport = inputTransports[0]
 
   logger.info('Starting...')
   logger.info(
@@ -184,131 +147,8 @@ async function main() {
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
-  const start: Record<InputTransport, () => Promise<void>> = {
-    stdio: async () => {
-      if (argv.outputTransport === 'sse') {
-        await stdioToSse({
-          stdioCmd: argv.stdio!,
-          port: argv.port,
-          baseUrl: argv.baseUrl,
-          ssePath: argv.ssePath,
-          messagePath: argv.messagePath,
-          logger,
-          corsOrigin: corsOrigin({ argv }),
-          healthEndpoints: argv.healthEndpoint as string[],
-          headers: headers({
-            argv,
-            logger,
-          }),
-        })
-      } else if (argv.outputTransport === 'ws') {
-        await stdioToWs({
-          stdioCmd: argv.stdio!,
-          port: argv.port,
-          messagePath: argv.messagePath,
-          logger,
-          corsOrigin: corsOrigin({ argv }),
-          healthEndpoints: argv.healthEndpoint as string[],
-        })
-      } else if (argv.outputTransport === 'streamableHttp') {
-        const stateful = argv.stateful
-        if (stateful) {
-          logger.info('Running stateful server')
-
-          let sessionTimeout: null | number
-          if (typeof argv.sessionTimeout === 'number') {
-            // Negated so that NaN (`--sessionTimeout 30m`) fails too: `NaN <= 0`
-            // is false, and it used to switch the default timeout off.
-            if (!(argv.sessionTimeout > 0)) {
-              logger.error(
-                `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
-              )
-              process.exit(1)
-            }
-
-            sessionTimeout = argv.sessionTimeout
-          } else {
-            // A stateful session owns a child process, and the only thing that
-            // used to release it was the client explicitly deleting the
-            // session. A client that crashes, is force-quit, or simply closes
-            // its transport never sends that, so every such disconnect leaked a
-            // process for the lifetime of the gateway. Thirty minutes is far
-            // longer than any gap between calls in a live session and still
-            // bounds what a vanished client can strand.
-            sessionTimeout = defaultSessionTimeout
-          }
-
-          await stdioToStatefulStreamableHttp({
-            stdioCmd: argv.stdio!,
-            port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
-            logger,
-            corsOrigin: corsOrigin({ argv }),
-            healthEndpoints: argv.healthEndpoint as string[],
-            headers: headers({
-              argv,
-              logger,
-            }),
-            sessionTimeout,
-          })
-        } else {
-          logger.info('Running stateless server')
-
-          await stdioToStatelessStreamableHttp({
-            stdioCmd: argv.stdio!,
-            port: argv.port,
-            streamableHttpPath: argv.streamableHttpPath,
-            logger,
-            corsOrigin: corsOrigin({ argv }),
-            healthEndpoints: argv.healthEndpoint as string[],
-            headers: headers({
-              argv,
-              logger,
-            }),
-            protocolVersion: argv.protocolVersion,
-          })
-        }
-      } else {
-        logger.error(`Error: stdio→${argv.outputTransport} not supported`)
-        process.exit(1)
-      }
-    },
-    sse: async () => {
-      if (argv.outputTransport === 'stdio') {
-        await sseToStdio({
-          sseUrl: argv.sse!,
-          logger,
-          headers: headers({
-            argv,
-            logger,
-          }),
-        })
-      } else {
-        logger.error(`Error: sse→${argv.outputTransport} not supported`)
-        process.exit(1)
-      }
-    },
-    streamableHttp: async () => {
-      if (argv.outputTransport === 'stdio') {
-        await streamableHttpToStdio({
-          streamableHttpUrl: argv.streamableHttp!,
-          logger,
-          headers: headers({
-            argv,
-            logger,
-          }),
-        })
-      } else {
-        logger.error(
-          `Error: streamableHttp→${argv.outputTransport} not supported`,
-        )
-        process.exit(1)
-      }
-    },
-  }
-
   try {
-    await start[inputTransport]()
+    await start[chosen.input](argv, logger)
   } catch (err) {
     logger.error('Fatal error:', err)
     process.exit(1)

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -75,7 +76,7 @@ const cases = [
 for (const item of cases) {
   test(
     `CLI ${item.name} selects and announces the expected transport`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

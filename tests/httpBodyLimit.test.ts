@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -14,7 +15,7 @@ import {
 for (const stateful of [false, true]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} HTTP accepts messages up to 4 MB, like SSE`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
       const url = `http://127.0.0.1:${port}/mcp`

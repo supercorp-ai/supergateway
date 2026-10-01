@@ -2,7 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { launchGateway, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  unusedPort,
+} from './helpers/gateway-process.js'
 import { lifecycleControl, within } from './helpers/lifecycle-control.js'
 
 // A child that exited with calls in flight ended its SSE session silently, and
@@ -11,7 +15,7 @@ import { lifecycleControl, within } from './helpers/lifecycle-control.js'
 // straight away with the same error.
 test(
   'SSE fails a call in flight when its server exits',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()

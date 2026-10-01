@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -21,7 +22,7 @@ const MODES = [
 
 test(
   'every mode keeps an idle connection open past Node’s 5-second default',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     await Promise.all(
       MODES.map(async ([label, args]) => {

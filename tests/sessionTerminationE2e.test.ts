@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -16,7 +17,7 @@ import {
 
 test(
   'stateful DELETE settles active streams and tool work without stale idle cleanup',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -11,7 +12,7 @@ import { faultControl } from './helpers/fault-control.js'
 
 test(
   'Streamable HTTP to stdio bridge recovers after upstream restarts',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const args = [
@@ -63,7 +64,7 @@ test(
 
 test(
   'an in-flight call returns an error when upstream disappears and is not replayed',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const control = await faultControl(t)
     const port = await unusedPort()

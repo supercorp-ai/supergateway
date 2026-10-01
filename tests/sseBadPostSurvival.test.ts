@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { faultControl } from './helpers/fault-control.js'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -81,7 +82,7 @@ for (const bad of [
 ] as const) {
   test(
     `SSE session survives ${bad.name} POST`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
@@ -125,7 +126,7 @@ for (const bad of [
 
 test(
   'a rejected POST does not cancel another call already in flight on the SSE session',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const control = await faultControl(t)
     const port = await unusedPort()

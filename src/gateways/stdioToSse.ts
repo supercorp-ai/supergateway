@@ -16,6 +16,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained, holdOutput } from '../lib/outputBackpressure.js'
+import { ChildInitialization } from '../lib/childInitialization.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -180,10 +181,21 @@ export async function stdioToSse(args: StdioToSseArgs) {
     // The client's calls the child has not answered yet.
     const pending = new Set<string | number>()
 
-    sseTransport.onmessage = (msg: JSONRPCMessage) => {
+    // A reconnected client carries on without initializing its new child.
+    const initialization = new ChildInitialization(
+      (msg) => child.stdin.write(JSON.stringify(msg) + '\n'),
+      logger,
+      `Session ${sessionId}`,
+    )
+
+    sseTransport.onmessage = (msg: JSONRPCMessage, extra) => {
       if ('id' in msg && 'method' in msg) pending.add(msg.id!)
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      child.stdin.write(JSON.stringify(msg) + '\n')
+      const version = extra?.requestInfo?.headers['mcp-protocol-version']
+      initialization.fromClient(
+        msg,
+        typeof version === 'string' ? version : undefined,
+      )
     }
 
     // Closing the session's own `Server` is what releases its transport. Without
@@ -252,6 +264,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
         if (!line.trim()) return
         try {
           const jsonMsg = JSON.parse(line)
+          if (initialization.fromChild(jsonMsg)) return
           if ('id' in jsonMsg && !('method' in jsonMsg))
             pending.delete(jsonMsg.id)
           logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)

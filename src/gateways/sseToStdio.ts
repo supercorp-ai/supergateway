@@ -18,6 +18,7 @@ import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { CancellableRequests } from '../lib/cancellableRequests.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
+import { readAsDrained } from '../lib/outputBackpressure.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
@@ -97,7 +98,8 @@ export async function sseToStdio(args: SseToStdioArgs) {
           merged.set(name, value)
         const response = await fetch(url, { ...init, headers: merged })
         if (response.ok) streamOpened = true
-        return response
+        // Read the event stream only as fast as the stdio client reads.
+        return readAsDrained(response, process.stdout)
       },
     },
     requestInit: {

@@ -1,5 +1,4 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -18,9 +17,9 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
-import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { drained, holdOutput } from '../lib/outputBackpressure.js'
+import { drained } from '../lib/outputBackpressure.js'
+import { ChildLink } from '../lib/childHandoff.js'
 import {
   createInitializeRequest,
   createInitializedNotification,
@@ -169,14 +168,6 @@ export async function stdioToStatelessStreamableHttp(
             if (!res.writableEnded) res.destroy()
           })
       }
-      child.on('error', handleChildFailure)
-      child.stdin.on('error', handleChildFailure)
-      child.on('exit', (code, signal) => {
-        logger.error(`Child exited: code=${code}, signal=${signal}`)
-        // HTTP EOF alone does not settle an SDK request. Use the same
-        // idempotent error delivery as spawn/stdin failure before closing.
-        handleChildFailure()
-      })
 
       // State tracking for initialization flow
       let initializeRequestId: string | number | null = null // Current initialize request ID
@@ -219,96 +210,89 @@ export async function stdioToStatelessStreamableHttp(
         finishRequest()
       })
 
-      const decoder = new StringDecoder('utf8')
-      const lines = new LineSplitter()
-      child.stdout.on('data', (chunk: Buffer) => {
-        lines.push(decoder.write(chunk)).forEach((line) => {
-          if (!line.trim()) return
-          try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            // A later HTTP POST starts a different child, so it cannot answer
-            // this child's reverse request. Reply locally instead of hanging.
-            if ('method' in jsonMsg && 'id' in jsonMsg) {
-              child.stdin.write(
-                JSON.stringify({
-                  jsonrpc: '2.0',
-                  id: jsonMsg.id,
-                  ...(jsonMsg.method === 'ping'
-                    ? { result: {} }
-                    : {
-                        error: {
-                          code: -32601,
-                          message:
-                            'Server-to-client requests are not supported in stateless mode',
-                        },
-                      }),
-                }) + '\n',
-              )
-              return
-            }
-            if ('id' in jsonMsg) {
-              pendingRequests.delete(jsonMsg.id)
-            }
-
-            // Handle initialize response (both auto and client initiated)
-            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
-              logger.info('Initialize response received')
-
-              // If this was our auto-initialization, send initialized notification and pending message
-              if (isAutoInitializing) {
-                // Send initialized notification
-                const initializedNotification = createInitializedNotification()
-                logger.info(
-                  `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
-                )
-                child.stdin.write(
-                  JSON.stringify(initializedNotification) + '\n',
-                )
-
-                // Now send the original messages, in the order they arrived.
-                // There is always at least one: `isAutoInitializing` is only
-                // ever set true after queueing a message, which is why this is
-                // not a `for` loop with a zero-iteration case nothing can reach.
-                pendingOriginalMessages.splice(0).forEach((original) => {
-                  logger.info(
-                    `StreamableHttp → Child (original): ${JSON.stringify(original)}`,
-                  )
-                  child.stdin.write(JSON.stringify(original) + '\n')
-                })
-
-                // Reset auto-initialize tracking
-                isAutoInitializing = false
-                initializeRequestId = null
-                finishRequest()
-
-                // Don't forward our auto-initialize response to the client
-                return
-              } else {
-                // Client-initiated initialize response, just reset tracking
-                initializeRequestId = null
-              }
-            }
-
-            void transport
-              .send(jsonMsg, {
-                // Each stateless child serves one POST. Responses route by
-                // their own ID; notifications share the pending request stream.
-                relatedRequestId: pendingRequests.values().next().value,
-              })
-              .catch((e) => {
-                logger.error(`Failed to send to StreamableHttp`, e)
-              })
-              .finally(finishRequest)
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
+      const link = new ChildLink(child, stop, {
+        failure: (_kind, err) => handleChildFailure(err),
+        exit: (code, signal) => {
+          logger.error(`Child exited: code=${code}, signal=${signal}`)
+          // HTTP EOF alone does not settle an SDK request. Use the same
+          // idempotent error delivery as spawn/stdin failure before closing.
+          handleChildFailure()
+        },
+        message: (jsonMsg, line) => {
+          logger.info('Child → StreamableHttp:', line)
+          // A later HTTP POST starts a different child, so it cannot answer
+          // this child's reverse request. Reply locally instead of hanging.
+          if ('method' in jsonMsg && 'id' in jsonMsg) {
+            link.write({
+              jsonrpc: '2.0',
+              id: jsonMsg.id,
+              ...(jsonMsg.method === 'ping'
+                ? { result: {} }
+                : {
+                    error: {
+                      code: -32601,
+                      message:
+                        'Server-to-client requests are not supported in stateless mode',
+                    },
+                  }),
+            })
+            return
           }
-        })
-        holdOutput(child.stdout, drained([res]))
-      })
+          if ('id' in jsonMsg) {
+            pendingRequests.delete(jsonMsg.id)
+          }
 
-      child.stderr.on('data', (chunk: Buffer) => {
-        logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+          // Handle initialize response (both auto and client initiated)
+          if (initializeRequestId && jsonMsg.id === initializeRequestId) {
+            logger.info('Initialize response received')
+
+            // If this was our auto-initialization, send initialized notification and pending message
+            if (isAutoInitializing) {
+              // Send initialized notification
+              const initializedNotification = createInitializedNotification()
+              logger.info(
+                `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
+              )
+              link.write(initializedNotification)
+
+              // Now send the original messages, in the order they arrived.
+              // There is always at least one: `isAutoInitializing` is only
+              // ever set true after queueing a message, which is why this is
+              // not a `for` loop with a zero-iteration case nothing can reach.
+              pendingOriginalMessages.splice(0).forEach((original) => {
+                logger.info(
+                  `StreamableHttp → Child (original): ${JSON.stringify(original)}`,
+                )
+                link.write(original)
+              })
+
+              // Reset auto-initialize tracking
+              isAutoInitializing = false
+              initializeRequestId = null
+              finishRequest()
+
+              // Don't forward our auto-initialize response to the client
+              return
+            } else {
+              // Client-initiated initialize response, just reset tracking
+              initializeRequestId = null
+            }
+          }
+
+          void transport
+            .send(jsonMsg, {
+              // Each stateless child serves one POST. Responses route by
+              // their own ID; notifications share the pending request stream.
+              relatedRequestId: pendingRequests.values().next().value,
+            })
+            .catch((e) => {
+              logger.error(`Failed to send to StreamableHttp`, e)
+            })
+            .finally(finishRequest)
+        },
+        nonJson: (line) => logger.error(`Child non-JSON: ${line}`),
+        stderr: (text) => logger.error(`Child stderr: ${text}`),
+        output: () => drained([res]),
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
@@ -360,7 +344,7 @@ export async function stdioToStatelessStreamableHttp(
           logger.info(
             `StreamableHttp → Child (auto-initialize): ${JSON.stringify(initRequest)}`,
           )
-          child.stdin.write(JSON.stringify(initRequest) + '\n')
+          link.write(initRequest)
 
           // Don't send the original message yet - it will be sent after initialization
           return
@@ -391,12 +375,10 @@ export async function stdioToStatelessStreamableHttp(
         }
 
         // This child cannot use client features that require another HTTP POST.
-        child.stdin.write(
-          JSON.stringify({
-            ...msg,
-            params: { ...msg.params, capabilities: {} },
-          }) + '\n',
-        )
+        link.write({
+          ...msg,
+          params: { ...msg.params, capabilities: {} },
+        })
       }
 
       transport.onclose = () => {

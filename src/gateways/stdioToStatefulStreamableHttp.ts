@@ -1,5 +1,4 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -18,9 +17,9 @@ import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
-import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { drained, holdOutput } from '../lib/outputBackpressure.js'
+import { drained } from '../lib/outputBackpressure.js'
+import { ChildLink } from '../lib/childHandoff.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -267,57 +266,45 @@ export async function stdioToStatefulStreamableHttp(
             if (!res.writableEnded) res.destroy()
           })
       }
-      child.on('error', handleChildFailure)
-      child.stdin.on('error', handleChildFailure)
-      child.on('exit', (code, signal) => {
-        logger.error(`Child exited: code=${code}, signal=${signal}`)
-        // HTTP EOF alone does not settle an SDK request. Use the same
-        // idempotent error delivery as spawn/stdin failure before closing.
-        handleChildFailure()
-      })
-
-      const decoder = new StringDecoder('utf8')
-      const lines = new LineSplitter()
-      child.stdout.on('data', (chunk: Buffer) => {
-        lines.push(decoder.write(chunk)).forEach((line) => {
-          if (!line.trim()) return
-          try {
-            const jsonMsg = JSON.parse(line)
-            logger.info('Child → StreamableHttp:', line)
-            if ('id' in jsonMsg && !('method' in jsonMsg)) {
-              pendingRequests.delete(jsonMsg.id)
-            }
-            transport
-              .send(jsonMsg, {
-                // A message with no related request is routed to the standalone
-                // GET stream, and the SDK returns silently when that stream is
-                // not connected yet — so nothing throws and the notification is
-                // simply gone. That window is exactly the start of a call, which
-                // is where a tool emits its first progress notification: soak run
-                // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
-                // route by their own id regardless; everything else rides the
-                // request in flight, as the stateless bridge already does.
-                relatedRequestId: pendingRequests.values().next().value,
-              })
-              .catch((e) => {
-                logger.error(`Failed to send to StreamableHttp`, e)
-              })
-          } catch {
-            logger.error(`Child non-JSON: ${line}`)
+      const link = new ChildLink(child, stop, {
+        failure: (_kind, err) => handleChildFailure(err),
+        exit: (code, signal) => {
+          logger.error(`Child exited: code=${code}, signal=${signal}`)
+          // HTTP EOF alone does not settle an SDK request. Use the same
+          // idempotent error delivery as spawn/stdin failure before closing.
+          handleChildFailure()
+        },
+        message: (jsonMsg, line) => {
+          logger.info('Child → StreamableHttp:', line)
+          if ('id' in jsonMsg && !('method' in jsonMsg)) {
+            pendingRequests.delete(jsonMsg.id)
           }
-        })
-        holdOutput(child.stdout, drained(responses))
-      })
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+          transport
+            .send(jsonMsg, {
+              // A message with no related request is routed to the standalone
+              // GET stream, and the SDK returns silently when that stream is
+              // not connected yet — so nothing throws and the notification is
+              // simply gone. That window is exactly the start of a call, which
+              // is where a tool emits its first progress notification: soak run
+              // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
+              // route by their own id regardless; everything else rides the
+              // request in flight, as the stateless bridge already does.
+              relatedRequestId: pendingRequests.values().next().value,
+            })
+            .catch((e) => {
+              logger.error(`Failed to send to StreamableHttp`, e)
+            })
+        },
+        nonJson: (line) => logger.error(`Child non-JSON: ${line}`),
+        stderr: (text) => logger.error(`Child stderr: ${text}`),
+        output: () => drained(responses),
       })
 
       transport.onmessage = (msg: JSONRPCMessage) => {
         if (probe?.accept(msg)) return
         if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
         logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
-        child.stdin.write(JSON.stringify(msg) + '\n')
+        link.write(msg)
         if ('method' in msg && msg.method === 'notifications/cancelled')
           endCancelled(
             (msg.params as { requestId?: string | number } | undefined)

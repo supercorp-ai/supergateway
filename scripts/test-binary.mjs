@@ -27,6 +27,27 @@ const files = readdirSync(join(repository, 'tests'))
     const source = readFileSync(join(repository, file), 'utf8')
     return source.includes('launchGateway') && !others.test(source)
   })
+// Windows runs the set that main CI's packaged tests and the soak's Windows
+// lanes run against the npm package (scripts/test-package.mjs,
+// scripts/overnight-release.mjs): the rest of the suite is POSIX-only (`exec`
+// in shell command lines, process groups) and runs on Linux and macOS.
+const windows = new Set([
+  'modernProtocol',
+  'modernTransparency',
+  'modernAutoCompatibility',
+  'modernHttpSafety',
+  'modernRelayEdges',
+  'modernContinuationBoundary',
+  'protocolVersionMatrix',
+])
+if (process.platform === 'win32')
+  files.splice(
+    0,
+    files.length,
+    ...files.filter((file) =>
+      windows.has(file.replace(/^tests[\\/]/, '').replace(/\.test\.ts$/, '')),
+    ),
+  )
 if (!files.length) {
   console.error('No test files start the gateway through launchGateway.')
   process.exit(1)

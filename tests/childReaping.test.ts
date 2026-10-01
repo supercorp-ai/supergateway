@@ -2,7 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
 import type { TestContext } from 'node:test'
-import { launchGateway, rpc, unusedPort } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  launchGateway,
+  rpc,
+  unusedPort,
+} from './helpers/gateway-process.js'
 
 /**
  * Which configurations actually reap the child a request spawned?
@@ -100,7 +105,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 3000))
 
 test(
   'stateful HTTP reaps a session’s child on explicit DELETE',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { marker, url, sessions } = await openSessions(
       t,
@@ -158,7 +163,7 @@ test(
 
 test(
   'stateful HTTP reaps an idle session’s child when --sessionTimeout is set',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { marker } = await openSessions(
       t,
@@ -188,7 +193,7 @@ test(
  */
 test(
   'stateful HTTP preserves sessions between responses when idle expiry is disabled',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { marker, url, sessions } = await openSessions(
       t,
@@ -225,7 +230,7 @@ test(
  */
 test(
   'stateless HTTP reaps the child it spawned for a completed request (#108)',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { marker } = await openSessions(
       t,

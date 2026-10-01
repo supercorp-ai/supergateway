@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -32,7 +33,7 @@ const FALLBACK_LOG = /creating fallback client/
 
 test(
   'a conforming SDK client never reaches the fallback path',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const upstream = launchGateway(t, [
@@ -91,7 +92,7 @@ test(
 
 test(
   'a client that skips the handshake reaches the fallback and is answered',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const upstream = launchGateway(t, [

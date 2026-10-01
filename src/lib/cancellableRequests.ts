@@ -45,8 +45,7 @@ export class CancellableRequests {
     if (!('method' in message) || message.method !== 'notifications/cancelled')
       return false
     const params = message.params as
-      | { requestId?: RequestId; reason?: string }
-      | undefined
+      { requestId?: RequestId; reason?: string } | undefined
     const controller = this.pending.get(params?.requestId as RequestId)
     // A cancel for a request that already finished, or never existed, is
     // ignored, as the spec asks. Relaying it would name an id upstream that

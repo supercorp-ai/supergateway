@@ -239,3 +239,15 @@ test("a server that refuses the gateway's initialize still gets the client's mes
   assert.equal(errors.length, 1)
   assert.deepEqual(errors[0][1], refusal)
 })
+
+test('a child taken over from an identically initialized client needs no handshake', () => {
+  const { written, init } = setup()
+  init.adopted()
+  init.fromClient(initialized)
+  init.fromClient(request(1))
+  assert.deepEqual(
+    written,
+    [initialized, request(1)],
+    "the client's messages go straight through, its initialized included",
+  )
+})

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { observeGateway } from './helpers/observed-gateway.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -26,7 +27,7 @@ const advertised = {
 for (const direct of [true, false]) {
   test(
     `stateless ${direct ? 'direct' : 'automatic'} initialization: notification routing, reverse IDs and capability limits on the wire`,
-    { timeout: 30000 },
+    { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
@@ -100,9 +101,8 @@ for (const direct of [true, false]) {
 
 test('stateless reverse requests preserve pending calls, reject before init matching, and do not forward replies', async (t) => {
   const b = observeGateway(t)
-  const { stdioToStatelessStreamableHttp } = await import(
-    '../src/gateways/stdioToStatelessStreamableHttp.js'
-  )
+  const { stdioToStatelessStreamableHttp } =
+    await import('../src/gateways/stdioToStatelessStreamableHttp.js')
   await stdioToStatelessStreamableHttp({
     stdioCmd: 'controlled',
     port: 0,

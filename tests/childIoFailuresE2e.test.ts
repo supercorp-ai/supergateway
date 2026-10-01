@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { faultControl } from './helpers/fault-control.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -23,7 +24,7 @@ for (const stateful of [true, false]) {
   for (const fault of [false, true]) {
     test(
       `${stateful ? 'stateful' : 'stateless'} HTTP isolates ${fault ? 'a native spawn failure' : 'successful child spawns'}`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const gateway = launchGateway(
@@ -90,7 +91,7 @@ for (const stateful of [true, false]) {
   for (const fault of [false, true]) {
     test(
       `${stateful ? 'stateful' : 'stateless'} HTTP isolates ${fault ? 'a child closing stdin' : 'an ordinary child input stream'}`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const control = await faultControl(t)
         const port = await unusedPort()

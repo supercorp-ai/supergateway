@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -13,7 +14,7 @@ import {
 // sseClientIsolation.test.ts and sseSessionStateIsolation.test.ts.
 test(
   'SSE gateway serves a second client on the same process',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

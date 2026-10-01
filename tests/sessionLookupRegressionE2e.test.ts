@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -39,7 +40,7 @@ const INHERITED = [
 for (const method of ['POST', 'GET', 'DELETE']) {
   test(
     `stateful HTTP rejects every inherited-property session ID for ${method}`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

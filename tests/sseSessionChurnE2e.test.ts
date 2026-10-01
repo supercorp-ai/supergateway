@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -10,7 +11,7 @@ import {
 
 test(
   'SSE session churn does not disconnect a healthy client or resurrect closed endpoints',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

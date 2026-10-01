@@ -103,6 +103,14 @@ export class ChildInitialization {
   }
 
   /**
+   * The client's initialize was answered by a child an earlier client had
+   * initialized identically (GW-035), so this child needs no handshake.
+   */
+  adopted(): void {
+    this.state = 'ready'
+  }
+
+  /**
    * A message from the child. Returns true for the answer to the gateway's own
    * initialize, which the client never asked for and must not receive.
    */

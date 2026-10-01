@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fc from 'fast-check'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -39,7 +40,7 @@ const operation = fc.constantFrom(
 
 test(
   'live children track open sessions across any sequence of opens and closes',
-  { timeout: 120000 },
+  { timeout: gatewayTimeout(120000) },
   async (t) => {
     await fc.assert(
       fc.asyncProperty(

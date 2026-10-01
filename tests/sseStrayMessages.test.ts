@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -20,7 +21,7 @@ import {
  */
 test(
   'a message for no live session is refused without ending the gateway',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

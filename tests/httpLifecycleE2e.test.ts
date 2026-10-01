@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { WebSocket } from 'ws'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -25,7 +26,7 @@ const tool = (id: number, name: string) => ({
 for (const stateful of [false, true]) {
   test(
     `${stateful ? 'stateful' : 'stateless'} HTTP closes a pending request after child exit and accepts a fresh client`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const control = await lifecycleControl(t)
       const port = await unusedPort()
@@ -85,7 +86,7 @@ for (const stateful of [false, true]) {
 // with a reason, and the gateway stays up for everyone else.
 test(
   'WebSocket gateway propagates child failure while a request is pending',
-  { timeout: 10000 },
+  { timeout: gatewayTimeout(10000) },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()
@@ -123,7 +124,7 @@ test(
 
 test(
   'stateful HTTP keeps active work alive then expires it after client disconnect',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()
@@ -186,7 +187,7 @@ test(
 
 test(
   'stateful HTTP cancels a pending idle timeout when the child exits',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const control = await lifecycleControl(t)
     const port = await unusedPort()

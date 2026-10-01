@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 // The `ws` client, not the global one: `WebSocket` is undefined on Node 20.
 import { WebSocket } from 'ws'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -37,7 +38,7 @@ const launch = async (
 
 test(
   'SSE paths without a leading slash still route',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const { base, gateway } = await launch(t, [
       '--ssePath',
@@ -62,7 +63,7 @@ test(
 
 test(
   'a WebSocket path without a leading slash still routes',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const { port } = await launch(t, [
       '--outputTransport',
@@ -81,7 +82,7 @@ test(
 
 test(
   'a Streamable HTTP path without a leading slash still routes',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const { base } = await launch(t, [
       '--outputTransport',

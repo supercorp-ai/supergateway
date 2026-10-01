@@ -12,7 +12,7 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
   const originalWrite = res.write.bind(res)
   const originalEnd = res.end.bind(res)
   let sse = false
-  let pending = Buffer.alloc(0)
+  let pending: Buffer = Buffer.alloc(0)
 
   const isSse = (headers?: OutgoingHttpHeaders) => {
     const contentType =

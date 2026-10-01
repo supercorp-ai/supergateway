@@ -18,6 +18,7 @@ import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
 import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
+import { readAsDrained } from '../lib/outputBackpressure.js'
 import { CancellableRequests } from '../lib/cancellableRequests.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 
@@ -101,6 +102,9 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
     }
     const transport = new StreamableHTTPClientTransport(new URL(upstreamUrl), {
       requestInit: { headers },
+      // Read upstream responses only as fast as the stdio client reads.
+      fetch: async (url, init) =>
+        readAsDrained(await fetch(url, init), process.stdout),
     })
     relayServerMessages(transport, (message) => {
       logger.info('Streamable HTTP → Stdio:', message)

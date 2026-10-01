@@ -27,11 +27,11 @@ jobs:
   exercise:
     name: ${{ inputs.label }} / Node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Three-hour phases, plus install, the finite continuation check, the
-    # real-server and Inspector preflight and cooldowns.
-    timeout-minutes: 240
+    # Five-hour phases, plus install, the finite continuation check, the
+    # real-server and Inspector preflight and cooldowns: the hosted maximum.
+    timeout-minutes: 360
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 12
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -100,7 +100,7 @@ jobs:
   languages:
     name: ${{ inputs.label }} / Python, Go and Ruby clients / ubuntu-latest
     runs-on: ubuntu-latest
-    timeout-minutes: 225
+    timeout-minutes: 360
     env:
       SOAK_DIRECTORY: .release/languages
     steps:
@@ -161,9 +161,9 @@ jobs:
   scenarios:
     name: ${{ inputs.label }} / scenarios / Node 24 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 225
+    timeout-minutes: 360
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     env:

@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   unusedPort,
@@ -79,7 +80,7 @@ const endpointEvent = async (
 
 test(
   "--baseUrl's path prefixes the endpoint",
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     // The part of `--baseUrl` that does take effect: behind a proxy that
     // serves the gateway under `/gateway`, clients POST to the right place.
@@ -93,7 +94,7 @@ test(
 
 test(
   "--baseUrl's host is not sent, even to a client that connected through it",
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     // The strongest case for sending it — a proxy keeping the client's Host
     // and saying it arrived over https — still gets a path. Fails if an SDK
@@ -109,7 +110,7 @@ test(
 
 test(
   'without --baseUrl the endpoint is relative to the connection',
-  { timeout: 20000 },
+  { timeout: gatewayTimeout(20000) },
   async (t) => {
     const data = await endpointEvent(t, [])
     assert.match(data, /^\/message\?sessionId=[\w-]+$/)
@@ -126,7 +127,7 @@ for (const [baseUrl, expected] of [
 ] as const) {
   test(
     `--baseUrl ${baseUrl} does not double the slash`,
-    { timeout: 20000 },
+    { timeout: gatewayTimeout(20000) },
     async (t) => {
       assert.match(await endpointEvent(t, ['--baseUrl', baseUrl]), expected)
     },

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -14,7 +15,7 @@ import {
 for (const days of [1, 30]) {
   test(
     `stateful HTTP honors a ${days}-day idle timeout without expiring immediately`,
-    { timeout: 10000 },
+    { timeout: gatewayTimeout(10000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

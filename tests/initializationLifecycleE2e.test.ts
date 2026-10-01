@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   rpc,
@@ -11,7 +12,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
   for (const fallback of [false, true]) {
     test(
       `${protocol} exits cleanly when upstream rejects ${fallback ? 'fallback' : 'explicit'} initialization`,
-      { timeout: 15000 },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const port = await unusedPort()
         const upstream = launchGateway(t, [
@@ -55,7 +56,7 @@ for (const protocol of ['sse', 'streamableHttp']) {
 
 test(
   'stateless HTTP tolerates notifications before automatic initialization completes',
-  { timeout: 15000 },
+  { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [

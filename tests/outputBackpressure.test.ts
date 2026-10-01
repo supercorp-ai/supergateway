@@ -2,7 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, get } from 'node:http'
 import { PassThrough, Writable } from 'node:stream'
-import { drained, holdOutput } from '../src/lib/outputBackpressure.js'
+import {
+  drained,
+  holdOutput,
+  readAsDrained,
+} from '../src/lib/outputBackpressure.js'
 
 // A response whose buffer is full until it is drained or destroyed.
 const full = () => {
@@ -87,4 +91,76 @@ test('holdOutput pauses until drained, and only once while held', async () => {
   release()
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(stdout.isPaused(), false)
+})
+
+// A body of three chunks that records how many have been taken from it.
+const upstream = () => {
+  let pulled = 0
+  let cancelled: unknown
+  const chunks = ['a', 'b', 'c'].map((text) => new TextEncoder().encode(text))
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (pulled === chunks.length) controller.close()
+        else controller.enqueue(chunks[pulled++])
+      },
+      cancel(reason) {
+        cancelled = reason
+      },
+    },
+    { highWaterMark: 0 },
+  )
+  return {
+    response: new Response(body, {
+      status: 201,
+      statusText: 'Made',
+      headers: { 'content-type': 'text/event-stream' },
+    }),
+    pulled: () => pulled,
+    cancelled: () => cancelled,
+  }
+}
+
+test('readAsDrained reads the body only while the output keeps up', async () => {
+  const output = full()
+  const source = upstream()
+  const held = readAsDrained(source.response, output)
+  assert.equal(held.status, 201)
+  assert.equal(held.statusText, 'Made')
+  assert.equal(held.headers.get('content-type'), 'text/event-stream')
+  const reader = held.body!.getReader()
+  const first = reader.read()
+  assert.equal(await settled(first.then(() => {})), false, 'held while full')
+  assert.equal(source.pulled(), 0, 'nothing taken from upstream meanwhile')
+  output.emit('flush')
+  assert.equal(
+    new TextDecoder().decode((await first).value),
+    'a',
+    'read once drained',
+  )
+  const rest: string[] = []
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    rest.push(new TextDecoder().decode(value))
+  }
+  assert.deepEqual(rest, ['b', 'c'])
+})
+
+test('readAsDrained passes a cancel upstream and keeps url and redirected', async () => {
+  const source = upstream()
+  Object.defineProperties(source.response, {
+    url: { value: 'https://upstream.example/sse' },
+    redirected: { value: true },
+  })
+  const held = readAsDrained(source.response, new PassThrough())
+  assert.equal(held.url, 'https://upstream.example/sse')
+  assert.equal(held.redirected, true)
+  await held.body!.cancel('client gone')
+  assert.equal(source.cancelled(), 'client gone')
+})
+
+test('readAsDrained hands on a response without a body unchanged', () => {
+  const empty = new Response(null, { status: 204 })
+  assert.equal(readAsDrained(empty, new PassThrough()), empty)
 })

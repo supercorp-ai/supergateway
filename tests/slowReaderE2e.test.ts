@@ -4,6 +4,7 @@ import { get } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { faultControl } from './helpers/fault-control.js'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   unusedPort,
@@ -83,7 +84,7 @@ async function stream(t: TestContext, base: string) {
 for (const paused of [false, true]) {
   test(
     `SSE ${paused ? 'paused' : 'draining'} reader survives 128 MiB of small valid notifications with a 160 MiB gateway heap`,
-    { timeout: 90000 },
+    { timeout: gatewayTimeout(90000) },
     async (t) => {
       const control = await faultControl(t)
       const port = await unusedPort()

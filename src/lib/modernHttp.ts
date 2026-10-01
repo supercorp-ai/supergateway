@@ -43,61 +43,9 @@ export function createModernHttp(args: {
       await closing
     },
     async handle(req: Request, res: Response): Promise<boolean> {
-      const value = (name: string) => {
-        const header = req.headers[name]
-        return Array.isArray(header) ? header.join(', ') : header
-      }
-      const reject = (status: number, code: number, message: string) => {
-        res.status(status).json({
-          jsonrpc: '2.0',
-          id:
-            typeof req.body?.id === 'string' || typeof req.body?.id === 'number'
-              ? req.body.id
-              : null,
-          error: { code, message },
-        })
-        return true
-      }
-      const route = classifyInboundRequest({
-        httpMethod: req.method,
-        body: req.body,
-        protocolVersionHeader: value('mcp-protocol-version'),
-        mcpMethodHeader: value('mcp-method'),
-        mcpNameHeader: value('mcp-name'),
-      })
-      if (route.kind === 'legacy') return false
-      if (!isJsonContentType(value('content-type') ?? null))
-        return reject(415, -32000, 'Content-Type must be application/json')
-      if (route.kind === 'reject') {
-        res.status(route.httpStatus).json({
-          jsonrpc: '2.0',
-          id:
-            typeof req.body?.id === 'string' || typeof req.body?.id === 'number'
-              ? req.body.id
-              : null,
-          error: {
-            code: route.code,
-            message: route.message,
-            ...(route.data === undefined ? {} : { data: route.data }),
-          },
-        })
-        return true
-      }
-      const accept = value('accept') ?? ''
-      if (
-        !accept.includes('application/json') ||
-        !accept.includes('text/event-stream')
-      )
-        return reject(
-          406,
-          -32000,
-          'Client must accept application/json and text/event-stream',
-        )
-      try {
-        validateModernHeaders(route.message, value)
-      } catch (error) {
-        return reject(400, -32020, (error as Error).message)
-      }
+      const value = headerValue(req)
+      const route = admit(req, res, value)
+      if (typeof route === 'boolean') return route
       const transport = new PerRequestHTTPServerTransport({
         classification: route.classification,
       })
@@ -116,255 +64,406 @@ export function createModernHttp(args: {
       if (isContinuationHandle(continuation) && !reused) {
         await transport.close()
         if (!res.destroyed)
-          return reject(
-            400,
-            -32602,
-            'Continuation expired or backend unavailable',
-          )
-        return true
-      }
-      const child =
-        reused?.child ?? new OwnedStdioTransport(stdioCmd, children, logger)
-      let awaitingReply = false
-      let message = route.message
-      if (reused) {
-        message = { ...route.message, params: { ...route.message.params } }
-        delete message.params!.requestState
-        if (reused.state !== undefined)
-          message.params!.requestState = reused.state
-      }
-      let pending:
-        | {
-            id: string
-            resolve: (message: JSONRPCResponse) => void
-            reject: (error: Error) => void
-          }
-        | undefined
-      let responseStatus = 200
-      let dispatched: Promise<void> | undefined
-      let stopped = false
-      let failed = false
-      let stopPromise: Promise<void> | undefined
-      const stop = () => {
-        if (!stopPromise) {
-          stopped = true
-          res.off('close', closed)
-          pending?.reject(new Error('Request closed'))
-          stopPromise = Promise.resolve()
-            .then(async () => {
-              try {
-                await transport.close()
-              } finally {
-                try {
-                  if (!failed && !awaitingReply) await retained.release(child)
-                  else await retained.discard(child)
-                } finally {
-                  active.delete(stop)
-                }
-              }
-            })
-            .catch((error) => {
-              logger.error('Modern request cleanup failed:', error)
-            })
-        }
-        return stopPromise
-      }
-      const closed = () => {
-        void stop()
-      }
-      const fail = async (error: Error) => {
-        if (stopped || failed) return
-        failed = true
-        logger.error('MCP child request failed:', error)
-        if (error instanceof HeaderMismatch) responseStatus = 400
-        if (route.messageKind === 'request') {
-          await transport
-            .send({
-              jsonrpc: '2.0',
-              id: route.message.id,
-              error:
-                error instanceof HeaderMismatch
-                  ? { code: error.code, message: error.message }
-                  : { code: -32603, message: 'MCP server process failed' },
-            })
-            .catch((error) => logger.error('Failed to send MCP error:', error))
-        }
-        await stop()
-      }
-      child.onerror = (error) => {
-        void fail(error)
-      }
-      child.onclose = () => {
-        void fail(new Error('Child stdout closed'))
-      }
-      child.onmessage = (message) => {
-        if (stopped) return
-        if ('method' in message && 'id' in message) {
-          void fail(
-            new Error('Unexpected server request on a modern connection'),
-          )
-          return
-        }
-        if (pending) {
-          if ('id' in message && message.id === pending.id) {
-            const resolve = pending.resolve
-            pending = undefined
-            resolve(message)
-          }
-          return
-        }
-        if (
-          'error' in message &&
-          route.messageKind === 'request' &&
-          message.id === route.message.id
-        ) {
-          responseStatus =
-            message.error.code === -32601
-              ? 404
-              : [-32020, -32021, -32022].includes(message.error.code)
-                ? 400
-                : 200
-        }
-        if (
-          'id' in message &&
-          route.messageKind === 'request' &&
-          message.id === route.message.id
-        ) {
-          awaitingReply = false
-          if ('result' in message) {
-            const state = mintedState(message.result)
-            if (state) {
-              message = {
-                ...message,
-                result: {
-                  ...message.result,
-                  requestState: retained.retain(state.value, child),
-                },
-              }
-            }
-          }
-        }
-        // The backend state is restored on retry; other payloads stay unchanged.
-        // No protocol Client/Server is inserted to renegotiate or rewrite them.
-        void transport
-          .send(message, {
-            relatedRequestId:
-              route.messageKind === 'request' ? route.message.id : undefined,
+          rejectWith(req, res, 400, {
+            code: -32602,
+            message: 'Continuation expired or backend unavailable',
           })
-          .catch(fail)
-        child.hold(drained([res]))
-      }
-      transport.onerror = (error) =>
-        logger.error('Modern HTTP transport error:', error)
-      transport.onclose = () => {
-        void stop()
-      }
-      transport.onmessage = () => {
-        dispatched = (async () => {
-          if (stopped || children.closing)
-            throw new Error('Gateway is shutting down')
-          if (!reused) {
-            await child.start()
-            if (stopped) {
-              // Cleanup ran before the process existed; release it now.
-              await child.close()
-              return
-            }
-          }
-          if (
-            route.messageKind === 'request' &&
-            message.method === 'tools/call'
-          ) {
-            // Modern request envelopes are checked by the SDK classifier.
-            const params = message.params!
-            const schema = await findToolSchema(params.name, async (cursor) => {
-              if (stopped) throw new Error('Request closed')
-              const id = randomUUID()
-              let rejectReply!: (error: Error) => void
-              const reply = new Promise<JSONRPCResponse>((resolve, reject) => {
-                rejectReply = reject
-                pending = { id, resolve, reject }
-              })
-              const meta: Record<string, unknown> = {
-                ...params._meta,
-              }
-              delete meta.progressToken
-              void child
-                .send({
-                  jsonrpc: '2.0',
-                  id,
-                  method: 'tools/list',
-                  params: {
-                    _meta: meta,
-                    ...(cursor === undefined ? {} : { cursor }),
-                  },
-                })
-                .catch(rejectReply)
-              const result = await reply
-              if ('error' in result)
-                throw new Error(`tools/list failed: ${result.error.message}`)
-              return result.result
-            })
-            validateToolHeaders(schema, params.arguments, value)
-          }
-          if (stopped) return
-          awaitingReply = route.messageKind === 'request'
-          await child.send(message)
-          if (route.messageKind === 'notification') await child.finish()
-        })().catch(fail)
-      }
-      active.add(stop)
-      // Node18 can lose a derived Web Request's AbortSignal linkage after GC.
-      res.once('close', closed)
-      if (res.destroyed) {
-        await stop()
         return true
       }
-      await transport.start()
-      const handle = toNodeHandler(
-        {
-          fetch: async (request) => {
-            const response = await transport.handleMessage(route.message, {
-              request,
-            })
-            if (route.messageKind === 'notification') {
-              await dispatched
-              if (failed)
-                return globalThis.Response.json(
-                  {
-                    jsonrpc: '2.0',
-                    id: null,
-                    error: {
-                      code: -32603,
-                      message: 'MCP server process failed',
-                    },
-                  },
-                  { status: 500 },
-                )
-            }
-            // Once SSE headers are sent, errors must remain on that stream.
-            return response.headers.get('content-type') ===
-              'application/json' && responseStatus !== response.status
-              ? new globalThis.Response(response.body, {
-                  status: responseStatus,
-                  headers: response.headers,
-                })
-              : response
-          },
-        },
-        {
-          onerror: (error) => logger.error('Modern HTTP adapter error:', error),
-        },
-      )
-      try {
-        await handle(req, res, req.body)
-      } finally {
-        await stop()
-      }
-      return true
+      return new ModernRequest({
+        req,
+        res,
+        route,
+        value,
+        transport,
+        reused,
+        child:
+          reused?.child ?? new OwnedStdioTransport(stdioCmd, children, logger),
+        retained,
+        active,
+        children,
+        logger,
+      }).serve()
     },
   }
 }
+
+type Route = Exclude<ReturnType<typeof admit>, boolean>
+type Reused = Awaited<ReturnType<RetainedChildren['take']>>
+
+/**
+ * One modern (2026-07-28) request: its transport, its child (new, or retained
+ * from an earlier request that returned `input_required`), and everything that
+ * passes between them until the request ends.
+ */
+class ModernRequest {
+  private awaitingReply = false
+  private message: Route['message']
+  private pending:
+    | {
+        id: string
+        resolve: (message: JSONRPCResponse) => void
+        reject: (error: Error) => void
+      }
+    | undefined
+  private responseStatus = 200
+  private dispatched: Promise<void> | undefined
+  private stopped = false
+  private failed = false
+  private stopPromise: Promise<void> | undefined
+  private readonly closed = () => {
+    void this.stop()
+  }
+
+  constructor(
+    private readonly at: {
+      req: Request
+      res: Response
+      route: Route
+      value: HeaderValue
+      transport: PerRequestHTTPServerTransport
+      reused: Reused
+      child: OwnedStdioTransport
+      retained: RetainedChildren
+      active: Set<() => Promise<void>>
+      children: OwnedChildProcesses
+      logger: Logger
+    },
+  ) {
+    const { route, reused, child, transport, logger } = at
+    this.message = route.message
+    if (reused) {
+      this.message = { ...route.message, params: { ...route.message.params } }
+      delete this.message.params!.requestState
+      if (reused.state !== undefined)
+        this.message.params!.requestState = reused.state
+    }
+    child.onerror = (error) => {
+      void this.fail(error)
+    }
+    child.onclose = () => {
+      void this.fail(new Error('Child stdout closed'))
+    }
+    child.onmessage = (message) => this.fromChild(message)
+    transport.onerror = (error) =>
+      logger.error('Modern HTTP transport error:', error)
+    transport.onclose = () => {
+      void this.stop()
+    }
+    transport.onmessage = () => {
+      this.dispatched = this.dispatch().catch(this.fail)
+    }
+  }
+
+  // An arrow, so the gateway's set of active requests holds one identity.
+  readonly stop = () => {
+    const { res, transport, retained, child, active, logger } = this.at
+    if (!this.stopPromise) {
+      this.stopped = true
+      res.off('close', this.closed)
+      this.pending?.reject(new Error('Request closed'))
+      this.stopPromise = Promise.resolve()
+        .then(async () => {
+          try {
+            await transport.close()
+          } finally {
+            try {
+              if (!this.failed && !this.awaitingReply)
+                await retained.release(child)
+              else await retained.discard(child)
+            } finally {
+              active.delete(this.stop)
+            }
+          }
+        })
+        .catch((error) => {
+          logger.error('Modern request cleanup failed:', error)
+        })
+    }
+    return this.stopPromise
+  }
+
+  private readonly fail = async (error: Error) => {
+    const { route, transport, logger } = this.at
+    if (this.stopped || this.failed) return
+    this.failed = true
+    logger.error('MCP child request failed:', error)
+    if (error instanceof HeaderMismatch) this.responseStatus = 400
+    if (route.messageKind === 'request') {
+      await transport
+        .send({
+          jsonrpc: '2.0',
+          id: route.message.id,
+          error:
+            error instanceof HeaderMismatch
+              ? { code: error.code, message: error.message }
+              : { code: -32603, message: 'MCP server process failed' },
+        })
+        .catch((error) => logger.error('Failed to send MCP error:', error))
+    }
+    await this.stop()
+  }
+
+  private fromChild(
+    message: Parameters<NonNullable<OwnedStdioTransport['onmessage']>>[0],
+  ) {
+    const { route, transport, retained, child, res } = this.at
+    if (this.stopped) return
+    if ('method' in message && 'id' in message) {
+      void this.fail(
+        new Error('Unexpected server request on a modern connection'),
+      )
+      return
+    }
+    if (this.pending) {
+      if ('id' in message && message.id === this.pending.id) {
+        const resolve = this.pending.resolve
+        this.pending = undefined
+        resolve(message)
+      }
+      return
+    }
+    if (
+      'error' in message &&
+      route.messageKind === 'request' &&
+      message.id === route.message.id
+    ) {
+      this.responseStatus = statusForError(message.error.code)
+    }
+    if (
+      'id' in message &&
+      route.messageKind === 'request' &&
+      message.id === route.message.id
+    ) {
+      this.awaitingReply = false
+      if ('result' in message) {
+        const state = mintedState(message.result)
+        if (state) {
+          message = {
+            ...message,
+            result: {
+              ...message.result,
+              requestState: retained.retain(state.value, child),
+            },
+          }
+        }
+      }
+    }
+    // The backend state is restored on retry; other payloads stay unchanged.
+    // No protocol Client/Server is inserted to renegotiate or rewrite them.
+    void transport
+      .send(message, {
+        relatedRequestId:
+          route.messageKind === 'request' ? route.message.id : undefined,
+      })
+      .catch(this.fail)
+    child.hold(drained([res]))
+  }
+
+  // One page of the child's tools, asked for on this request's child to find
+  // a tool's schema; its reply is taken out of the client's stream.
+  private async listToolsPage(
+    callMeta: Record<string, unknown> | undefined,
+    cursor: string | undefined,
+  ) {
+    if (this.stopped) throw new Error('Request closed')
+    const id = randomUUID()
+    let rejectReply!: (error: Error) => void
+    const reply = new Promise<JSONRPCResponse>((resolve, reject) => {
+      rejectReply = reject
+      this.pending = { id, resolve, reject }
+    })
+    const meta: Record<string, unknown> = {
+      ...callMeta,
+    }
+    delete meta.progressToken
+    void this.at.child
+      .send({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/list',
+        params: {
+          _meta: meta,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+      })
+      .catch(rejectReply)
+    const result = await reply
+    if ('error' in result)
+      throw new Error(`tools/list failed: ${result.error.message}`)
+    return result.result
+  }
+
+  // What the transport's one message sets off: start the child, check a tool
+  // call's headers against its schema, and pass the message on.
+  private async dispatch() {
+    const { route, reused, child, children, value } = this.at
+    if (this.stopped || children.closing)
+      throw new Error('Gateway is shutting down')
+    if (!reused) {
+      await child.start()
+      if (this.stopped) {
+        // Cleanup ran before the process existed; release it now.
+        await child.close()
+        return
+      }
+    }
+    const message = this.message
+    if (route.messageKind === 'request' && message.method === 'tools/call') {
+      // Modern request envelopes are checked by the SDK classifier.
+      const params = message.params!
+      const schema = await findToolSchema(params.name, (cursor) =>
+        this.listToolsPage(params._meta, cursor),
+      )
+      validateToolHeaders(schema, params.arguments, value)
+    }
+    if (this.stopped) return
+    this.awaitingReply = route.messageKind === 'request'
+    await child.send(message)
+    if (route.messageKind === 'notification') await child.finish()
+  }
+
+  // The HTTP response for the request, from the SDK's transport.
+  private async respond(request: globalThis.Request) {
+    const { route, transport } = this.at
+    const response = await transport.handleMessage(route.message, {
+      request,
+    })
+    if (route.messageKind === 'notification') {
+      await this.dispatched
+      if (this.failed)
+        return globalThis.Response.json(
+          {
+            jsonrpc: '2.0',
+            id: null,
+            error: {
+              code: -32603,
+              message: 'MCP server process failed',
+            },
+          },
+          { status: 500 },
+        )
+    }
+    // Once SSE headers are sent, errors must remain on that stream.
+    return response.headers.get('content-type') === 'application/json' &&
+      this.responseStatus !== response.status
+      ? new globalThis.Response(response.body, {
+          status: this.responseStatus,
+          headers: response.headers,
+        })
+      : response
+  }
+
+  async serve(): Promise<boolean> {
+    const { req, res, transport, active, logger } = this.at
+    active.add(this.stop)
+    // Node18 can lose a derived Web Request's AbortSignal linkage after GC.
+    res.once('close', this.closed)
+    if (res.destroyed) {
+      await this.stop()
+      return true
+    }
+    await transport.start()
+    const handle = toNodeHandler(
+      { fetch: (request) => this.respond(request) },
+      {
+        onerror: (error) => logger.error('Modern HTTP adapter error:', error),
+      },
+    )
+    try {
+      await handle(req, res, req.body)
+    } finally {
+      await this.stop()
+    }
+    return true
+  }
+}
+
+type HeaderValue = (name: string) => string | undefined
+
+// A header as one string, however many times it was sent.
+const headerValue =
+  (req: Request): HeaderValue =>
+  (name) => {
+    const header = req.headers[name]
+    return Array.isArray(header) ? header.join(', ') : header
+  }
+
+// The id a rejection answers: the request's own, when it has a usable one.
+const requestIdOf = (body: unknown) => {
+  const id = (body as { id?: unknown } | undefined)?.id
+  return typeof id === 'string' || typeof id === 'number' ? id : null
+}
+
+const rejectWith = (
+  req: Request,
+  res: Response,
+  status: number,
+  error: { code: number; message: string; data?: unknown },
+) => {
+  res.status(status).json({
+    jsonrpc: '2.0',
+    id: requestIdOf(req.body),
+    error,
+  })
+}
+
+/**
+ * Whether this POST is a modern request this gateway serves. `false` hands it
+ * to the legacy path, `true` means it has been answered with a rejection, and
+ * a route means serve it.
+ */
+function admit(req: Request, res: Response, value: HeaderValue) {
+  const route = classifyInboundRequest({
+    httpMethod: req.method,
+    body: req.body,
+    protocolVersionHeader: value('mcp-protocol-version'),
+    mcpMethodHeader: value('mcp-method'),
+    mcpNameHeader: value('mcp-name'),
+  })
+  if (route.kind === 'legacy') return false
+  if (!isJsonContentType(value('content-type') ?? null)) {
+    rejectWith(req, res, 415, {
+      code: -32000,
+      message: 'Content-Type must be application/json',
+    })
+    return true
+  }
+  if (route.kind === 'reject') {
+    rejectWith(req, res, route.httpStatus, {
+      code: route.code,
+      message: route.message,
+      ...(route.data === undefined ? {} : { data: route.data }),
+    })
+    return true
+  }
+  const accept = value('accept') ?? ''
+  if (
+    !accept.includes('application/json') ||
+    !accept.includes('text/event-stream')
+  ) {
+    rejectWith(req, res, 406, {
+      code: -32000,
+      message: 'Client must accept application/json and text/event-stream',
+    })
+    return true
+  }
+  try {
+    validateModernHeaders(route.message, value)
+  } catch (error) {
+    rejectWith(req, res, 400, {
+      code: -32020,
+      message: (error as Error).message,
+    })
+    return true
+  }
+  return route
+}
+
+// The HTTP status of a JSON reply carrying this error: an unknown method is a
+// 404, a header mismatch a 400, and any other error rides a 200.
+const statusForError = (code: number) =>
+  code === -32601 ? 404 : [-32020, -32021, -32022].includes(code) ? 400 : 200
 
 function mintedState(
   result: Record<string, unknown>,

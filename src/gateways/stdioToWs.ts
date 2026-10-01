@@ -11,6 +11,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { holdOutput } from '../lib/outputBackpressure.js'
+import { ChildInitialization } from '../lib/childInitialization.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -41,7 +42,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // another's logs and progress, and could be asked to answer its sampling.
   const connections = new Map<
     string,
-    { stdin: NodeJS.WritableStream; stop: () => Promise<void> }
+    { initialization: ChildInitialization; stop: () => Promise<void> }
   >()
 
   const app = express()
@@ -95,8 +96,16 @@ export async function stdioToWs(args: StdioToWsArgs) {
           wsTransport.disconnect(clientId, 'MCP server process failed')
           return
         }
+        const { stdin } = child
+        // A client that reconnects and carries on without initializing gets
+        // its new child initialized by the gateway (GW-034).
+        const initialization = new ChildInitialization(
+          (message) => stdin.write(JSON.stringify(message) + '\n'),
+          logger,
+          `Client ${clientId}`,
+        )
         connections.set(clientId, {
-          stdin: child.stdin,
+          initialization,
           stop: children.own(child),
         })
 
@@ -123,6 +132,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
             if (!line.trim()) return
             try {
               const message = JSON.parse(line)
+              if (initialization.fromChild(message)) return
               logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
               sent = wsTransport.send(message, clientId)
             } catch {
@@ -148,7 +158,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
           return
         }
         logger.info(`WebSocket → Child (client ${clientId}): ${line}`)
-        connection.stdin.write(line + '\n')
+        connection.initialization.fromClient(message)
       },
       ondisconnection: (clientId) => {
         logger.info(`WebSocket connection closed: ${clientId}`)

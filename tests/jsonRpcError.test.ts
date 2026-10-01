@@ -114,3 +114,19 @@ test('a result is passed on as a result, even one with a field named error', () 
   assert.deepEqual(reply, { jsonrpc: '2.0', id: 7, result })
   assert.notEqual(reply.result, result, 'a copy, not the upstream object')
 })
+
+// GW-036: the upstream server's own error keeps the server's code.
+test("an upstream server's application error keeps its code, message and data", () => {
+  assert.deepEqual(
+    error(new McpError(42, 'quota exceeded', { retryAfter: 5 })),
+    { code: 42, message: 'quota exceeded', data: { retryAfter: 5 } },
+  )
+  assert.equal(error(new McpError(-1, 'x')).code, -1)
+  // Not one the server could have sent (JSON-RPC codes are integers).
+  assert.deepEqual(error(new McpError(1.5, 'x')), {
+    code: -32000,
+    message: 'MCP error 1.5: x',
+  })
+  // The same code on anything else is still an HTTP status.
+  assert.equal(error({ code: 42, message: 'x' }).message, 'HTTP 42: x')
+})

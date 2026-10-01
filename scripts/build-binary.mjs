@@ -171,9 +171,18 @@ const files = [
   'LICENSE',
   'THIRD_PARTY_LICENSES.txt',
 ]
-// bsdtar ships with Windows 10 and later, and `-a` picks zip from the name.
-if (process.platform === 'win32') run('tar', ['-a', '-cf', archive, ...files])
-else run('tar', ['-czf', archive, ...files])
+// Relative to the working directory: GNU tar reads `D:\...` as `host:path`.
+const relativeArchive = join('..', archive.slice(dirname(work).length + 1))
+// Windows' own bsdtar, by full path: under Git Bash `tar` is Git's GNU tar,
+// which cannot write zip. `-a` picks zip from the name.
+if (process.platform === 'win32')
+  run(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), [
+    '-a',
+    '-cf',
+    relativeArchive,
+    ...files,
+  ])
+else run('tar', ['-czf', relativeArchive, ...files])
 
 const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex')
 console.log(

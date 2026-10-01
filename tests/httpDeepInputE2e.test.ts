@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { knownBugTest } from './helpers/known-bug.js'
 import {
+  gatewayTimeout,
   launchGateway,
   peerCommand,
   rpc,
@@ -14,7 +15,7 @@ for (const notification of [true, false]) {
   const runTest = notification ? test : knownBugTest.bind(undefined, 'GW-009')
   runTest(
     `stateless HTTP contains deeply nested ${notification ? 'malformed notification' : 'request'} failures`,
-    { timeout: 15000 },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(t, [

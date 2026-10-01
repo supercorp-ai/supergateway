@@ -49,3 +49,43 @@ const untilDrained = (res: Writable) =>
     res.on('drain', done)
     res.on('close', done)
   })
+
+/**
+ * The same hold for the bridges (--sse, --streamableHttp), whose output is
+ * their own stdout: a response from the upstream server that is read only
+ * while `output` keeps up.
+ *
+ * The bridges used to read everything upstream sent and queue it behind a
+ * stdout nobody was reading: a 128 MiB burst to a stdio client that stopped
+ * reading left a bridge at about 440 MiB, on Linux and macOS alike. Reading the
+ * body only as stdout drains leaves the rest in the connection, so the
+ * upstream server's own writes wait instead, as they do for any slow client.
+ *
+ * `url` and `redirected` are kept: the SSE client reads them to follow a
+ * redirect on reconnect.
+ */
+export function readAsDrained(response: Response, output: Writable): Response {
+  if (!response.body) return response
+  const reader = response.body.getReader()
+  const held = new Response(
+    new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await drained([output])
+        const { done, value } = await reader.read()
+        if (done) controller.close()
+        else controller.enqueue(value)
+      },
+      cancel: (reason) => reader.cancel(reason),
+    }),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    },
+  )
+  Object.defineProperties(held, {
+    url: { value: response.url },
+    redirected: { value: response.redirected },
+  })
+  return held
+}

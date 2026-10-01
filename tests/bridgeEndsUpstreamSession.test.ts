@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  gatewayTimeout,
   initialize,
   launchGateway,
   peerCommand,
@@ -49,7 +50,7 @@ const bridgeTo = async (
 
 test(
   'a bridge ends its stateful upstream session when it exits',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { gateway, url } = await upstream(t, true)
     const bridge = await bridgeTo(t, url, true)
@@ -66,17 +67,21 @@ for (const [label, stateful, connect] of [
   ['a stateless upstream, which has no session', false, true],
   ['a bridge that never connected', true, false],
 ] as const)
-  test(`${label} exits cleanly`, { timeout: 30000 }, async (t) => {
-    const { url } = await upstream(t, stateful)
-    const bridge = await bridgeTo(t, url, connect)
-    bridge.child.stdin.end()
-    assert.equal((await bridge.exited).code, 0)
-    assert.doesNotMatch(bridge.errors(), /Failed to end the upstream session/)
-  })
+  test(
+    `${label} exits cleanly`,
+    { timeout: gatewayTimeout(30000) },
+    async (t) => {
+      const { url } = await upstream(t, stateful)
+      const bridge = await bridgeTo(t, url, connect)
+      bridge.child.stdin.end()
+      assert.equal((await bridge.exited).code, 0)
+      assert.doesNotMatch(bridge.errors(), /Failed to end the upstream session/)
+    },
+  )
 
 test(
   'a bridge whose upstream is gone still exits cleanly',
-  { timeout: 30000 },
+  { timeout: gatewayTimeout(30000) },
   async (t) => {
     const { gateway, url } = await upstream(t, true)
     const bridge = await bridgeTo(t, url, true)

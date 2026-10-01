@@ -3,7 +3,7 @@ import { createWriteStream } from 'node:fs'
 import { resolve } from 'node:path'
 
 // By default a failed battery cancels the resource load too, rather than
-// leaving it running until the six-hour deadline. With `keepGoing` a failure is
+// leaving it running until the phase's deadline. With `keepGoing` a failure is
 // recorded and everything else runs on: a soak phase is hours of evidence, and
 // one flaky command used to throw the rest of it away, and with it every later
 // phase. The phase still fails at the end. Give each command time to perform

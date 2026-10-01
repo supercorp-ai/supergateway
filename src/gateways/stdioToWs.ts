@@ -1,5 +1,4 @@
 import { spawn } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { createServer } from 'http'
@@ -8,10 +7,14 @@ import { WebSocketServerTransport } from '../server/websocket.js'
 import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { holdOutput } from '../lib/outputBackpressure.js'
 import { ChildInitialization } from '../lib/childInitialization.js'
+import {
+  ChildHandoff,
+  ChildLink,
+  type ChildOwner,
+} from '../lib/childHandoff.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -42,8 +45,17 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // another's logs and progress, and could be asked to answer its sampling.
   const connections = new Map<
     string,
-    { initialization: ChildInitialization; stop: () => Promise<void> }
+    {
+      link: ChildLink
+      owner: ChildOwner
+      initialization: ChildInitialization
+      // Whether all the client has sent is its initialize request, which is
+      // when a child it abandons can be handed to an identical retry (GW-035).
+      received: number
+      onlyInitialize: boolean
+    }
   >()
+  const handoff = new ChildHandoff(logger)
 
   const app = express()
 
@@ -69,12 +81,19 @@ export async function stdioToWs(args: StdioToWsArgs) {
   const httpServer = keepConnectionsAlive(createServer(app))
 
   // A connection's child is stopped once, whichever ending comes first: the
-  // client leaving, the child exiting, or its stdio failing.
-  const end = (clientId: string, reason: string) => {
+  // client leaving, the child exiting, or its stdio failing. Only the client
+  // leaving can hand the child on instead.
+  const end = (clientId: string, reason: string, clientLeft = false) => {
     const connection = connections.get(clientId)
     if (!connection) return
     connections.delete(clientId)
-    void connection.stop()
+    if (clientLeft)
+      handoff.release(
+        connection.link,
+        connection.onlyInitialize,
+        `Client ${clientId}`,
+      )
+    else void connection.link.stop()
     wsTransport.disconnect(clientId, reason)
   }
 
@@ -96,57 +115,53 @@ export async function stdioToWs(args: StdioToWsArgs) {
           wsTransport.disconnect(clientId, 'MCP server process failed')
           return
         }
-        const { stdin } = child
-        // A client that reconnects and carries on without initializing gets
-        // its new child initialized by the gateway (GW-034).
-        const initialization = new ChildInitialization(
-          (message) => stdin.write(JSON.stringify(message) + '\n'),
-          logger,
-          `Client ${clientId}`,
-        )
-        connections.set(clientId, {
-          initialization,
-          stop: children.own(child),
-        })
-
-        child.on('error', (err) => {
-          logger.error(`Child failure (client ${clientId}):`, err)
-          end(clientId, 'MCP server process failed')
-        })
-        child.stdin.on('error', (err) => {
-          logger.error(`Child stdin failure (client ${clientId}):`, err)
-          end(clientId, 'MCP server process failed')
-        })
-        child.on('exit', (code, signal) => {
-          logger.info(
-            `Child exited (client ${clientId}): code=${code}, signal=${signal}`,
-          )
-          end(clientId, 'MCP server process exited')
-        })
-
-        const decoder = new StringDecoder('utf8')
-        const lines = new LineSplitter()
-        child.stdout.on('data', (chunk: Buffer) => {
-          let sent: Promise<void> | undefined
-          lines.push(decoder.write(chunk)).forEach((line) => {
-            if (!line.trim()) return
-            try {
-              const message = JSON.parse(line)
-              if (initialization.fromChild(message)) return
-              logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
-              sent = wsTransport.send(message, clientId)
-            } catch {
-              logger.error(`Child non-JSON (client ${clientId}): ${line}`)
-            }
-          })
-          holdOutput(child.stdout, sent)
-        })
-
-        child.stderr.on('data', (chunk: Buffer) => {
-          logger.info(
-            `Child stderr (client ${clientId}): ${chunk.toString('utf8')}`,
-          )
-        })
+        // What this connection has sent the client since its stdout was
+        // last read, for the child to wait on.
+        let sent: Promise<void> | undefined
+        const owner: ChildOwner = {
+          message: (message, line) => {
+            if (initialization.fromChild(message)) return
+            logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
+            sent = wsTransport.send(message, clientId)
+          },
+          nonJson: (line) =>
+            logger.error(`Child non-JSON (client ${clientId}): ${line}`),
+          stderr: (text) =>
+            logger.info(`Child stderr (client ${clientId}): ${text}`),
+          failure: (kind, err) => {
+            logger.error(
+              `${kind === 'stdin' ? 'Child stdin failure' : 'Child failure'} (client ${clientId}):`,
+              err,
+            )
+            end(clientId, 'MCP server process failed')
+          },
+          exit: (code, signal) => {
+            logger.info(
+              `Child exited (client ${clientId}): code=${code}, signal=${signal}`,
+            )
+            end(clientId, 'MCP server process exited')
+          },
+          output: () => {
+            const pending = sent
+            sent = undefined
+            return pending
+          },
+        }
+        const connection = {
+          link: new ChildLink(child, children.own(child), owner),
+          owner,
+          // A client that reconnects and carries on without initializing gets
+          // its new child initialized by the gateway (GW-034).
+          initialization: new ChildInitialization(
+            (message) => connection.link.write(message),
+            logger,
+            `Client ${clientId}`,
+          ),
+          received: 0,
+          onlyInitialize: false,
+        }
+        const { initialization } = connection
+        connections.set(clientId, connection)
       },
       onmessage: (message, clientId) => {
         const line = JSON.stringify(message)
@@ -158,11 +173,30 @@ export async function stdioToWs(args: StdioToWsArgs) {
           return
         }
         logger.info(`WebSocket → Child (client ${clientId}): ${line}`)
+        connection.received++
+        connection.onlyInitialize =
+          connection.received === 1 &&
+          isInitializeRequest(message) &&
+          'id' in message
+        if (connection.onlyInitialize) {
+          const adopted = handoff.adopt(
+            message,
+            connection.owner,
+            `Client ${clientId}`,
+          )
+          if (adopted) {
+            // This connection's own child has been sent nothing.
+            handoff.discard(connection.link, `Client ${clientId}`)
+            connection.link = adopted
+            connection.initialization.adopted()
+            return
+          }
+        }
         connection.initialization.fromClient(message)
       },
       ondisconnection: (clientId) => {
         logger.info(`WebSocket connection closed: ${clientId}`)
-        end(clientId, 'Client disconnected')
+        end(clientId, 'Client disconnected', true)
       },
       onerror: (err) => {
         logger.error(`WebSocket error: ${err.message}`)

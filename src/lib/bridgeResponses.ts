@@ -1,4 +1,7 @@
-import type { JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
+import {
+  McpError,
+  type JSONRPCRequest,
+} from '@modelcontextprotocol/sdk/types.js'
 
 // The replies the bridges (--sse, --streamableHttp) write to stdout for a
 // request they forwarded upstream. Both used to build them with the same
@@ -37,11 +40,19 @@ export function errorResponse(req: JSONRPCRequest, err: unknown) {
   // `code` is the HTTP status, and forwarding that verbatim put `code: 503` on
   // the wire, which no JSON-RPC client can interpret. Such a status belongs in
   // the message, where it is diagnostic rather than protocol.
-  const isProtocolCode =
-    Number.isInteger(rawCode) &&
-    (rawCode as number) >= -32768 &&
-    (rawCode as number) <= -32000
-  const code = isProtocolCode ? (rawCode as number) : -32000
+  //
+  // GW-036: the upstream server's own JSON-RPC errors arrive as McpError,
+  // carrying the server's code, and an application error's code lies outside
+  // the reserved range (JSON-RPC leaves the rest to applications). Mapping it
+  // to -32000 with an "HTTP n" note told the client its quota error was an
+  // HTTP failure; a client of the server itself sees the code, and so does a
+  // client of the bridge now, as it did before 4.0.0.
+  const keepsCode =
+    (err instanceof McpError && Number.isInteger(rawCode)) ||
+    (Number.isInteger(rawCode) &&
+      (rawCode as number) >= -32768 &&
+      (rawCode as number) <= -32000)
+  const code = keepsCode ? (rawCode as number) : -32000
   let message =
     typeof fields.message === 'string' ? fields.message : 'Internal error'
   const prefix = `MCP error ${code}:`
@@ -49,7 +60,7 @@ export function errorResponse(req: JSONRPCRequest, err: unknown) {
   // Older SDKs spelled the status into the message themselves; newer ones only
   // carry it in the code just discarded, so keep it either way.
   if (
-    !isProtocolCode &&
+    !keepsCode &&
     Number.isInteger(rawCode) &&
     !message.includes(`HTTP ${rawCode}`)
   )

@@ -20,6 +20,7 @@ import { describeHeaders } from '../lib/headers.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
+import { failPendingCalls } from '../lib/failPendingCalls.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -156,33 +157,23 @@ export async function stdioToStatefulStreamableHttp(
     : null
 
   // Handle POST requests for client-to-server communication
-  app.post(streamableHttpPath, async (req, res) => {
-    if (children.closing) {
-      res.status(503).send('Gateway is shutting down')
-      return
-    }
-    if (await modern.handle(req, res)) return
-    // Check for existing session ID
-    const sessionId = req.headers['mcp-session-id'] as string | undefined
-    let transport: StreamableHTTPServerTransport
+  // A new session: its server, transport, child and, with --sessionTimeout,
+  // liveness probe. The transport is registered once the SDK assigns the
+  // session its id.
+  const openSession = async (
+    res: express.Response,
+  ): Promise<StreamableHTTPServerTransport> => {
+    // New initialization request
+    let initializedSessionId: string | undefined
+    let probe: SessionLivenessProbe | undefined
 
-    if (sessionId && transports.has(sessionId)) {
-      // Reuse existing transport
-      transport = transports.get(sessionId)!
-      liveness.get(sessionId)?.requestStarted()
-      // Increment session access count
-      sessionCounter?.inc(sessionId, 'POST request for existing session')
-    } else if (!sessionId && isInitializeRequest(req.body)) {
-      // New initialization request
-      let initializedSessionId: string | undefined
-      let probe: SessionLivenessProbe | undefined
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
 
-      const server = new Server(
-        { name: 'supergateway', version: getVersion() },
-        { capabilities: {} },
-      )
-
-      transport = new StreamableHTTPServerTransport({
+    const transport: StreamableHTTPServerTransport =
+      new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           initializedSessionId = sessionId
@@ -193,158 +184,141 @@ export async function stdioToStatefulStreamableHttp(
           sessionCounter?.inc(sessionId, 'session initialization')
         },
       })
-      if (sessionTimeout) {
-        // Bound probe traffic without adding a new option. sessionTimeout is
-        // still the minimum inactivity period before a session can be reaped.
-        probe = new SessionLivenessProbe(
-          Math.max(5_000, Math.min(sessionTimeout, 300_000)),
-          Math.max(5_000, Math.min(sessionTimeout, 30_000)),
-          sessionTimeout,
-          async (id) => {
-            await transport.send({ jsonrpc: '2.0', id, method: 'ping' })
-          },
-          () => {
-            transport.close().catch((error) => {
-              logger.error('Failed to close stale session:', error)
-              stopChild('stale transport close failed')
-            })
-          },
-          logger,
-        )
-      }
-      await server.connect(transport)
-      const responses = new Set<express.Response>()
-      openResponses.set(transport, responses)
-      const child = spawn(stdioCmd, children.spawnOptions)
-      const stop = children.own(child)
-      const pendingRequests = new Set<string | number>()
-      let childStopped = false
-      const stopChild = (reason: string) => {
-        if (childStopped) return
-        childStopped = true
-        if (initializedSessionId) {
-          liveness.delete(initializedSessionId)
-          sessionCounter?.clear(initializedSessionId, false, reason)
-          transports.delete(initializedSessionId)
-        }
-        probe?.close()
-        void stop()
-      }
-      let childFailed = false
-      const handleChildFailure = (err?: Error) => {
-        // Exit, ChildProcess errors and stdin errors can arrive for the same
-        // child. Keep listeners installed and terminate this transport once.
-        if (childFailed) return
-        childFailed = true
-        if (err) logger.error('Child process failure:', err)
-        stopChild('child process failure')
-        // Ending an SSE response alone leaves SDK clients waiting for their
-        // request timeout. Fail each outstanding call before closing streams.
-        const replies = [...pendingRequests].map((id) =>
-          transport
-            .send({
-              jsonrpc: '2.0',
-              id,
-              error: { code: -32603, message: 'MCP server process failed' },
-            })
-            .catch((sendError) => {
-              logger.error('Failed to send child failure', sendError)
-            }),
-        )
-        pendingRequests.clear()
-        void Promise.all(replies)
-          .then(() => transport.close())
-          .catch((closeError) => {
-            logger.error(
-              'Failed to close transport after child failure',
-              closeError,
-            )
-          })
-          .finally(() => {
-            // A spawn failure can precede SDK response registration. Do not
-            // destroy a completed response: its error frame must flush first.
-            if (!res.writableEnded) res.destroy()
-          })
-      }
-      const link = new ChildLink(child, stop, {
-        failure: (_kind, err) => handleChildFailure(err),
-        exit: (code, signal) => {
-          logger.error(`Child exited: code=${code}, signal=${signal}`)
-          // HTTP EOF alone does not settle an SDK request. Use the same
-          // idempotent error delivery as spawn/stdin failure before closing.
-          handleChildFailure()
+    if (sessionTimeout) {
+      // Bound probe traffic without adding a new option. sessionTimeout is
+      // still the minimum inactivity period before a session can be reaped.
+      probe = new SessionLivenessProbe(
+        Math.max(5_000, Math.min(sessionTimeout, 300_000)),
+        Math.max(5_000, Math.min(sessionTimeout, 30_000)),
+        sessionTimeout,
+        async (id) => {
+          await transport.send({ jsonrpc: '2.0', id, method: 'ping' })
         },
-        message: (jsonMsg, line) => {
-          logger.info('Child → StreamableHttp:', line)
-          if ('id' in jsonMsg && !('method' in jsonMsg)) {
-            pendingRequests.delete(jsonMsg.id)
-          }
-          transport
-            .send(jsonMsg, {
-              // A message with no related request is routed to the standalone
-              // GET stream, and the SDK returns silently when that stream is
-              // not connected yet — so nothing throws and the notification is
-              // simply gone. That window is exactly the start of a call, which
-              // is where a tool emits its first progress notification: soak run
-              // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
-              // route by their own id regardless; everything else rides the
-              // request in flight, as the stateless bridge already does.
-              relatedRequestId: pendingRequests.values().next().value,
-            })
-            .catch((e) => {
-              logger.error(`Failed to send to StreamableHttp`, e)
-            })
+        () => {
+          transport.close().catch((error) => {
+            logger.error('Failed to close stale session:', error)
+            stopChild('stale transport close failed')
+          })
         },
-        nonJson: (line) => logger.error(`Child non-JSON: ${line}`),
-        stderr: (text) => logger.error(`Child stderr: ${text}`),
-        output: () => drained(responses),
-      })
-
-      transport.onmessage = (msg: JSONRPCMessage) => {
-        if (probe?.accept(msg)) return
-        if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
-        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
-        link.write(msg)
-        if ('method' in msg && msg.method === 'notifications/cancelled')
-          endCancelled(
-            (msg.params as { requestId?: string | number } | undefined)
-              ?.requestId,
-          )
+        logger,
+      )
+    }
+    await server.connect(transport)
+    const responses = new Set<express.Response>()
+    openResponses.set(transport, responses)
+    const child = spawn(stdioCmd, children.spawnOptions)
+    const stop = children.own(child)
+    const pendingRequests = new Set<string | number>()
+    let childStopped = false
+    const stopChild = (reason: string) => {
+      if (childStopped) return
+      childStopped = true
+      if (initializedSessionId) {
+        liveness.delete(initializedSessionId)
+        sessionCounter?.clear(initializedSessionId, false, reason)
+        transports.delete(initializedSessionId)
       }
-
-      // A server sends nothing for a cancelled call, and the response stream
-      // for it stays open until the call is answered: every cancel in a
-      // long-lived session held a socket until the session ended (measured: 30
-      // cancels, 30 more descriptors). Close that stream, and stop routing
-      // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
-      // older one the stream stays open, as before.
-      const endCancelled = (requestId: string | number | undefined) => {
-        if (!pendingRequests.delete(requestId!)) return
-        // Typed by hand: the SDK matrix builds against versions that do not
-        // declare it.
-        const closable = transport as unknown as {
-          closeSSEStream?: (requestId: string | number) => void
+      probe?.close()
+      void stop()
+    }
+    let childFailed = false
+    const handleChildFailure = (err?: Error) => {
+      // Exit, ChildProcess errors and stdin errors can arrive for the same
+      // child. Keep listeners installed and terminate this transport once.
+      if (childFailed) return
+      childFailed = true
+      if (err) logger.error('Child process failure:', err)
+      stopChild('child process failure')
+      failPendingCalls({ transport, pending: pendingRequests, res, logger })
+    }
+    const link = new ChildLink(child, stop, {
+      failure: (_kind, err) => handleChildFailure(err),
+      exit: (code, signal) => {
+        logger.error(`Child exited: code=${code}, signal=${signal}`)
+        // HTTP EOF alone does not settle an SDK request. Use the same
+        // idempotent error delivery as spawn/stdin failure before closing.
+        handleChildFailure()
+      },
+      message: (jsonMsg, line) => {
+        logger.info('Child → StreamableHttp:', line)
+        if ('id' in jsonMsg && !('method' in jsonMsg)) {
+          pendingRequests.delete(jsonMsg.id)
         }
-        if (typeof closable.closeSSEStream === 'function')
-          closable.closeSSEStream(requestId!)
-      }
+        transport
+          .send(jsonMsg, {
+            // A message with no related request is routed to the standalone
+            // GET stream, and the SDK returns silently when that stream is
+            // not connected yet — so nothing throws and the notification is
+            // simply gone. That window is exactly the start of a call, which
+            // is where a tool emits its first progress notification: soak run
+            // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
+            // route by their own id regardless; everything else rides the
+            // request in flight, as the stateless bridge already does.
+            relatedRequestId: pendingRequests.values().next().value,
+          })
+          .catch((e) => {
+            logger.error(`Failed to send to StreamableHttp`, e)
+          })
+      },
+      nonJson: (line) => logger.error(`Child non-JSON: ${line}`),
+      stderr: (text) => logger.error(`Child stderr: ${text}`),
+      output: () => drained(responses),
+    })
 
-      transport.onclose = () => {
-        logger.info(
-          `StreamableHttp connection closed (session ${initializedSessionId ?? '(uninitialized)'})`,
+    transport.onmessage = (msg: JSONRPCMessage) => {
+      if (probe?.accept(msg)) return
+      if ('id' in msg && 'method' in msg) pendingRequests.add(msg.id!)
+      logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
+      link.write(msg)
+      if ('method' in msg && msg.method === 'notifications/cancelled')
+        endCancelled(
+          (msg.params as { requestId?: string | number } | undefined)
+            ?.requestId,
         )
-        stopChild('transport being closed')
-      }
+    }
 
-      transport.onerror = (err) => {
-        logger.error(
-          `StreamableHttp error (session ${initializedSessionId ?? '(uninitialized)'}):`,
-          err,
-        )
-        // A rejected HTTP request is recoverable; actual transport closure
-        // and child failure have their own cleanup paths.
+    // A server sends nothing for a cancelled call, and the response stream
+    // for it stays open until the call is answered: every cancel in a
+    // long-lived session held a socket until the session ended (measured: 30
+    // cancels, 30 more descriptors). Close that stream, and stop routing
+    // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
+    // older one the stream stays open, as before.
+    const endCancelled = (requestId: string | number | undefined) => {
+      if (!pendingRequests.delete(requestId!)) return
+      // Typed by hand: the SDK matrix builds against versions that do not
+      // declare it.
+      const closable = transport as unknown as {
+        closeSSEStream?: (requestId: string | number) => void
       }
-    } else if (sessionId) {
+      if (typeof closable.closeSSEStream === 'function')
+        closable.closeSSEStream(requestId!)
+    }
+
+    transport.onclose = () => {
+      logger.info(
+        `StreamableHttp connection closed (session ${initializedSessionId ?? '(uninitialized)'})`,
+      )
+      stopChild('transport being closed')
+    }
+
+    transport.onerror = (err) => {
+      logger.error(
+        `StreamableHttp error (session ${initializedSessionId ?? '(uninitialized)'}):`,
+        err,
+      )
+      // A rejected HTTP request is recoverable; actual transport closure
+      // and child failure have their own cleanup paths.
+    }
+    return transport
+  }
+
+  // A request that names no session we hold, or names none and is not an
+  // initialize request.
+  const rejectSession = (
+    res: express.Response,
+    sessionId: string | undefined,
+  ) => {
+    if (sessionId) {
       // A session id we no longer hold: terminated by DELETE, reaped by
       // --sessionTimeout, or lost across a gateway restart. The spec requires
       // 404 here, and that 404 is the only signal that makes a compliant
@@ -366,18 +340,40 @@ export async function stdioToStatefulStreamableHttp(
         id: null,
       })
       return
+    }
+    // No session id at all, and not an initialize request. This one stays
+    // 400: the spec asks for 400 when the header is absent, and a client
+    // that never had a session has nothing to re-initialize away from.
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Bad Request: No valid session ID provided',
+      },
+      id: null,
+    })
+  }
+
+  app.post(streamableHttpPath, async (req, res) => {
+    if (children.closing) {
+      res.status(503).send('Gateway is shutting down')
+      return
+    }
+    if (await modern.handle(req, res)) return
+    // Check for existing session ID
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    let transport: StreamableHTTPServerTransport
+
+    if (sessionId && transports.has(sessionId)) {
+      // Reuse existing transport
+      transport = transports.get(sessionId)!
+      liveness.get(sessionId)?.requestStarted()
+      // Increment session access count
+      sessionCounter?.inc(sessionId, 'POST request for existing session')
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      transport = await openSession(res)
     } else {
-      // No session id at all, and not an initialize request. This one stays
-      // 400: the spec asks for 400 when the header is absent, and a client
-      // that never had a session has nothing to re-initialize away from.
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
-        },
-        id: null,
-      })
+      rejectSession(res, sessionId)
       return
     }
 

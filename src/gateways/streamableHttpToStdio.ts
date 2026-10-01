@@ -297,6 +297,8 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
         process.stdout.write(JSON.stringify(errorResp) + '\n')
         return
       }
+      // Answered, so there is nothing left to cancel.
+      inFlight.end(req.id)
       // See resultResponse: whatever `request` returned is a result.
       const response = resultResponse(req, result)
       logger.info('Response:', response)

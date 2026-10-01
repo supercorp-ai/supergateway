@@ -8,13 +8,8 @@ import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { ChildInitialization } from '../lib/childInitialization.js'
-import {
-  ChildHandoff,
-  ChildLink,
-  type ChildOwner,
-} from '../lib/childHandoff.js'
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
+import { ConnectionChild } from '../lib/connectionChild.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -43,18 +38,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // #221. With one child shared by every client, notifications and the
   // server's own requests could only be broadcast: one client received
   // another's logs and progress, and could be asked to answer its sampling.
-  const connections = new Map<
-    string,
-    {
-      link: ChildLink
-      owner: ChildOwner
-      initialization: ChildInitialization
-      // Whether all the client has sent is its initialize request, which is
-      // when a child it abandons can be handed to an identical retry (GW-035).
-      received: number
-      onlyInitialize: boolean
-    }
-  >()
+  const connections = new Map<string, ConnectionChild>()
   const handoff = new ChildHandoff(logger)
 
   const app = express()
@@ -87,13 +71,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
     const connection = connections.get(clientId)
     if (!connection) return
     connections.delete(clientId)
-    if (clientLeft)
-      handoff.release(
-        connection.link,
-        connection.onlyInitialize,
-        `Client ${clientId}`,
-      )
-    else void connection.link.stop()
+    connection.end(clientLeft)
     wsTransport.disconnect(clientId, reason)
   }
 
@@ -120,7 +98,6 @@ export async function stdioToWs(args: StdioToWsArgs) {
         let sent: Promise<void> | undefined
         const owner: ChildOwner = {
           message: (message, line) => {
-            if (initialization.fromChild(message)) return
             logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
             sent = wsTransport.send(message, clientId)
           },
@@ -147,20 +124,16 @@ export async function stdioToWs(args: StdioToWsArgs) {
             return pending
           },
         }
-        const connection = {
-          link: new ChildLink(child, children.own(child), owner),
+        // A client that reconnects and carries on without initializing gets
+        // its new child initialized by the gateway (GW-034).
+        const connection = new ConnectionChild(
+          child,
+          children.own(child),
           owner,
-          // A client that reconnects and carries on without initializing gets
-          // its new child initialized by the gateway (GW-034).
-          initialization: new ChildInitialization(
-            (message) => connection.link.write(message),
-            logger,
-            `Client ${clientId}`,
-          ),
-          received: 0,
-          onlyInitialize: false,
-        }
-        const { initialization } = connection
+          handoff,
+          logger,
+          `Client ${clientId}`,
+        )
         connections.set(clientId, connection)
       },
       onmessage: (message, clientId) => {
@@ -173,26 +146,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
           return
         }
         logger.info(`WebSocket → Child (client ${clientId}): ${line}`)
-        connection.received++
-        connection.onlyInitialize =
-          connection.received === 1 &&
-          isInitializeRequest(message) &&
-          'id' in message
-        if (connection.onlyInitialize) {
-          const adopted = handoff.adopt(
-            message,
-            connection.owner,
-            `Client ${clientId}`,
-          )
-          if (adopted) {
-            // This connection's own child has been sent nothing.
-            handoff.discard(connection.link, `Client ${clientId}`)
-            connection.link = adopted
-            connection.initialization.adopted()
-            return
-          }
-        }
-        connection.initialization.fromClient(message)
+        connection.fromClient(message)
       },
       ondisconnection: (clientId) => {
         logger.info(`WebSocket connection closed: ${clientId}`)

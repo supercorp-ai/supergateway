@@ -21,6 +21,10 @@ import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { LineSplitter } from '../lib/lineSplitter.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained, holdOutput } from '../lib/outputBackpressure.js'
+import {
+  createInitializeRequest,
+  createInitializedNotification,
+} from '../lib/childInitialization.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -43,30 +47,6 @@ const setResponseHeaders = ({
   Object.entries(headers).forEach(([key, value]) => {
     res.setHeader(key, value)
   })
-
-// Helper function to create initialize request
-const createInitializeRequest = (
-  id: string | number,
-  protocolVersion: string,
-): JSONRPCMessage => ({
-  jsonrpc: '2.0',
-  id,
-  method: 'initialize',
-  params: {
-    protocolVersion,
-    capabilities: {},
-    clientInfo: {
-      name: 'supergateway',
-      version: getVersion(),
-    },
-  },
-})
-
-// Helper function to create initialized notification
-const createInitializedNotification = (): JSONRPCMessage => ({
-  jsonrpc: '2.0',
-  method: 'notifications/initialized',
-})
 
 export async function stdioToStatelessStreamableHttp(
   args: StdioToStreamableHttpArgs,

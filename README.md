@@ -2,6 +2,8 @@
 
 **Supergateway** runs **MCP stdio-based servers** over **SSE (Server-Sent Events)** or **WebSockets (WS)** with one command. This is useful for remote access, debugging, or connecting to clients when your MCP server only supports stdio.
 
+Questions, ideas or just want to chat? Join the community on [Discord](https://discord.gg/CudcAH53yF).
+
 Supported by:
 
 - [Supercov](https://supercov.com) — Coverage for coding agents and software factories 🌙
@@ -433,7 +435,7 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributing
 
-Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions.
+Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions. For questions and discussion, join us on [Discord](https://discord.gg/CudcAH53yF).
 
 ## Tests
 

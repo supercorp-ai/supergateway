@@ -34,6 +34,7 @@ import {
   inputTransportOf,
   parseCli,
   sessionTimeoutOf,
+  unknownArguments,
   type Cli,
   type InputTransport,
 } from './cli.js'
@@ -139,11 +140,14 @@ const start: Record<InputTransport, Start> = {
 }
 
 async function main() {
-  const argv = parseCli(hideBin(process.argv))
+  const args = hideBin(process.argv)
+  const argv = parseCli(args)
   const logger = getLogger({
     logLevel: argv.logLevel,
     outputTransport: argv.outputTransport as string,
   })
+  // Warned, never refused: a refusal would stop deployments that start today.
+  for (const warning of unknownArguments(args, argv)) logger.error(warning)
   const chosen = inputTransportOf(argv)
   if ('error' in chosen) {
     logger.error(chosen.error)

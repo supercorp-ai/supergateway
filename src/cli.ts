@@ -105,6 +105,18 @@ const cli = (args: string[]) =>
       description:
         'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
     })
+    .option('apiKey', {
+      type: 'array',
+      // Strings, not numbers: a key like `0123` or `1e3` must stay itself.
+      string: true,
+      description:
+        '(stdio→SSE, stdio→WS, stdio→Streamable HTTP) Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>`. Repeat for several keys. Also SUPERGATEWAY_API_KEY.',
+    })
+    .option('apiKeyFile', {
+      type: 'string',
+      description:
+        '(stdio→SSE, stdio→WS, stdio→Streamable HTTP) Read keys for --apiKey from this file, one per line. Also SUPERGATEWAY_API_KEY_FILE.',
+    })
     .option('stateful', {
       type: 'boolean',
       default: false,

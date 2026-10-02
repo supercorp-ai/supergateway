@@ -12,6 +12,7 @@ import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
+import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
@@ -22,6 +23,8 @@ export interface StdioToWsArgs {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  // The keys a client must present; none, or left out, means no check.
+  apiKeys?: string[]
 }
 
 /**
@@ -149,6 +152,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
     logger,
     healthEndpoints,
     corsOrigin,
+    apiKeys = [],
   } = args
   logger.info(`  - port: ${port}`)
   announceHost(logger, host)
@@ -160,6 +164,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
+  logApiKeys(logger, apiKeys)
 
   const children = new OwnedChildProcesses(logger)
   const connections = new WsConnections(
@@ -183,6 +188,9 @@ export async function stdioToWs(args: StdioToWsArgs) {
     })
   }
 
+  // Plain HTTP requests; the upgrade itself is checked by `verifyClient`.
+  app.use(requireApiKey(apiKeys, logger))
+
   // @types/express declares RequestHandler as returning `void | Promise<void>`,
   // and Application extends it, so the rule sees a possibly-async handler.
   // Express 4's app is not one: it is `function (req, res, next) {
@@ -193,7 +201,11 @@ export async function stdioToWs(args: StdioToWsArgs) {
   const httpServer = keepConnectionsAlive(createServer(app))
 
   const wsTransport = new WebSocketServerTransport(
-    { path: messagePath, server: httpServer },
+    {
+      path: messagePath,
+      server: httpServer,
+      verifyClient: verifyApiKey(apiKeys, logger),
+    },
     {
       onconnection: (clientId) => connections.open(clientId),
       onmessage: (message, clientId) =>

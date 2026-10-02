@@ -19,6 +19,7 @@
  *   npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
  */
 
+import { readFileSync } from 'node:fs'
 import { hideBin } from 'yargs/helpers'
 import { stdioToSse } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
@@ -27,6 +28,7 @@ import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
+import { apiKeysOf } from './lib/apiKey.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 import {
@@ -40,12 +42,12 @@ import {
 } from './cli.js'
 import type { Logger } from './types.js'
 
-// `host` is the address `--host` names, or undefined for every interface.
-type Start = (
-  argv: Cli,
-  logger: Logger,
-  host: string | undefined,
-) => Promise<void>
+// What a listening gateway takes beyond the command line, once checked:
+// `host` is the address `--host` names, or undefined for every interface, and
+// `apiKeys` is empty when no source gives a key, so authentication is off.
+type Listening = { host: string | undefined; apiKeys: string[] }
+
+type Start = (argv: Cli, logger: Logger, listening: Listening) => Promise<void>
 
 const unsupported = (
   logger: Logger,
@@ -56,7 +58,11 @@ const unsupported = (
   process.exit(1)
 }
 
-const stdioToStreamableHttp: Start = async (argv, logger, host) => {
+const stdioToStreamableHttp: Start = async (
+  argv,
+  logger,
+  { host, apiKeys },
+) => {
   // Built when the gateway starts, after the mode is announced and the
   // timeout checked, so header diagnostics keep their place in the log.
   const shared = () => ({
@@ -68,6 +74,7 @@ const stdioToStreamableHttp: Start = async (argv, logger, host) => {
     corsOrigin: corsOrigin({ argv }),
     healthEndpoints: argv.healthEndpoint as string[],
     headers: headers({ argv, logger }),
+    apiKeys,
   })
   if (!argv.stateful) {
     logger.info('Running stateless server')
@@ -91,7 +98,8 @@ const stdioToStreamableHttp: Start = async (argv, logger, host) => {
 
 // How each input transport starts, given the output the command line chose.
 const start: Record<InputTransport, Start> = {
-  stdio: async (argv, logger, host) => {
+  stdio: async (argv, logger, listening) => {
+    const { host, apiKeys } = listening
     if (argv.outputTransport === 'sse')
       await stdioToSse({
         stdioCmd: argv.stdio!,
@@ -104,6 +112,7 @@ const start: Record<InputTransport, Start> = {
         corsOrigin: corsOrigin({ argv }),
         healthEndpoints: argv.healthEndpoint as string[],
         headers: headers({ argv, logger }),
+        apiKeys,
       })
     else if (argv.outputTransport === 'ws')
       await stdioToWs({
@@ -114,9 +123,10 @@ const start: Record<InputTransport, Start> = {
         logger,
         corsOrigin: corsOrigin({ argv }),
         healthEndpoints: argv.healthEndpoint as string[],
+        apiKeys,
       })
     else if (argv.outputTransport === 'streamableHttp')
-      await stdioToStreamableHttp(argv, logger, host)
+      await stdioToStreamableHttp(argv, logger, listening)
     else unsupported(logger, 'stdio', argv.outputTransport)
   },
   sse: async (argv, logger) => {
@@ -159,6 +169,13 @@ async function main() {
     logger.error(listen.error)
     process.exit(1)
   }
+  const apiKeys = apiKeysOf(argv, process.env, (path) =>
+    readFileSync(path, 'utf8'),
+  )
+  if ('error' in apiKeys) {
+    logger.error(apiKeys.error)
+    process.exit(1)
+  }
 
   logger.info('Starting...')
   logger.info(
@@ -167,7 +184,10 @@ async function main() {
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
   try {
-    await start[chosen.input](argv, logger, listen.host)
+    await start[chosen.input](argv, logger, {
+      host: listen.host,
+      apiKeys: apiKeys.keys,
+    })
   } catch (err) {
     logger.error('Fatal error:', err)
     process.exit(1)

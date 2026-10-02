@@ -11,6 +11,7 @@ import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { setResponseHeaders } from '../lib/headers.js'
 import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
@@ -49,17 +50,6 @@ export type StdioToSseMountArgs = ServerSource &
     /** The URL path the server's requests start with; `/` by default. */
     path?: string
   }
-
-const setResponseHeaders = ({
-  res,
-  headers,
-}: {
-  res: express.Response
-  headers: Record<string, string>
-}) =>
-  Object.entries(headers).forEach(([key, value]) => {
-    res.setHeader(key, value)
-  })
 
 export async function stdioToSse(args: StdioToSseArgs) {
   const { port, host, logger } = args
@@ -144,10 +134,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
 
   for (const ep of healthEndpoints) {
     app.get(ep, (_req, res) => {
-      setResponseHeaders({
-        res,
-        headers,
-      })
+      setResponseHeaders(res, headers)
       res.send('ok')
     })
   }
@@ -198,10 +185,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   app.get(ssePath, async (req, res) => {
     logger.info(`New SSE connection from ${req.ip}`)
 
-    setResponseHeaders({
-      res,
-      headers,
-    })
+    setResponseHeaders(res, headers)
     if (children.closing) {
       res.status(503).send('Gateway is shutting down')
       return
@@ -349,10 +333,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   app.post(messagePath, async (req, res) => {
     const sessionId = req.query.sessionId as string
 
-    setResponseHeaders({
-      res,
-      headers,
-    })
+    setResponseHeaders(res, headers)
 
     if (!sessionId) {
       return res.status(400).send('Missing sessionId parameter')

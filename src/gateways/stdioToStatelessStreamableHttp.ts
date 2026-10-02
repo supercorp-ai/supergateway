@@ -8,10 +8,9 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { createModernHttp } from '../lib/modernHttp.js'
-import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
-import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { streamableHttpApp } from '../lib/streamableHttpApp.js'
 import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
@@ -19,7 +18,6 @@ import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
-import { requireApiKey } from '../lib/apiKey.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
 
 interface StdioToStreamableHttpOptions {
@@ -39,17 +37,6 @@ interface StdioToStreamableHttpOptions {
 /** A server and how it is served over Streamable HTTP. */
 export type StdioToStreamableHttpArgs = ServerSource &
   StdioToStreamableHttpOptions
-
-const setResponseHeaders = ({
-  res,
-  headers,
-}: {
-  res: express.Response
-  headers: Record<string, string>
-}) =>
-  Object.entries(headers).forEach(([key, value]) => {
-    res.setHeader(key, value)
-  })
 
 export async function stdioToStatelessStreamableHttp(
   args: StdioToStreamableHttpArgs,
@@ -107,35 +94,13 @@ export function stdioToStatelessStreamableHttpMount(
     ? undefined
     : createModernHttp({ stdioCmd: args.stdioCmd, children, logger })
 
-  const app = express()
-  app.use((_req, res, next) => {
-    escapeSseJsonSeparators(res)
-    // --header applies to every response, as it does in SSE mode. It used to
-    // reach only the health endpoint.
-    setResponseHeaders({ res, headers })
-    next()
+  const app = streamableHttpApp(express, cors, {
+    headers,
+    corsOrigin,
+    healthEndpoints,
+    apiKeys,
+    logger,
   })
-  // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
-  const parseJson = [express.json({ limit: '4mb' }), jsonBodyErrors]
-  // Without keys, bodies are read here, as they always were. With keys, not
-  // until the request has presented one: an unauthenticated caller must not
-  // make the gateway read and parse up to 4 MB, and gets 401, not 400 or 413.
-  if (apiKeys.length === 0) app.use(parseJson)
-
-  if (corsOrigin) {
-    app.use(cors({ origin: corsOrigin }))
-  }
-
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      res.send('ok')
-    })
-  }
-
-  // After CORS and the health endpoints, which stay open; before POST, GET
-  // and DELETE on the path, modern 2026-07-28 requests included.
-  app.use(requireApiKey(apiKeys, logger))
-  if (apiKeys.length > 0) app.use(parseJson)
 
   app.post(streamableHttpPath, async (req, res) => {
     if (children.closing) {

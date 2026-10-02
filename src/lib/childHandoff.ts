@@ -24,54 +24,103 @@ export interface ChildOwner {
 }
 
 /**
- * One child process and its stdio, delivered to whichever owner holds it.
- *
- * It also remembers the initialize request the child received and whether the
- * child has answered it, which is what decides whether a child abandoned by
- * its client can be handed to the next one (GW-035).
+ * A session's MCP server, as a link drives it. A child process is one (see
+ * processPeer); what the link needs from it is only this.
  */
-export class ChildLink {
-  initialize?: { id: string | number; params: unknown }
-  answered = false
+export interface Peer {
+  write(message: JSONRPCMessage): void
+  /** No more input: a process finishes what it has, and exits. */
+  end(): void
+  /** Stops it, and resolves once it is gone. */
+  stop(): Promise<void>
+  /** Whether it has already ended by itself. */
+  readonly gone: boolean
+}
 
-  constructor(
-    readonly child: ChildProcessWithoutNullStreams,
-    readonly stop: () => Promise<void>,
-    public owner: ChildOwner,
-  ) {
-    child.on('error', (err) => this.owner.failure('process', err))
-    child.stdin.on('error', (err) => this.owner.failure('stdin', err))
-    child.on('exit', (code, signal) => this.owner.exit(code, signal))
+/** Starts a peer that delivers everything it says to `owner`. */
+export type StartPeer = (owner: ChildOwner) => Peer
+
+/**
+ * A child process as a peer: its stdout read as JSON lines, its stderr,
+ * failures and exit reported, and its stdout not read while `owner.output()`
+ * says to wait.
+ */
+export const processPeer =
+  (
+    child: ChildProcessWithoutNullStreams,
+    stop: () => Promise<void>,
+  ): StartPeer =>
+  (owner) => {
+    child.on('error', (err) => owner.failure('process', err))
+    child.stdin.on('error', (err) => owner.failure('stdin', err))
+    child.on('exit', (code, signal) => owner.exit(code, signal))
     const decoder = new StringDecoder('utf8')
     const lines = new LineSplitter()
     child.stdout.on('data', (chunk: Buffer) => {
       lines.push(decoder.write(chunk)).forEach((line) => {
         if (!line.trim()) return
         try {
-          const message = JSON.parse(line)
-          if (
-            !('method' in message) &&
-            'id' in message &&
-            message.id === this.initialize?.id
-          )
-            this.answered = true
-          this.owner.message(message, line)
+          owner.message(JSON.parse(line), line)
         } catch {
-          this.owner.nonJson(line)
+          owner.nonJson(line)
         }
       })
-      holdOutput(child.stdout, this.owner.output())
+      holdOutput(child.stdout, owner.output())
     })
     child.stderr.on('data', (chunk: Buffer) =>
-      this.owner.stderr(chunk.toString('utf8')),
+      owner.stderr(chunk.toString('utf8')),
     )
+    return {
+      write: (message) => child.stdin.write(JSON.stringify(message) + '\n'),
+      end: () => child.stdin.end(),
+      stop,
+      get gone() {
+        return child.exitCode !== null || child.signalCode !== null
+      },
+    }
+  }
+
+/**
+ * One server, delivered to whichever owner holds it.
+ *
+ * It also remembers the initialize request the server received and whether
+ * the server has answered it, which is what decides whether a server abandoned
+ * by its client can be handed to the next one (GW-035).
+ */
+export class ChildLink {
+  initialize?: { id: string | number; params: unknown }
+  answered = false
+  readonly peer: Peer
+  readonly stop: () => Promise<void>
+
+  constructor(
+    start: StartPeer,
+    public owner: ChildOwner,
+  ) {
+    this.peer = start({
+      message: (message, line) => {
+        if (
+          !('method' in message) &&
+          'id' in message &&
+          message.id === this.initialize?.id
+        )
+          this.answered = true
+        this.owner.message(message, line)
+      },
+      nonJson: (line) => this.owner.nonJson(line),
+      stderr: (text) => this.owner.stderr(text),
+      failure: (kind, err) => this.owner.failure(kind, err),
+      exit: (code, signal) => this.owner.exit(code, signal),
+      output: () => this.owner.output(),
+    })
+    this.stop = () => this.peer.stop()
   }
 
   write(message: JSONRPCMessage) {
     // Only the first initialize is the handshake the child is answering.
     if (!this.initialize && isInitializeRequest(message) && 'id' in message)
       this.initialize = { id: message.id!, params: message.params }
-    this.child.stdin.write(JSON.stringify(message) + '\n')
+    this.peer.write(message)
   }
 }
 
@@ -130,8 +179,7 @@ export class ChildHandoff {
       !onlyInitialize ||
       !link.initialize ||
       link.answered ||
-      link.child.exitCode !== null ||
-      link.child.signalCode !== null
+      link.peer.gone
     ) {
       void link.stop()
       return

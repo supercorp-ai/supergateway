@@ -16,7 +16,11 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
+import {
+  ChildHandoff,
+  processPeer,
+  type ChildOwner,
+} from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 import {
@@ -315,8 +319,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
 
     const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
     const connection = new ConnectionChild(
-      child,
-      children.own(child),
+      processPeer(child, children.own(child)),
       owner,
       handoff,
       logger,

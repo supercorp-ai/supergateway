@@ -7,6 +7,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import {
   ChildHandoff,
   ChildLink,
+  processPeer,
   HANDOFF_WINDOW_MS,
   type ChildOwner,
 } from '../src/lib/childHandoff.js'
@@ -76,10 +77,12 @@ const link = (owner: ChildOwner) => {
   const child = new FakeChild()
   let stops = 0
   const created = new ChildLink(
-    child as unknown as ChildProcessWithoutNullStreams,
-    async () => {
-      stops++
-    },
+    processPeer(
+      child as unknown as ChildProcessWithoutNullStreams,
+      async () => {
+        stops++
+      },
+    ),
     owner,
   )
   return { child, link: created, stops: () => stops }
@@ -190,7 +193,9 @@ test('a child is stopped, not kept, unless its client left during initialize', (
     [
       'child was killed',
       (l, child) => (
-        l.write(initialize(0)), (child.signalCode = 'SIGTERM'), true
+        l.write(initialize(0)),
+        (child.signalCode = 'SIGTERM'),
+        true
       ),
     ],
   ]

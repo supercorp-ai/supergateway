@@ -1,10 +1,14 @@
-import type { ChildProcessWithoutNullStreams } from 'child_process'
 import {
   JSONRPCMessage,
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
-import { ChildHandoff, ChildLink, type ChildOwner } from './childHandoff.js'
+import {
+  ChildHandoff,
+  ChildLink,
+  type ChildOwner,
+  type StartPeer,
+} from './childHandoff.js'
 import { ChildInitialization } from './childInitialization.js'
 
 /**
@@ -25,8 +29,7 @@ export class ConnectionChild {
   private onlyInitialize = false
 
   constructor(
-    child: ChildProcessWithoutNullStreams,
-    stop: () => Promise<void>,
+    start: StartPeer,
     owner: ChildOwner,
     private readonly handoff: ChildHandoff,
     logger: Logger,
@@ -44,7 +47,7 @@ export class ConnectionChild {
         owner.message(message, line)
       },
     }
-    this.link = new ChildLink(child, stop, this.owner)
+    this.link = new ChildLink(start, this.owner)
   }
 
   /**

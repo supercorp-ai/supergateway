@@ -17,7 +17,7 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildLink } from '../lib/childHandoff.js'
+import { ChildLink, processPeer } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
@@ -202,7 +202,7 @@ export function stdioToStatelessStreamableHttpMount(
         if (hasOneWayMessage) {
           // HTTP 202 precedes delivery, and notifications have no completion
           // reply. Forward first, then allow stdio EOF a bounded grace period.
-          child.stdin.end()
+          link.peer.end()
           finishTimer = setTimeout(release, 5000)
         } else release()
       }
@@ -211,7 +211,7 @@ export function stdioToStatelessStreamableHttpMount(
         finishRequest()
       })
 
-      const link = new ChildLink(child, stop, {
+      const link = new ChildLink(processPeer(child, stop), {
         failure: (_kind, err) => handleChildFailure(err),
         exit: (code, signal) => {
           logger.error(`Child exited: code=${code}, signal=${signal}`)

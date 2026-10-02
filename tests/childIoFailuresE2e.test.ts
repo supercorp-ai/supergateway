@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { faultControl } from './helpers/fault-control.js'
@@ -39,7 +40,7 @@ for (const stateful of [true, false]) {
           ],
           fault
             ? {
-                NODE_OPTIONS: `--import=${new URL('./helpers/native-spawn-failure.mjs', import.meta.url).href}`,
+                NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
               }
             : undefined,
         )

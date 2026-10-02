@@ -29,6 +29,8 @@ import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import { getLogger } from './lib/getLogger.js'
 import { apiKeysOf } from './lib/apiKey.js'
+import { exitWithProcessOf, watchProcess } from './lib/exitWithProcess.js'
+import { requestShutdown } from './lib/onSignals.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 import {
@@ -176,12 +178,19 @@ async function main() {
     logger.error(apiKeys.error)
     process.exit(1)
   }
+  const watched = exitWithProcessOf(argv)
+  if ('error' in watched) {
+    logger.error(watched.error)
+    process.exit(1)
+  }
 
   logger.info('Starting...')
   logger.info(
     'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
   )
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
+  const { pid } = watched
+  if (pid !== undefined) logger.info(`  - exitWithProcess: ${pid}`)
 
   try {
     await start[chosen.input](argv, logger, {
@@ -192,6 +201,14 @@ async function main() {
     logger.error('Fatal error:', err)
     process.exit(1)
   }
+
+  // Started only now: the gateway has registered its shutdown, so a launcher
+  // that is already gone stops its children rather than skipping them.
+  if (pid !== undefined)
+    watchProcess(pid, {
+      logger,
+      onExit: () => requestShutdown(`Process ${pid} exited. Exiting...`),
+    })
 }
 
 // `main` catches everything it can reach and exits non-zero, so this promise

@@ -39,6 +39,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
 - **`--apiKey "some-key"`**: Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>` (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode; can be used multiple times). Also `SUPERGATEWAY_API_KEY=some-key`. See [Requiring an API key](#requiring-an-api-key)
 - **`--apiKeyFile /run/secrets/keys`**: Accept the keys in this file, one per line (blank lines are skipped). Also `SUPERGATEWAY_API_KEY_FILE=/run/secrets/keys`
+- **`--exitWithProcess <pid>`**: Shut down, stopping the MCP server, when process `<pid>` exits (all modes). Pass the launcher's PID (e.g. `$$`); it need not be the direct parent, so it works through `npx`. Checked about once a second. A launcher that spawns Supergateway with a stdin pipe doesn't need this: since 4.0 Supergateway exits when its stdin closes.
 
 ## stdio → SSE
 

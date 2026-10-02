@@ -134,6 +134,11 @@ const cli = (args: string[]) =>
         'MCP protocol version to use for auto-initialization when the request has no MCP-Protocol-Version header. Defaults to "2024-11-05" if not specified.',
       default: '2024-11-05',
     })
+    .option('exitWithProcess', {
+      type: 'number',
+      description:
+        "Shut down, stopping the MCP server, when process <pid> exits. Pass the launcher's PID (e.g. $$); it need not be the direct parent, so it works through npx. Checked about once a second.",
+    })
     .help()
 
 /** The command line, as every gateway reads it. */

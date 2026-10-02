@@ -6,6 +6,25 @@ export interface OnSignalsOptions {
   drainStdin?: boolean
 }
 
+// The shutdown of whichever gateway is running. Each process runs exactly one
+// gateway, which registers it once; requestShutdown lets anything else in the
+// process stop it the same way a signal does.
+let registered: ((message: string) => void) | undefined
+
+/**
+ * Shuts down the way SIGTERM does: logs `message`, runs the gateway's cleanup
+ * (stopping its children, ending an upstream session) and exits. Before a
+ * gateway has registered there is nothing to clean up, so it just exits.
+ *
+ * Not a real signal: on Windows `process.kill(process.pid, 'SIGTERM')`
+ * terminates without running any handler, and emitting one would log
+ * "Caught SIGTERM" for something that was not.
+ */
+export function requestShutdown(message: string): void {
+  if (registered) registered(message)
+  else process.exit(0)
+}
+
 /**
  * Sets up signal handlers for graceful shutdown.
  *
@@ -33,6 +52,8 @@ export function onSignals(options: OnSignalsOptions): void {
       process.exit(0)
     }
   }
+
+  registered = shutdown
 
   process.on('SIGINT', () => shutdown('Caught SIGINT. Exiting...'))
   process.on('SIGTERM', () => shutdown('Caught SIGTERM. Exiting...'))

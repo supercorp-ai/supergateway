@@ -5,11 +5,12 @@ import { createServer } from 'http'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
-import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import type { Mount } from '../lib/serve.js'
+import { onSignals } from '../lib/onSignals.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
@@ -30,6 +31,17 @@ export interface StdioToWsArgs {
   healthEndpoints: string[]
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
+}
+
+/**
+ * One WebSocket server among those a gateway serves. The port is the
+ * gateway's: given, it is announced with the server's settings, as it is
+ * when the server has the port to itself.
+ */
+export type StdioToWsMountArgs = Omit<StdioToWsArgs, 'port'> & {
+  port?: number
+  /** The URL path the server's requests start with; `/` by default. */
+  path?: string
 }
 
 /**
@@ -149,6 +161,25 @@ class WsConnections {
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
+  const { port, host, logger } = args
+  const mount = stdioToWsMount(args)
+  // @types/express declares RequestHandler as returning `void | Promise<void>`,
+  // and Application extends it, so the rule sees a possibly-async handler.
+  // Express 4's app is not one: it is `function (req, res, next) {
+  // app.handle(req, res, next) }` — arity 3, returns undefined. Passing it to
+  // http.createServer is the documented pattern, so this is a declaration
+  // artifact rather than a floating promise.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  const httpServer = keepConnectionsAlive(createServer(mount.app))
+  httpServer.on('upgrade', mount.upgrade.handle)
+  onSignals({ logger, cleanup: mount.close, drainStdin: true })
+  listenOn(httpServer, port, host, () => {
+    logger.info(`Listening on port ${port}`)
+    mount.listening(host, port)
+  })
+}
+
+export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   const {
     stdioCmd,
     port,
@@ -158,9 +189,12 @@ export async function stdioToWs(args: StdioToWsArgs) {
     healthEndpoints,
     corsOrigin,
     apiKeys = [],
+    path = '/',
   } = args
-  logger.info(`  - port: ${port}`)
-  announceHost(logger, host)
+  if (port !== undefined) {
+    logger.info(`  - port: ${port}`)
+    announceHost(logger, host)
+  }
   logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   logger.info(`  - messagePath: ${messagePath}`)
   logger.info(
@@ -196,19 +230,9 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // Plain HTTP requests; the upgrade itself is checked by `verifyClient`.
   app.use(requireApiKey(apiKeys, logger))
 
-  // @types/express declares RequestHandler as returning `void | Promise<void>`,
-  // and Application extends it, so the rule sees a possibly-async handler.
-  // Express 4's app is not one: it is `function (req, res, next) {
-  // app.handle(req, res, next) }` — arity 3, returns undefined. Passing it to
-  // http.createServer is the documented pattern, so this is a declaration
-  // artifact rather than a floating promise.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  const httpServer = keepConnectionsAlive(createServer(app))
-
   const wsTransport = new WebSocketServerTransport(
     {
       path: messagePath,
-      server: httpServer,
       verifyClient: verifyApiKey(apiKeys, logger),
     },
     {
@@ -226,20 +250,22 @@ export async function stdioToWs(args: StdioToWsArgs) {
   )
   connections.transport = wsTransport
 
-  onSignals({
-    logger,
-    cleanup: async () => {
-      await Promise.all([wsTransport.close(), children.close()])
-    },
-    drainStdin: true,
-  })
-
   wsTransport.start()
 
-  listenOn(httpServer, port, host, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(
-      `WebSocket endpoint: ws://${endpointHost(host)}:${port}${messagePath}`,
-    )
-  })
+  return {
+    app,
+    path,
+    upgrade: {
+      path: messagePath,
+      handle: (req, socket, head) =>
+        wsTransport.handleUpgrade(req, socket, head),
+    },
+    listening: (listenHost, listenPort) =>
+      logger.info(
+        `WebSocket endpoint: ws://${endpointHost(listenHost)}:${listenPort}${messagePath}`,
+      ),
+    close: async () => {
+      await Promise.all([wsTransport.close(), children.close()])
+    },
+  }
 }

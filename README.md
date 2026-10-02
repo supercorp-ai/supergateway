@@ -40,6 +40,9 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--apiKey "some-key"`**: Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>` (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode; can be used multiple times). Also `SUPERGATEWAY_API_KEY=some-key`. See [Requiring an API key](#requiring-an-api-key)
 - **`--apiKeyFile /run/secrets/keys`**: Accept the keys in this file, one per line (blank lines are skipped). Also `SUPERGATEWAY_API_KEY_FILE=/run/secrets/keys`
 - **`--exitWithProcess <pid>`**: Shut down, stopping the MCP server, when process `<pid>` exits (all modes). Pass the launcher's PID (e.g. `$$`); it need not be the direct parent, so it works through `npx`. Checked about once a second. A launcher that spawns Supergateway with a stdin pipe doesn't need this: since 4.0 Supergateway exits when its stdin closes.
+- **`--config servers.json`**: Read servers and settings from a config file instead of the server flags. See [Several servers from a config file](#several-servers-from-a-config-file)
+- **`--checkConfig`**: With `--config`, check the file, list each server's path and output, and exit
+- **`--printConfig`**: Print the resolved config, secrets redacted, and exit. Without `--config` it prints the file equivalent to the command line given
 
 ## stdio → SSE
 
@@ -152,6 +155,44 @@ curl -H "Authorization: Bearer $MCP_API_KEY" ...   # or: -H "X-API-Key: $MCP_API
 - An empty key, an unreadable key file or one with no keys stops the gateway at startup rather than running it without authentication.
 - Keys are never logged. Use HTTPS (e.g. behind a reverse proxy) so they are not sent in clear text.
 - To send a key to a remote server from SSE→stdio or Streamable HTTP→stdio, use `--header` or `--oauth2Bearer`; `--apiKey` is refused there.
+
+## Several servers from a config file
+
+`--config` reads the `mcpServers` file that Claude Desktop and other MCP clients use, so a client's file works as-is. Each server is served at `/<name>` on one port:
+
+```jsonc
+{
+  "port": 8000,
+  "mcpServers": {
+    "git": { "command": "uvx", "args": ["mcp-server-git"] },
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./my-folder"],
+      "outputTransport": "streamableHttp",
+      "apiKey": "${FILES_KEY}",
+    },
+  },
+}
+```
+
+```bash
+npx -y supergateway --config servers.json
+```
+
+- `git` is served over SSE at `http://localhost:8000/git/sse` and `/git/message`; `files` over Streamable HTTP at `http://localhost:8000/files/mcp`.
+- **A server** is `command` + `args` (run without a shell, as clients run them), `stdio` (a shell command line, as `--stdio`), or `url` + `type` (`sse` or `http`). `env` and `cwd` set its environment and directory.
+- **Any option** from the list above can be set on a server, by its flag name (`outputTransport`, `stateful`, `cors`, `headers`, `apiKey`, `healthEndpoint`, ...). Set at the top level, it is the default for every server. Defaults are the command line's: a local server is served over SSE, a `url` one on stdio.
+- **`path`** serves a server somewhere other than `/<name>`. A name that can't be part of a URL needs one. The gateway refuses to start if a server's URL would be answered by another server or by the gateway's own `healthEndpoint`.
+- **`port`, `host`, `logLevel`, `logFormat`, `exitWithProcess`** and the top-level `healthEndpoint` are the gateway's own. A top-level `healthEndpoint` answers for the whole gateway; one on a server is under that server's path.
+- **`apiKey`** on a server locks that server only. Keys from `--apiKey`, `--apiKeyFile` or `SUPERGATEWAY_API_KEY` lock every server.
+- **`"disabled": true`** skips a server. Keys only clients use (`autoApprove`, `timeout`, `disabledTools`, ...) are warned about and ignored. Any other unknown key is an error that suggests the closest known one.
+- **`${VAR}`**, `${VAR:-default}` and `${env:VAR}` are replaced from the environment in every value except a `stdio` command line, which the shell expands itself. A variable that isn't set is an error. `$$` is a literal `$`.
+- **Flags beside `--config`** may be the gateway's own (`--port`, `--host`, `--logLevel`, `--logFormat`, `--exitWithProcess`, `--healthEndpoint`, `--apiKey`, `--apiKeyFile`). They override the file, and the startup log says so. A server flag such as `--stateful` is refused, because it would be unclear which server it means.
+- With more than one server, each log line about a server starts with its name (`[git]`), and JSON logs give it a `server` field.
+- On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
+- Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
+
+This version can't yet serve a `url` server over HTTP, combine servers on one URL (a nested `mcpServers`), or serve a `url` server on stdio beside others. Such a file passes `--checkConfig`, but the gateway says so and exits.
 
 ## Shutdown
 
@@ -464,6 +505,8 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 - [@Areo-Joe](https://github.com/Areo-Joe)
 - [@Joffref](https://github.com/Joffref)
 - [@michaeljguarino](https://github.com/michaeljguarino)
+- [@qdrddr](https://github.com/qdrddr)
+- [@Shellishack](https://github.com/Shellishack)
 
 ## Contributing
 

@@ -21,9 +21,9 @@
 
 import { readFileSync } from 'node:fs'
 import { hideBin } from 'yargs/helpers'
-import { stdioToSse } from './gateways/stdioToSse.js'
+import { stdioToSse, stdioToSseMount } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
-import { stdioToWs } from './gateways/stdioToWs.js'
+import { stdioToWs, stdioToWsMount } from './gateways/stdioToWs.js'
 import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
 import { corsOrigin } from './lib/corsOrigin.js'
@@ -31,8 +31,16 @@ import { getLogger } from './lib/getLogger.js'
 import { apiKeysOf } from './lib/apiKey.js'
 import { exitWithProcessOf, watchProcess } from './lib/exitWithProcess.js'
 import { requestShutdown } from './lib/onSignals.js'
-import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
-import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+import {
+  stdioToStatelessStreamableHttp,
+  stdioToStatelessStreamableHttpMount,
+} from './gateways/stdioToStatelessStreamableHttp.js'
+import {
+  stdioToStatefulStreamableHttp,
+  stdioToStatefulStreamableHttpMount,
+} from './gateways/stdioToStatefulStreamableHttp.js'
+import { routeConflict, serve, type Mount } from './lib/serve.js'
+import { announceHost } from './lib/listenHost.js'
 import {
   hostOf,
   inputTransportOf,
@@ -75,17 +83,54 @@ const unsupported = (
   process.exit(1)
 }
 
-const stdioToStreamableHttp: Start = async (
-  argv,
+// What a stdio server's gateway takes beyond the port, in either form: alone
+// on the port, or mounted at `path` beside others.
+type ServerOptions = Listening & { path?: string }
+
+const sseArgs = (
+  argv: Cli,
+  logger: Logger,
+  { host, apiKeys, path }: ServerOptions,
+) => ({
+  stdioCmd: stdioCommand(argv),
+  host,
+  path,
+  baseUrl: argv.baseUrl,
+  ssePath: argv.ssePath,
+  messagePath: argv.messagePath,
   logger,
-  { host, apiKeys },
+  corsOrigin: corsOrigin({ argv }),
+  healthEndpoints: argv.healthEndpoint as string[],
+  headers: headers({ argv, logger }),
+  apiKeys,
+})
+
+const wsArgs = (
+  argv: Cli,
+  logger: Logger,
+  { host, apiKeys, path }: ServerOptions,
+) => ({
+  stdioCmd: stdioCommand(argv),
+  host,
+  path,
+  messagePath: argv.messagePath,
+  logger,
+  corsOrigin: corsOrigin({ argv }),
+  healthEndpoints: argv.healthEndpoint as string[],
+  apiKeys,
+})
+
+// Announces the mode and checks the timeout before building the arguments,
+// so header diagnostics keep their place in the log.
+const streamableHttpArgs = (
+  argv: Cli,
+  logger: Logger,
+  { host, apiKeys, path }: ServerOptions,
 ) => {
-  // Built when the gateway starts, after the mode is announced and the
-  // timeout checked, so header diagnostics keep their place in the log.
   const shared = () => ({
     stdioCmd: stdioCommand(argv),
-    port: argv.port,
     host,
+    path,
     streamableHttpPath: argv.streamableHttpPath,
     logger,
     corsOrigin: corsOrigin({ argv }),
@@ -95,11 +140,10 @@ const stdioToStreamableHttp: Start = async (
   })
   if (!argv.stateful) {
     logger.info('Running stateless server')
-    await stdioToStatelessStreamableHttp({
-      ...shared(),
-      protocolVersion: argv.protocolVersion,
-    })
-    return
+    return {
+      stateful: false as const,
+      args: { ...shared(), protocolVersion: argv.protocolVersion },
+    }
   }
   logger.info('Running stateful server')
   const timeout = sessionTimeoutOf(argv)
@@ -107,44 +151,52 @@ const stdioToStreamableHttp: Start = async (
     logger.error(timeout.error)
     process.exit(1)
   }
-  await stdioToStatefulStreamableHttp({
-    ...shared(),
-    sessionTimeout: timeout.sessionTimeout,
-  })
+  return {
+    stateful: true as const,
+    args: { ...shared(), sessionTimeout: timeout.sessionTimeout },
+  }
 }
+
+/** A stdio server mounted at its path, to share the port with others. */
+function mountOf(argv: Cli, logger: Logger, options: ServerOptions): Mount {
+  if (argv.outputTransport === 'sse')
+    return stdioToSseMount(sseArgs(argv, logger, options))
+  if (argv.outputTransport === 'ws')
+    return stdioToWsMount(wsArgs(argv, logger, options))
+  // The loader gives every entry here a listening output.
+  const { stateful, args } = streamableHttpArgs(argv, logger, options)
+  return stateful
+    ? stdioToStatefulStreamableHttpMount(args)
+    : stdioToStatelessStreamableHttpMount(args)
+}
+
+// The URLs a server answers, as its command line sets them: none for one on
+// stdio, which listens on nothing.
+const routesOf = (argv: Cli) =>
+  argv.outputTransport === 'stdio'
+    ? []
+    : [
+        ...(argv.outputTransport === 'sse'
+          ? [argv.ssePath, argv.messagePath]
+          : argv.outputTransport === 'ws'
+            ? [argv.messagePath]
+            : [argv.streamableHttpPath]),
+        ...(argv.healthEndpoint as string[]),
+      ]
 
 // How each input transport starts, given the output the command line chose.
 const start: Record<InputTransport, Start> = {
   stdio: async (argv, logger, listening) => {
-    const { host, apiKeys } = listening
+    const { port } = argv
     if (argv.outputTransport === 'sse')
-      await stdioToSse({
-        stdioCmd: stdioCommand(argv),
-        port: argv.port,
-        host,
-        baseUrl: argv.baseUrl,
-        ssePath: argv.ssePath,
-        messagePath: argv.messagePath,
-        logger,
-        corsOrigin: corsOrigin({ argv }),
-        healthEndpoints: argv.healthEndpoint as string[],
-        headers: headers({ argv, logger }),
-        apiKeys,
-      })
+      await stdioToSse({ ...sseArgs(argv, logger, listening), port })
     else if (argv.outputTransport === 'ws')
-      await stdioToWs({
-        stdioCmd: stdioCommand(argv),
-        port: argv.port,
-        host,
-        messagePath: argv.messagePath,
-        logger,
-        corsOrigin: corsOrigin({ argv }),
-        healthEndpoints: argv.healthEndpoint as string[],
-        apiKeys,
-      })
-    else if (argv.outputTransport === 'streamableHttp')
-      await stdioToStreamableHttp(argv, logger, listening)
-    else unsupported(logger, 'stdio', argv.outputTransport)
+      await stdioToWs({ ...wsArgs(argv, logger, listening), port })
+    else if (argv.outputTransport === 'streamableHttp') {
+      const { stateful, args } = streamableHttpArgs(argv, logger, listening)
+      if (stateful) await stdioToStatefulStreamableHttp({ ...args, port })
+      else await stdioToStatelessStreamableHttp({ ...args, port })
+    } else unsupported(logger, 'stdio', argv.outputTransport)
   },
   sse: async (argv, logger) => {
     if (argv.outputTransport === 'stdio')
@@ -175,12 +227,21 @@ function besideHint(flag: string, file: string) {
   return `Set "${flag === 'header' ? 'headers' : flag}" in ${file}, on a server or at the top level`
 }
 
+// One entry of several served on one port: its command line, as cliForEntry
+// gives it, and where its requests start.
+type Served = { name: string; path: string; argv: Cli }
+
+type Invocation =
+  | { argv: Cli; notes: string[] }
+  | { servers: Served[]; healthEndpoints: string[]; notes: string[] }
+
 /**
- * The command line to run: the one given, or, with `--config`, the one the
- * file's entry is equivalent to, so a file runs through exactly the code a
- * command line does. Exits for `--printConfig`, `--checkConfig` and errors.
+ * The command line to run: the one given, or, with `--config`, the one each
+ * of the file's entries is equivalent to, so a file runs through exactly the
+ * code a command line does. Exits for `--printConfig`, `--checkConfig` and
+ * errors.
  */
-function invocation(args: string[], cli: Cli, logger: Logger) {
+function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const given = givenOptions(args)
   const print = (value: unknown) => {
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
@@ -228,6 +289,31 @@ function invocation(args: string[], cli: Cli, logger: Logger) {
     given,
   )
   if (cli.printConfig) print(printableConfig(config))
+  const several = config.entries.length > 1
+  // Combined entries have no command line of their own (a later 4.2 change).
+  const served = config.entries
+    .filter((entry) => !('members' in entry.server))
+    .map((entry): Served => {
+      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
+      const argv = parseCli(run.args)
+      if (run.command) argv.stdio = run.command as string
+      return { name: entry.name, path: entry.path, argv }
+    })
+  const healthEndpoints = config.gateway.healthEndpoint ?? []
+  const conflict =
+    several &&
+    routeConflict(
+      served.map(({ name, path, argv }) => ({
+        name,
+        path,
+        routes: routesOf(argv),
+      })),
+      healthEndpoints,
+    )
+  if (conflict) {
+    logger.error(`Error: ${cli.config}: ${conflict}`)
+    process.exit(1)
+  }
   if (cli.checkConfig) {
     process.stdout.write(
       `${cli.config} is valid: ${config.entries.length} ${config.entries.length === 1 ? 'server' : 'servers'}\n` +
@@ -240,26 +326,27 @@ function invocation(args: string[], cli: Cli, logger: Logger) {
     )
     process.exit(0)
   }
-  const [entry, second] = config.entries
-  const notYet =
-    second !== undefined
-      ? 'Several servers on one port'
-      : 'members' in entry.server
+  const notYet = config.entries
+    .map((entry) =>
+      'members' in entry.server
         ? 'Combining servers on one URL'
-        : entry.server.source.kind === 'url' &&
-            effectiveTransport(entry, config.defaults) !== 'stdio'
-          ? 'Serving a remote server over HTTP'
-          : undefined
+        : entry.server.source.kind !== 'url'
+          ? undefined
+          : effectiveTransport(entry, config.defaults) !== 'stdio'
+            ? 'Serving a remote server over HTTP'
+            : several
+              ? 'Serving an entry over stdio beside others'
+              : undefined,
+    )
+    .find((reason) => reason !== undefined)
   if (notYet) {
     logger.error(
-      `Error: ${notYet} is coming in a later 4.2 change; ${cli.config} is valid, but this build runs one server per file`,
+      `Error: ${notYet} is coming in a later 4.2 change; ${cli.config} is valid, but this build can't serve it yet`,
     )
     process.exit(1)
   }
-  const run = cliForEntry(config, entry, extraKeys, extraKeyFiles)
-  const argv = parseCli(run.args)
-  if (run.command) argv.stdio = run.command as string
-  return { argv, notes }
+  if (!several) return { argv: served[0].argv, notes }
+  return { servers: served, healthEndpoints, notes }
 }
 
 async function main() {
@@ -272,16 +359,18 @@ async function main() {
   })
   // Warned, never refused: a refusal would stop deployments that start today.
   for (const warning of unknownArguments(args, cli)) cliLogger.error(warning)
-  const { argv, notes } = invocation(args, cli, cliLogger)
-  const logger =
-    argv === cli
-      ? cliLogger
-      : getLogger({
-          logLevel: argv.logLevel,
-          logFormat: argv.logFormat,
-          outputTransport: argv.outputTransport as string,
-        })
-  for (const note of notes) logger.info(note)
+  const run = invocation(args, cli, cliLogger)
+  // The gateway-wide settings, which every entry's command line carries alike.
+  const argv = 'argv' in run ? run.argv : run.servers[0].argv
+  const loggerFor = (server?: string) =>
+    getLogger({
+      logLevel: argv.logLevel,
+      logFormat: argv.logFormat,
+      outputTransport: argv.outputTransport as string,
+      server,
+    })
+  const logger = argv === cli ? cliLogger : loggerFor()
+  for (const note of run.notes) logger.info(note)
   const chosen = inputTransportOf(argv)
   if ('error' in chosen) {
     logger.error(chosen.error)
@@ -292,13 +381,25 @@ async function main() {
     logger.error(listen.error)
     process.exit(1)
   }
-  const apiKeys = apiKeysOf(argv, process.env, (path) =>
-    readFileSync(path, 'utf8'),
-  )
-  if ('error' in apiKeys) {
-    logger.error(apiKeys.error)
-    process.exit(1)
-  }
+  // Each server's keys, from its own command line; the environment's, and
+  // those given beside --config, are on every one.
+  const servers = (
+    'servers' in run
+      ? run.servers.map((server) => ({
+          ...server,
+          logger: loggerFor(server.name),
+        }))
+      : [{ path: '/', argv, logger }]
+  ).map((server) => {
+    const apiKeys = apiKeysOf(server.argv, process.env, (path) =>
+      readFileSync(path, 'utf8'),
+    )
+    if ('error' in apiKeys) {
+      server.logger.error(apiKeys.error)
+      process.exit(1)
+    }
+    return { ...server, apiKeys: apiKeys.keys }
+  })
   const watched = exitWithProcessOf(argv)
   if ('error' in watched) {
     logger.error(watched.error)
@@ -309,15 +410,40 @@ async function main() {
   logger.info(
     'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
   )
-  logger.info(`  - outputTransport: ${argv.outputTransport}`)
+  if ('servers' in run) {
+    logger.info(`  - port: ${argv.port}`)
+    announceHost(logger, listen.host)
+    logger.info(
+      `  - Health endpoints: ${run.healthEndpoints.length ? run.healthEndpoints.join(', ') : '(none)'}`,
+    )
+  } else logger.info(`  - outputTransport: ${argv.outputTransport}`)
   const { pid } = watched
   if (pid !== undefined) logger.info(`  - exitWithProcess: ${pid}`)
 
   try {
-    await start[chosen.input](argv, logger, {
-      host: listen.host,
-      apiKeys: apiKeys.keys,
-    })
+    if ('servers' in run)
+      serve({
+        port: argv.port,
+        host: listen.host,
+        logger,
+        mounts: servers.map((server) => {
+          server.logger.info(`  - path: ${server.path}`)
+          server.logger.info(
+            `  - outputTransport: ${server.argv.outputTransport}`,
+          )
+          return mountOf(server.argv, server.logger, {
+            host: listen.host,
+            apiKeys: server.apiKeys,
+            path: server.path,
+          })
+        }),
+        healthEndpoints: run.healthEndpoints,
+      })
+    else
+      await start[chosen.input](argv, logger, {
+        host: listen.host,
+        apiKeys: servers[0].apiKeys,
+      })
   } catch (err) {
     logger.error('Fatal error:', err)
     process.exit(1)

@@ -250,6 +250,49 @@ test('text, named or by default, is the prefixed console call it always was', (t
   ])
 })
 
+test('an entry served beside others is named after the prefix, or in a server field', (t) => {
+  const { stdout, stderr } = capture(t)
+  const value = { answer: 42 }
+  for (const [logLevel, outputTransport] of [
+    ['info', 'sse'],
+    ['debug', 'stdio'],
+  ]) {
+    const logger = getLogger({ logLevel, outputTransport, server: 'git' })
+    logger.info('value')
+    logger.error('failure', 7)
+  }
+  // map: text names the entry after the prefix, at every level and stream
+  assert.deepEqual(stdout, [['[supergateway]', '[git]', 'value']])
+  assert.deepEqual(stderr, [
+    ['[supergateway]', '[git]', 'failure', 7],
+    ['[supergateway]', '[git]', 'value'],
+    ['[supergateway]', '[git]', 'failure', 7],
+  ])
+  stdout.length = stderr.length = 0
+  getLogger({
+    logLevel: 'info',
+    outputTransport: 'sse',
+    logFormat: 'json',
+    server: 'git',
+  }).info('value', value)
+  // map: JSON gives it a field after msg, and the line is otherwise the same
+  assert.deepEqual(Object.keys(JSON.parse(String(stdout[0]))), [
+    'time',
+    'level',
+    'msg',
+    'server',
+    'data',
+  ])
+  assert.deepEqual(JSON.parse(jsonLine('error', ['failure'], at, 'git')), {
+    time: '2026-10-02T12:34:56.789Z',
+    level: 'error',
+    msg: 'failure',
+    server: 'git',
+  })
+  // map: no server, no field
+  assert.equal('server' in line('info', 'Starting...'), false)
+})
+
 const noisyPeer = 'node tests/helpers/noisy-mcp-server.js'
 
 test(

@@ -654,17 +654,24 @@ test(
 
 // --- What this build does not run yet ---
 
-test('several entries are valid, but not run yet', options, async (t) => {
-  const file = writeConfig(t, {
-    mcpServers: { a: mock, b: mock },
-  })
-  const result = await outcome(launchGateway(t, ['--config', file]))
-  assert.deepEqual(result, {
-    code: 1,
-    stdout: '',
-    stderr: `${prefix}Error: Several servers on one port ${later}; ${file} is valid, but this build runs one server per file\n`,
-  })
-})
+test(
+  'a remote entry on stdio beside others is valid, but not run yet',
+  options,
+  async (t) => {
+    const file = writeConfig(t, {
+      mcpServers: {
+        local: mock,
+        remote: { url: 'http://127.0.0.1:1/mcp', type: 'http' },
+      },
+    })
+    const result = await outcome(launchGateway(t, ['--config', file]))
+    assert.deepEqual(result, {
+      code: 1,
+      stdout: '',
+      stderr: `${prefix}Error: Serving an entry over stdio beside others ${later}; ${file} is valid, but this build can't serve it yet\n`,
+    })
+  },
+)
 
 test('a disabled second entry leaves one to run', options, async (t) => {
   const { port } = await serve(t, {
@@ -688,7 +695,7 @@ test('a combined entry is valid, but not run yet', options, async (t) => {
   assert.deepEqual(result, {
     code: 1,
     stdout: '',
-    stderr: `${prefix}Error: Combining servers on one URL ${later}; ${file} is valid, but this build runs one server per file\n`,
+    stderr: `${prefix}Error: Combining servers on one URL ${later}; ${file} is valid, but this build can't serve it yet\n`,
   })
 })
 
@@ -709,7 +716,7 @@ test(
     assert.deepEqual(result, {
       code: 1,
       stdout: '',
-      stderr: `${prefix}Error: Serving a remote server over HTTP ${later}; ${file} is valid, but this build runs one server per file\n`,
+      stderr: `${prefix}Error: Serving a remote server over HTTP ${later}; ${file} is valid, but this build can't serve it yet\n`,
     })
   },
 )

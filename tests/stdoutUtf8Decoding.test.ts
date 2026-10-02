@@ -11,7 +11,7 @@ test('all stdout readers preserve every UTF-8 byte split and keep child decoder 
   let wsHandlers: { onconnection: (clientId: string) => void }
   const wsSent = new Map<string, unknown[]>()
   t.mock.module('http', {
-    namedExports: { createServer: () => ({ listen() {} }) },
+    namedExports: { createServer: () => ({ listen() {}, on() {} }) },
   })
   t.mock.module(new URL('../src/server/websocket.js', import.meta.url).href, {
     namedExports: {
@@ -63,9 +63,7 @@ test('all stdout readers preserve every UTF-8 byte split and keep child decoder 
               .stdioToStatefulStreamableHttp
           : mode === 'stateless'
             ? (
-                await import(
-                  '../src/gateways/stdioToStatelessStreamableHttp.js'
-                )
+                await import('../src/gateways/stdioToStatelessStreamableHttp.js')
               ).stdioToStatelessStreamableHttp
             : (await import('../src/gateways/stdioToWs.js')).stdioToWs
     await start(common)

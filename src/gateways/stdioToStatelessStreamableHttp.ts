@@ -6,15 +6,16 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
-import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { createModernHttp } from '../lib/modernHttp.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
-import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import type { Mount } from '../lib/serve.js'
+import { onSignals } from '../lib/onSignals.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
@@ -55,6 +56,24 @@ const setResponseHeaders = ({
 export async function stdioToStatelessStreamableHttp(
   args: StdioToStreamableHttpArgs,
 ) {
+  const { port, host, logger } = args
+  const mount = stdioToStatelessStreamableHttpMount(args)
+  onSignals({ logger, cleanup: mount.close, drainStdin: true })
+  keepConnectionsAlive(
+    listenOn(mount.app, port, host, () => {
+      logger.info(`Listening on port ${port}`)
+      mount.listening(host, port)
+    }),
+  )
+}
+
+export function stdioToStatelessStreamableHttpMount(
+  args: Omit<StdioToStreamableHttpArgs, 'port'> & {
+    port?: number
+    /** The URL path the server's requests start with; `/` by default. */
+    path?: string
+  },
+): Mount {
   const {
     stdioCmd,
     port,
@@ -65,12 +84,15 @@ export async function stdioToStatelessStreamableHttp(
     healthEndpoints,
     headers,
     apiKeys = [],
+    path = '/',
     protocolVersion,
   } = args
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  logger.info(`  - port: ${port}`)
-  announceHost(logger, host)
+  if (port !== undefined) {
+    logger.info(`  - port: ${port}`)
+    announceHost(logger, host)
+  }
   logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
   logger.info(`  - protocolVersion: ${protocolVersion}`)
@@ -85,13 +107,6 @@ export async function stdioToStatelessStreamableHttp(
 
   const children = new OwnedChildProcesses(logger)
   const modern = createModernHttp({ stdioCmd, children, logger })
-  onSignals({
-    logger,
-    cleanup: async () => {
-      await Promise.all([modern.close(), children.close()])
-    },
-    drainStdin: true,
-  })
 
   const app = express()
   app.use((_req, res, next) => {
@@ -325,12 +340,15 @@ export async function stdioToStatelessStreamableHttp(
     )
   })
 
-  keepConnectionsAlive(
-    listenOn(app, port, host, () => {
-      logger.info(`Listening on port ${port}`)
+  return {
+    app,
+    path,
+    listening: (listenHost, listenPort) =>
       logger.info(
-        `StreamableHttp endpoint: http://${endpointHost(host)}:${port}${streamableHttpPath}`,
-      )
-    }),
-  )
+        `StreamableHttp endpoint: http://${endpointHost(listenHost)}:${listenPort}${streamableHttpPath}`,
+      ),
+    close: async () => {
+      await Promise.all([modern.close(), children.close()])
+    },
+  }
 }

@@ -699,28 +699,6 @@ test('a combined entry is valid, but not run yet', options, async (t) => {
   })
 })
 
-test(
-  'a remote entry served over HTTP is valid, but not run yet',
-  options,
-  async (t) => {
-    const file = writeConfig(t, {
-      mcpServers: {
-        remote: {
-          url: 'http://127.0.0.1:1/mcp',
-          type: 'http',
-          outputTransport: 'sse',
-        },
-      },
-    })
-    const result = await outcome(launchGateway(t, ['--config', file]))
-    assert.deepEqual(result, {
-      code: 1,
-      stdout: '',
-      stderr: `${prefix}Error: Serving a remote server over HTTP ${later}; ${file} is valid, but this build can't serve it yet\n`,
-    })
-  },
-)
-
 // --- Other clients' files ---
 
 test(

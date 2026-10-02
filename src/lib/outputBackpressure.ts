@@ -64,13 +64,24 @@ const untilDrained = (res: Writable) =>
  * `url` and `redirected` are kept: the SSE client reads them to follow a
  * redirect on reconnect.
  */
-export function readAsDrained(response: Response, output: Writable): Response {
+export const readAsDrained = (response: Response, output: Writable) =>
+  readWhile(response, () => drained([output]))
+
+/**
+ * A response whose body is read only once `wait` settles, each time: the hold
+ * readAsDrained puts on a bridge's stdout, for any reader. A remote server
+ * served over HTTP is read as fast as the one client of that session reads.
+ */
+export function readWhile(
+  response: Response,
+  wait: () => Promise<void> | undefined,
+): Response {
   if (!response.body) return response
   const reader = response.body.getReader()
   const held = new Response(
     new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await drained([output])
+        await wait()
         const { done, value } = await reader.read()
         if (done) controller.close()
         else controller.enqueue(value)

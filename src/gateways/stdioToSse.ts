@@ -16,21 +16,16 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import {
-  ChildHandoff,
-  processPeer,
-  type ChildOwner,
-} from '../lib/childHandoff.js'
+import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 import {
-  describeCommand,
-  spawnCommand,
-  type ChildCommand,
-} from '../lib/childCommand.js'
+  announceServer,
+  startServer,
+  type ServerSource,
+} from '../lib/serverSource.js'
 
-export interface StdioToSseArgs {
-  stdioCmd: ChildCommand
+interface StdioToSseOptions {
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -50,11 +45,15 @@ export interface StdioToSseArgs {
  * given, it is announced with the server's settings, as it is when the
  * server has the port to itself.
  */
-export type StdioToSseMountArgs = Omit<StdioToSseArgs, 'port'> & {
-  port?: number
-  /** The URL path the server's requests start with; `/` by default. */
-  path?: string
-}
+/** A server and how it is served over SSE. */
+export type StdioToSseArgs = ServerSource & StdioToSseOptions
+
+export type StdioToSseMountArgs = ServerSource &
+  Omit<StdioToSseOptions, 'port'> & {
+    port?: number
+    /** The URL path the server's requests start with; `/` by default. */
+    path?: string
+  }
 
 const setResponseHeaders = ({
   res,
@@ -81,7 +80,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
 export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   const {
-    stdioCmd,
     port,
     host,
     baseUrl,
@@ -100,7 +98,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     logger.info(`  - port: ${port}`)
     announceHost(logger, host)
   }
-  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
+  announceServer(logger, args)
   if (baseUrl) {
     logger.info(`  - baseUrl: ${baseUrl}`)
   }
@@ -317,9 +315,8 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
       output: () => drained([res]),
     }
 
-    const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
     const connection = new ConnectionChild(
-      processPeer(child, children.own(child)),
+      startServer(spawn, args, children, logger, label),
       owner,
       handoff,
       logger,

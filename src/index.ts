@@ -40,6 +40,8 @@ import {
   stdioToStatefulStreamableHttpMount,
 } from './gateways/stdioToStatefulStreamableHttp.js'
 import { routeConflict, serve, type Mount } from './lib/serve.js'
+import type { ServerSource } from './lib/serverSource.js'
+import { parseUpstreamUrl } from './lib/urlCredentials.js'
 import { announceHost } from './lib/listenHost.js'
 import {
   hostOf,
@@ -87,30 +89,54 @@ const unsupported = (
 // on the port, or mounted at `path` beside others.
 type ServerOptions = Listening & { path?: string }
 
+// The server a listening gateway serves: the --stdio command, or the --sse
+// or --streamableHttp server, with --header and --oauth2Bearer as what the
+// gateway sends it.
+const serverOf = (argv: Cli, logger: Logger): ServerSource => {
+  const url = argv.sse ?? argv.streamableHttp
+  if (url === undefined) return { stdioCmd: stdioCommand(argv) }
+  return {
+    upstream: {
+      url: parseUpstreamUrl(url),
+      type: argv.sse ? 'sse' : 'streamableHttp',
+      headers: headers({ argv, logger }),
+    },
+  }
+}
+
+// What the gateway's own responses carry: --header for a local server. For a
+// remote one, --header is what the gateway sends it; returning that to every
+// client could hand them the remote server's credentials.
+const responseHeaders = (source: ServerSource, argv: Cli, logger: Logger) =>
+  source.upstream ? {} : headers({ argv, logger })
+
 const sseArgs = (
   argv: Cli,
   logger: Logger,
   { host, apiKeys, path }: ServerOptions,
-) => ({
-  stdioCmd: stdioCommand(argv),
-  host,
-  path,
-  baseUrl: argv.baseUrl,
-  ssePath: argv.ssePath,
-  messagePath: argv.messagePath,
-  logger,
-  corsOrigin: corsOrigin({ argv }),
-  healthEndpoints: argv.healthEndpoint as string[],
-  headers: headers({ argv, logger }),
-  apiKeys,
-})
+) => {
+  const source = serverOf(argv, logger)
+  return {
+    ...source,
+    host,
+    path,
+    baseUrl: argv.baseUrl,
+    ssePath: argv.ssePath,
+    messagePath: argv.messagePath,
+    logger,
+    corsOrigin: corsOrigin({ argv }),
+    healthEndpoints: argv.healthEndpoint as string[],
+    headers: responseHeaders(source, argv, logger),
+    apiKeys,
+  }
+}
 
 const wsArgs = (
   argv: Cli,
   logger: Logger,
   { host, apiKeys, path }: ServerOptions,
 ) => ({
-  stdioCmd: stdioCommand(argv),
+  ...serverOf(argv, logger),
   host,
   path,
   messagePath: argv.messagePath,
@@ -127,17 +153,20 @@ const streamableHttpArgs = (
   logger: Logger,
   { host, apiKeys, path }: ServerOptions,
 ) => {
-  const shared = () => ({
-    stdioCmd: stdioCommand(argv),
-    host,
-    path,
-    streamableHttpPath: argv.streamableHttpPath,
-    logger,
-    corsOrigin: corsOrigin({ argv }),
-    healthEndpoints: argv.healthEndpoint as string[],
-    headers: headers({ argv, logger }),
-    apiKeys,
-  })
+  const shared = () => {
+    const source = serverOf(argv, logger)
+    return {
+      ...source,
+      host,
+      path,
+      streamableHttpPath: argv.streamableHttpPath,
+      logger,
+      corsOrigin: corsOrigin({ argv }),
+      healthEndpoints: argv.healthEndpoint as string[],
+      headers: responseHeaders(source, argv, logger),
+      apiKeys,
+    }
+  }
   if (!argv.stateful) {
     logger.info('Running stateless server')
     return {
@@ -184,37 +213,47 @@ const routesOf = (argv: Cli) =>
         ...(argv.healthEndpoint as string[]),
       ]
 
+// A server served over HTTP or WebSocket, alone on the port. The command
+// line only allows the four outputs, and stdio is a bridge or refused.
+const listen = async (argv: Cli, logger: Logger, listening: Listening) => {
+  const { port } = argv
+  if (argv.outputTransport === 'sse')
+    await stdioToSse({ ...sseArgs(argv, logger, listening), port })
+  else if (argv.outputTransport === 'ws')
+    await stdioToWs({ ...wsArgs(argv, logger, listening), port })
+  else {
+    const { stateful, args } = streamableHttpArgs(argv, logger, listening)
+    if (stateful) await stdioToStatefulStreamableHttp({ ...args, port })
+    else await stdioToStatelessStreamableHttp({ ...args, port })
+  }
+}
+
 // How each input transport starts, given the output the command line chose.
+// A remote server on stdio is a bridge; on any other output, it is served
+// the way a local one is.
 const start: Record<InputTransport, Start> = {
   stdio: async (argv, logger, listening) => {
-    const { port } = argv
-    if (argv.outputTransport === 'sse')
-      await stdioToSse({ ...sseArgs(argv, logger, listening), port })
-    else if (argv.outputTransport === 'ws')
-      await stdioToWs({ ...wsArgs(argv, logger, listening), port })
-    else if (argv.outputTransport === 'streamableHttp') {
-      const { stateful, args } = streamableHttpArgs(argv, logger, listening)
-      if (stateful) await stdioToStatefulStreamableHttp({ ...args, port })
-      else await stdioToStatelessStreamableHttp({ ...args, port })
-    } else unsupported(logger, 'stdio', argv.outputTransport)
+    if (argv.outputTransport === 'stdio')
+      unsupported(logger, 'stdio', argv.outputTransport)
+    else await listen(argv, logger, listening)
   },
-  sse: async (argv, logger) => {
+  sse: async (argv, logger, listening) => {
     if (argv.outputTransport === 'stdio')
       await sseToStdio({
         sseUrl: argv.sse!,
         logger,
         headers: headers({ argv, logger }),
       })
-    else unsupported(logger, 'sse', argv.outputTransport)
+    else await listen(argv, logger, listening)
   },
-  streamableHttp: async (argv, logger) => {
+  streamableHttp: async (argv, logger, listening) => {
     if (argv.outputTransport === 'stdio')
       await streamableHttpToStdio({
         streamableHttpUrl: argv.streamableHttp!,
         logger,
         headers: headers({ argv, logger }),
       })
-    else unsupported(logger, 'streamableHttp', argv.outputTransport)
+    else await listen(argv, logger, listening)
   },
 }
 
@@ -330,13 +369,10 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
     .map((entry) =>
       'members' in entry.server
         ? 'Combining servers on one URL'
-        : entry.server.source.kind !== 'url'
-          ? undefined
-          : effectiveTransport(entry, config.defaults) !== 'stdio'
-            ? 'Serving a remote server over HTTP'
-            : several
-              ? 'Serving an entry over stdio beside others'
-              : undefined,
+        : // Only a remote server can be on stdio: the loader refuses a local one.
+          several && effectiveTransport(entry, config.defaults) === 'stdio'
+          ? 'Serving an entry over stdio beside others'
+          : undefined,
     )
     .find((reason) => reason !== undefined)
   if (notYet) {

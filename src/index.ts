@@ -144,6 +144,7 @@ async function main() {
   const argv = parseCli(args)
   const logger = getLogger({
     logLevel: argv.logLevel,
+    logFormat: argv.logFormat,
     outputTransport: argv.outputTransport as string,
   })
   // Warned, never refused: a refusal would stop deployments that start today.

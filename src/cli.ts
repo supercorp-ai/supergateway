@@ -75,6 +75,12 @@ const cli = (args: string[]) =>
       default: 'info',
       description: 'Logging level',
     })
+    .option('logFormat', {
+      choices: ['text', 'json'] as const,
+      default: 'text',
+      description:
+        'Log line format: text (default) or json, one JSON object per line',
+    })
     .option('cors', {
       type: 'array',
       description:

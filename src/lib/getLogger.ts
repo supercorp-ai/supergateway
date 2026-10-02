@@ -1,5 +1,6 @@
 import util from 'node:util'
 import { Logger } from '../types.js'
+import { jsonLogger } from './jsonLogger.js'
 
 const defaultFormatArgs = (args: any[]) => args
 
@@ -62,12 +63,19 @@ const debugLoggerStdio: Logger = {
 export const getLogger = ({
   logLevel,
   outputTransport,
+  logFormat = 'text',
 }: {
   logLevel: string
   outputTransport: string
+  logFormat?: string
 }): Logger => {
   if (logLevel === 'none') {
     return noneLogger
+  }
+
+  // `debug` only changes how text renders objects; JSON has one rendering.
+  if (logFormat === 'json') {
+    return jsonLogger(outputTransport)
   }
 
   if (logLevel === 'debug') {

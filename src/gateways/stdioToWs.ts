@@ -13,9 +13,14 @@ import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
+import {
+  describeCommand,
+  spawnCommand,
+  type ChildCommand,
+} from '../lib/childCommand.js'
 
 export interface StdioToWsArgs {
-  stdioCmd: string
+  stdioCmd: ChildCommand
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -41,7 +46,7 @@ class WsConnections {
   transport!: WebSocketServerTransport
 
   constructor(
-    private readonly stdioCmd: string,
+    private readonly stdioCmd: ChildCommand,
     private readonly children: OwnedChildProcesses,
     private readonly handoff: ChildHandoff,
     private readonly logger: Logger,
@@ -55,7 +60,7 @@ class WsConnections {
     this.logger.info(`New WebSocket connection: ${clientId}`)
     let child
     try {
-      child = spawn(this.stdioCmd, this.children.spawnOptions)
+      child = spawnCommand(spawn, this.stdioCmd, this.children.spawnOptions)
     } catch (err) {
       // Thrown inside the socket's connection event it would take down the
       // gateway and every other client with it.
@@ -156,7 +161,7 @@ export async function stdioToWs(args: StdioToWsArgs) {
   } = args
   logger.info(`  - port: ${port}`)
   announceHost(logger, host)
-  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   logger.info(`  - messagePath: ${messagePath}`)
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,

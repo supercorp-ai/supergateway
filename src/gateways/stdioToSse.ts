@@ -18,9 +18,14 @@ import { drained } from '../lib/outputBackpressure.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
+import {
+  describeCommand,
+  spawnCommand,
+  type ChildCommand,
+} from '../lib/childCommand.js'
 
 export interface StdioToSseArgs {
-  stdioCmd: string
+  stdioCmd: ChildCommand
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -64,7 +69,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
   announceHost(logger, host)
-  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   if (baseUrl) {
     logger.info(`  - baseUrl: ${baseUrl}`)
   }
@@ -282,7 +287,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
       output: () => drained([res]),
     }
 
-    const child = spawn(stdioCmd, children.spawnOptions)
+    const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
     const connection = new ConnectionChild(
       child,
       children.own(child),

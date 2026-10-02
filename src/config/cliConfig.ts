@@ -204,12 +204,16 @@ const redactMap = (map: Record<string, string>) =>
 /**
  * The command line one entry is equivalent to, and how to start its server.
  * A config file runs through exactly the code a command line does.
+ *
+ * `shared` is for an entry served beside others: the gateway's own health
+ * endpoints are then the gateway's to answer, not each entry's.
  */
 export function cliForEntry(
   config: Config,
   entry: Entry,
   extraKeys: string[],
   extraKeyFiles: string[],
+  shared = false,
 ): { args: string[]; command?: ChildCommand } {
   if ('members' in entry.server)
     throw new Error('A combined entry has no command line equivalent')
@@ -247,7 +251,9 @@ export function cliForEntry(
   flag('ssePath', under(pick('ssePath'), '/sse'))
   flag('messagePath', under(pick('messagePath'), '/message'))
   flag('streamableHttpPath', under(pick('streamableHttpPath'), '/mcp'))
-  for (const path of gateway.healthEndpoint ?? []) flag('healthEndpoint', path)
+  if (!shared)
+    for (const path of gateway.healthEndpoint ?? [])
+      flag('healthEndpoint', path)
   for (const path of entry.healthEndpoint ?? [])
     flag('healthEndpoint', path === '/' ? prefix || '/' : `${prefix}${path}`)
   const cors = pick('cors')

@@ -60,14 +60,21 @@ const debugLoggerStdio: Logger = {
   error: logStderr({ formatArgs: debugFormatArgs }),
 }
 
+/**
+ * The logger the settings ask for. `server` names the config entry its lines
+ * are about, for a gateway that serves more than one: `[name]` after
+ * `[supergateway]` in text, a `server` field in JSON.
+ */
 export const getLogger = ({
   logLevel,
   outputTransport,
   logFormat = 'text',
+  server,
 }: {
   logLevel: string
   outputTransport: string
   logFormat?: string
+  server?: string
 }): Logger => {
   if (logLevel === 'none') {
     return noneLogger
@@ -75,13 +82,21 @@ export const getLogger = ({
 
   // `debug` only changes how text renders objects; JSON has one rendering.
   if (logFormat === 'json') {
-    return jsonLogger(outputTransport)
+    return jsonLogger(outputTransport, server)
   }
 
-  if (logLevel === 'debug') {
-    return outputTransport === 'stdio' ? debugLoggerStdio : debugLogger
+  const text =
+    logLevel === 'debug'
+      ? outputTransport === 'stdio'
+        ? debugLoggerStdio
+        : debugLogger
+      : // info logLevel
+        outputTransport === 'stdio'
+        ? infoLoggerStdio
+        : infoLogger
+  if (server === undefined) return text
+  return {
+    info: (...args) => text.info(`[${server}]`, ...args),
+    error: (...args) => text.error(`[${server}]`, ...args),
   }
-
-  // info logLevel
-  return outputTransport === 'stdio' ? infoLoggerStdio : infoLogger
 }

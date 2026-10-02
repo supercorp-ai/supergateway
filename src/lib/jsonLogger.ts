@@ -36,16 +36,23 @@ const plain = (value: unknown, ancestors: object[] = []): unknown => {
  *
  * The string arguments are the message, as they are in the text format; any
  * other argument is data. A message that spans lines (a child's stderr) stays
- * on one, because JSON escapes the newlines.
+ * on one, because JSON escapes the newlines. `server` names the config entry
+ * the line is about, when the gateway serves more than one.
  */
 export const jsonLine = (
   level: Level,
   args: unknown[],
   time = new Date(),
+  server?: string,
 ): string => {
   const msg = args.filter((arg) => typeof arg === 'string').join(' ')
   const values = args.filter((arg) => typeof arg !== 'string')
-  const entry = { time: time.toISOString(), level, msg }
+  const entry = {
+    time: time.toISOString(),
+    level,
+    msg,
+    ...(server === undefined ? {} : { server }),
+  }
   if (values.length === 0) return JSON.stringify(entry)
   try {
     return JSON.stringify({
@@ -59,10 +66,13 @@ export const jsonLine = (
 }
 
 /** Info and errors on the same streams the text format uses. */
-export const jsonLogger = (outputTransport: string): Logger => ({
+export const jsonLogger = (
+  outputTransport: string,
+  server?: string,
+): Logger => ({
   info:
     outputTransport === 'stdio'
-      ? (...args) => console.error(jsonLine('info', args))
-      : (...args) => console.log(jsonLine('info', args)),
-  error: (...args) => console.error(jsonLine('error', args)),
+      ? (...args) => console.error(jsonLine('info', args, undefined, server))
+      : (...args) => console.log(jsonLine('info', args, undefined, server)),
+  error: (...args) => console.error(jsonLine('error', args, undefined, server)),
 })

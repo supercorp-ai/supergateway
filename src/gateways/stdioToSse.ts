@@ -7,13 +7,14 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
-import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
-import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import type { Mount } from '../lib/serve.js'
+import { onSignals } from '../lib/onSignals.js'
+import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
@@ -40,6 +41,17 @@ export interface StdioToSseArgs {
   apiKeys?: string[]
 }
 
+/**
+ * One SSE server among those a gateway serves. The port is the gateway's:
+ * given, it is announced with the server's settings, as it is when the
+ * server has the port to itself.
+ */
+export type StdioToSseMountArgs = Omit<StdioToSseArgs, 'port'> & {
+  port?: number
+  /** The URL path the server's requests start with; `/` by default. */
+  path?: string
+}
+
 const setResponseHeaders = ({
   res,
   headers,
@@ -52,6 +64,18 @@ const setResponseHeaders = ({
   })
 
 export async function stdioToSse(args: StdioToSseArgs) {
+  const { port, host, logger } = args
+  const mount = stdioToSseMount(args)
+  onSignals({ logger, cleanup: mount.close, drainStdin: true })
+  keepConnectionsAlive(
+    listenOn(mount.app, port, host, () => {
+      logger.info(`Listening on port ${port}`)
+      mount.listening(host, port)
+    }),
+  )
+}
+
+export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   const {
     stdioCmd,
     port,
@@ -64,11 +88,14 @@ export async function stdioToSse(args: StdioToSseArgs) {
     healthEndpoints,
     headers,
     apiKeys = [],
+    path = '/',
   } = args
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  logger.info(`  - port: ${port}`)
-  announceHost(logger, host)
+  if (port !== undefined) {
+    logger.info(`  - port: ${port}`)
+    announceHost(logger, host)
+  }
   logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   if (baseUrl) {
     logger.info(`  - baseUrl: ${baseUrl}`)
@@ -86,7 +113,6 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   const children = new OwnedChildProcesses(logger)
   const handoff = new ChildHandoff(logger)
-  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
 
   // One `Server` per session, not one per process.
   //
@@ -300,7 +326,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
     sseTransport.onmessage = (msg: JSONRPCMessage, extra) => {
       if ('id' in msg && 'method' in msg) pending.add(msg.id!)
       logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      const version = extra?.requestInfo?.headers['mcp-protocol-version']
+      // The SDK's handlePostMessage passes `requestInfo` with every message;
+      // only `extra` itself is optional in its type.
+      const version = extra?.requestInfo!.headers['mcp-protocol-version']
       connection.fromClient(
         msg,
         typeof version === 'string' ? version : undefined,
@@ -341,7 +369,8 @@ export async function stdioToSse(args: StdioToSseArgs) {
     }
 
     const session = sessions[sessionId]
-    if (session?.transport?.handlePostMessage) {
+    // A session is stored with its transport, and kept only while it is open.
+    if (session) {
       logger.info(`POST to SSE transport (session ${sessionId})`)
       await session.transport.handlePostMessage(req, res)
     } else {
@@ -349,15 +378,17 @@ export async function stdioToSse(args: StdioToSseArgs) {
     }
   })
 
-  keepConnectionsAlive(
-    listenOn(app, port, host, () => {
-      logger.info(`Listening on port ${port}`)
+  return {
+    app,
+    path,
+    listening: (listenHost, listenPort) => {
       logger.info(
-        `SSE endpoint: http://${endpointHost(host)}:${port}${ssePath}`,
+        `SSE endpoint: http://${endpointHost(listenHost)}:${listenPort}${ssePath}`,
       )
       logger.info(
-        `POST messages: http://${endpointHost(host)}:${port}${messagePath}`,
+        `POST messages: http://${endpointHost(listenHost)}:${listenPort}${messagePath}`,
       )
-    }),
-  )
+    },
+    close: () => children.close(),
+  }
 }

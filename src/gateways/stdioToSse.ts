@@ -17,6 +17,7 @@ import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
+import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 
 export interface StdioToSseArgs {
   stdioCmd: string
@@ -30,6 +31,8 @@ export interface StdioToSseArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  // The keys a client must present; none, or left out, means no check.
+  apiKeys?: string[]
 }
 
 const setResponseHeaders = ({
@@ -55,6 +58,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
     corsOrigin,
     healthEndpoints,
     headers,
+    apiKeys = [],
   } = args
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
@@ -73,6 +77,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
+  logApiKeys(logger, apiKeys)
 
   const children = new OwnedChildProcesses(logger)
   const handoff = new ChildHandoff(logger)
@@ -123,6 +128,10 @@ export async function stdioToSse(args: StdioToSseArgs) {
       res.send('ok')
     })
   }
+
+  // After CORS and the health endpoints, which stay open; before the stream
+  // and the message endpoint.
+  app.use(requireApiKey(apiKeys, logger))
 
   // A new connection's transport and the session's own `Server`, connected; or
   // nothing, when either failed or the client was gone before it finished.

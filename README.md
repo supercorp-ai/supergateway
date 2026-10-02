@@ -37,6 +37,8 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+- **`--apiKey "some-key"`**: Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>` (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode; can be used multiple times). Also `SUPERGATEWAY_API_KEY=some-key`. See [Requiring an API key](#requiring-an-api-key)
+- **`--apiKeyFile /run/secrets/keys`**: Accept the keys in this file, one per line (blank lines are skipped). Also `SUPERGATEWAY_API_KEY_FILE=/run/secrets/keys`
 
 ## stdio → SSE
 
@@ -131,6 +133,24 @@ npx -y supergateway \
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 - Each WebSocket connection gets its own server process.
+
+## Requiring an API key
+
+By default anyone who can reach the port can use the server. With `--apiKey`, every request to stdio→SSE, stdio→WS or stdio→Streamable HTTP must carry a key:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --outputTransport streamableHttp --apiKey "$MCP_API_KEY"
+
+curl -H "Authorization: Bearer $MCP_API_KEY" ...   # or: -H "X-API-Key: $MCP_API_KEY"
+```
+
+- A request without a valid key gets `401 Unauthorized`. The `--healthEndpoint` paths and, with `--cors`, browser preflight requests stay open.
+- Keys from `--apiKey`, `--apiKeyFile`, `SUPERGATEWAY_API_KEY` and `SUPERGATEWAY_API_KEY_FILE` are all accepted together, so a key can be rotated by adding the new one before removing the old.
+- An empty key, an unreadable key file or one with no keys stops the gateway at startup rather than running it without authentication.
+- Keys are never logged. Use HTTPS (e.g. behind a reverse proxy) so they are not sent in clear text.
+- To send a key to a remote server from SSE→stdio or Streamable HTTP→stdio, use `--header` or `--oauth2Bearer`; `--apiKey` is refused there.
 
 ## Shutdown
 

@@ -1,6 +1,6 @@
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { v4 as uuidv4 } from 'uuid'
-import { WebSocket, WebSocketServer } from 'ws'
+import { WebSocket, WebSocketServer, type VerifyClientCallbackAsync } from 'ws'
 import { Server } from 'http'
 
 // Node's default for a writable stream, and the point where an HTTP response
@@ -23,7 +23,17 @@ export class WebSocketServerTransport {
   private readonly clients = new Map<string, WebSocket>()
 
   constructor(
-    { path, server }: { path: string; server: Server },
+    {
+      path,
+      server,
+      verifyClient,
+    }: {
+      path: string
+      server: Server
+      // Refuses an upgrade before it is a connection: a refused client never
+      // reaches `onconnection`, and no child is spawned for it.
+      verifyClient?: VerifyClientCallbackAsync
+    },
     private readonly handlers: {
       onconnection: (clientId: string) => void
       onmessage: (message: JSONRPCMessage, clientId: string) => void
@@ -31,7 +41,12 @@ export class WebSocketServerTransport {
       onerror: (err: Error) => void
     },
   ) {
-    this.wss = new WebSocketServer({ path, server })
+    // Only when given, so a server without a check is built as it always was.
+    this.wss = new WebSocketServer({
+      path,
+      server,
+      ...(verifyClient ? { verifyClient } : {}),
+    })
   }
 
   start(): void {

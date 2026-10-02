@@ -19,6 +19,7 @@ import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
+import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
@@ -30,6 +31,8 @@ export interface StdioToStreamableHttpArgs {
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
   headers: Record<string, string>
+  // The keys a client must present; none, or left out, means no check.
+  apiKeys?: string[]
   protocolVersion: string
 }
 
@@ -56,6 +59,7 @@ export async function stdioToStatelessStreamableHttp(
     corsOrigin,
     healthEndpoints,
     headers,
+    apiKeys = [],
     protocolVersion,
   } = args
 
@@ -72,6 +76,7 @@ export async function stdioToStatelessStreamableHttp(
   logger.info(
     `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
   )
+  logApiKeys(logger, apiKeys)
 
   const children = new OwnedChildProcesses(logger)
   const modern = createModernHttp({ stdioCmd, children, logger })
@@ -92,7 +97,11 @@ export async function stdioToStatelessStreamableHttp(
     next()
   })
   // Same ceiling the SDK applies to SSE messages; express defaults to 100 kB.
-  app.use(express.json({ limit: '4mb' }), jsonBodyErrors)
+  const parseJson = [express.json({ limit: '4mb' }), jsonBodyErrors]
+  // Without keys, bodies are read here, as they always were. With keys, not
+  // until the request has presented one: an unauthenticated caller must not
+  // make the gateway read and parse up to 4 MB, and gets 401, not 400 or 413.
+  if (apiKeys.length === 0) app.use(parseJson)
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))
@@ -103,6 +112,11 @@ export async function stdioToStatelessStreamableHttp(
       res.send('ok')
     })
   }
+
+  // After CORS and the health endpoints, which stay open; before POST, GET
+  // and DELETE on the path, modern 2026-07-28 requests included.
+  app.use(requireApiKey(apiKeys, logger))
+  if (apiKeys.length > 0) app.use(parseJson)
 
   app.post(streamableHttpPath, async (req, res) => {
     if (children.closing) {

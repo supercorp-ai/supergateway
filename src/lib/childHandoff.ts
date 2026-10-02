@@ -17,7 +17,7 @@ export interface ChildOwner {
   message(message: any, line: string): void
   nonJson(line: string): void
   stderr(text: string): void
-  failure(kind: 'process' | 'stdin', err: Error): void
+  failure(kind: 'process' | 'stdin' | 'upstream', err: Error): void
   exit(code: number | null, signal: NodeJS.Signals | null): void
   /** What the child's stdout waits for before it is read again, if anything. */
   output(): Promise<void> | undefined

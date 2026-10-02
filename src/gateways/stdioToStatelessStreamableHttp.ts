@@ -17,18 +17,17 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildLink, processPeer } from '../lib/childHandoff.js'
+import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 import {
-  describeCommand,
-  spawnCommand,
-  type ChildCommand,
-} from '../lib/childCommand.js'
+  announceServer,
+  startServer,
+  type ServerSource,
+} from '../lib/serverSource.js'
 
-export interface StdioToStreamableHttpArgs {
-  stdioCmd: ChildCommand
+interface StdioToStreamableHttpOptions {
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -41,6 +40,10 @@ export interface StdioToStreamableHttpArgs {
   apiKeys?: string[]
   protocolVersion: string
 }
+
+/** A server and how it is served over Streamable HTTP. */
+export type StdioToStreamableHttpArgs = ServerSource &
+  StdioToStreamableHttpOptions
 
 const setResponseHeaders = ({
   res,
@@ -68,14 +71,14 @@ export async function stdioToStatelessStreamableHttp(
 }
 
 export function stdioToStatelessStreamableHttpMount(
-  args: Omit<StdioToStreamableHttpArgs, 'port'> & {
-    port?: number
-    /** The URL path the server's requests start with; `/` by default. */
-    path?: string
-  },
+  args: ServerSource &
+    Omit<StdioToStreamableHttpOptions, 'port'> & {
+      port?: number
+      /** The URL path the server's requests start with; `/` by default. */
+      path?: string
+    },
 ): Mount {
   const {
-    stdioCmd,
     port,
     host,
     streamableHttpPath,
@@ -93,7 +96,7 @@ export function stdioToStatelessStreamableHttpMount(
     logger.info(`  - port: ${port}`)
     announceHost(logger, host)
   }
-  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
+  announceServer(logger, args)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
   logger.info(`  - protocolVersion: ${protocolVersion}`)
 
@@ -106,7 +109,11 @@ export function stdioToStatelessStreamableHttpMount(
   logApiKeys(logger, apiKeys)
 
   const children = new OwnedChildProcesses(logger)
-  const modern = createModernHttp({ stdioCmd, children, logger })
+  // The 2026-07-28 relay starts a local server per request. A remote one is
+  // served over the sessions of the earlier protocol versions only.
+  const modern = args.upstream
+    ? undefined
+    : createModernHttp({ stdioCmd: args.stdioCmd, children, logger })
 
   const app = express()
   app.use((_req, res, next) => {
@@ -143,7 +150,7 @@ export function stdioToStatelessStreamableHttpMount(
       res.status(503).send('Gateway is shutting down')
       return
     }
-    if (await modern.handle(req, res)) return
+    if (await modern?.handle(req, res)) return
     // In stateless mode, create a new instance of transport and server for each request
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
@@ -158,12 +165,16 @@ export function stdioToStatelessStreamableHttpMount(
       })
 
       await server.connect(transport)
-      const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
-      const stop = children.own(child)
+      const peer = startServer(spawn, args, children, logger, 'Request')
+      const stop = () => link.stop()
       const pendingRequests = new Set<string | number>()
       let childFailed = false
       let released = false
       let finishTimer: NodeJS.Timeout | undefined
+      // Settles once the SDK has dispatched this request, and written any
+      // reply of its own (a 400 for a request it refused).
+      let dispatched!: () => void
+      const handling = new Promise<void>((resolve) => (dispatched = resolve))
       const handleChildFailure = (err?: Error) => {
         // Exit, ChildProcess errors and stdin errors can arrive for the same
         // child. Keep listeners installed and terminate this transport once.
@@ -173,7 +184,15 @@ export function stdioToStatelessStreamableHttpMount(
         clearTimeout(finishTimer)
         if (err) logger.error('Child process failure:', err)
         void stop()
-        failPendingCalls({ transport, pending: pendingRequests, res, logger })
+        const fail = () =>
+          failPendingCalls({ transport, pending: pendingRequests, res, logger })
+        // With calls pending, answer them now: the SDK's dispatch waits for
+        // them. With none, the SDK may still be writing a reply of its own (a
+        // 400 for a request it refused), which closing the transport and the
+        // response would cut off; a server that ends at once (a remote
+        // session, closed as soon as it is stopped) always did.
+        if (pendingRequests.size) fail()
+        else void handling.then(fail)
       }
 
       let responseClosed = false
@@ -211,7 +230,7 @@ export function stdioToStatelessStreamableHttpMount(
         finishRequest()
       })
 
-      const link = new ChildLink(processPeer(child, stop), {
+      const link = new ChildLink(peer, {
         failure: (_kind, err) => handleChildFailure(err),
         exit: (code, signal) => {
           logger.error(`Child exited: code=${code}, signal=${signal}`)
@@ -295,6 +314,7 @@ export function stdioToStatelessStreamableHttpMount(
         throw error
       } finally {
         handled = true
+        dispatched()
         finishRequest()
       }
     } catch (error) {
@@ -348,7 +368,7 @@ export function stdioToStatelessStreamableHttpMount(
         `StreamableHttp endpoint: http://${endpointHost(listenHost)}:${listenPort}${streamableHttpPath}`,
       ),
     close: async () => {
-      await Promise.all([modern.close(), children.close()])
+      await Promise.all([modern?.close(), children.close()])
     },
   }
 }

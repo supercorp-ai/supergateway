@@ -21,7 +21,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
-- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
+- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`). A remote server given with `--sse` or `--streamableHttp` can be served over `sse`, `ws` or `streamableHttp` too; see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)
 - **`--port 8000`**: Port to listen on (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: `8000`)
 - **`--host 127.0.0.1`**: Address to listen on, e.g. `127.0.0.1` or `::1` (`[::1]` also works) (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: every interface). `--baseUrl` does not control binding: only `--host` limits which addresses accept connections. Refused in SSE→stdio and Streamable HTTP→stdio mode, which listen on nothing
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE clients (stdio→SSE mode; optional)
@@ -31,7 +31,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
 - **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself and the client's request doesn't name one (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
-- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, stdio→Streamable HTTP, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
+- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, stdio→Streamable HTTP, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times). With a local server they go on the gateway's responses; with a remote one (`--sse`, `--streamableHttp`) they are sent to the remote server
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
@@ -138,6 +138,23 @@ npx -y supergateway \
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 - Each WebSocket connection gets its own server process.
 
+## Remote server → SSE, WS or Streamable HTTP
+
+Serve a remote MCP server to clients that need another transport, or behind your own API key:
+
+```bash
+npx -y supergateway \
+    --streamableHttp "https://mcp.example.com/mcp" \
+    --oauth2Bearer "$UPSTREAM_TOKEN" \
+    --outputTransport streamableHttp --stateful --apiKey "$MCP_API_KEY"
+```
+
+- Each client session gets its own session with the remote server, ended when the client's ends, and at shutdown.
+- `--header` and `--oauth2Bearer` go to the remote server. The client's own `Authorization` and API key never do.
+- Requests from the remote server to the client (sampling, roots, elicitation) are passed through.
+- A remote server that is down, refuses the client or goes away fails that session only.
+- The 2026-07-28 protocol's stateless requests are served only for local servers so far.
+
 ## Requiring an API key
 
 By default anyone who can reach the port can use the server. With `--apiKey`, every request to stdio→SSE, stdio→WS or stdio→Streamable HTTP must carry a key:
@@ -192,7 +209,7 @@ npx -y supergateway --config servers.json
 - On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
 - Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
 
-This version can't yet serve a `url` server over HTTP, combine servers on one URL (a nested `mcpServers`), or serve a `url` server on stdio beside others. Such a file passes `--checkConfig`, but the gateway says so and exits.
+A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example. This version can't yet combine servers on one URL (a nested `mcpServers`), or serve a `url` server on stdio beside others. Such a file passes `--checkConfig`, but the gateway says so and exits.
 
 ## Shutdown
 

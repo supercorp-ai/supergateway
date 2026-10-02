@@ -56,6 +56,18 @@ export class OwnedChildProcesses {
     return stop
   }
 
+  /**
+   * Owns something that is not a process, such as a session with a remote
+   * server: `stop` runs once, at the latest when the gateway shuts down.
+   */
+  track(stop: () => Promise<void>): () => Promise<void> {
+    let stopped: Promise<void> | undefined
+    const once = () =>
+      (stopped ??= stop().finally(() => this.children.delete(once)))
+    this.children.add(once)
+    return once
+  }
+
   async close(): Promise<void> {
     this.closing = true
     // A request already awaiting setup can still acquire a child during shutdown.

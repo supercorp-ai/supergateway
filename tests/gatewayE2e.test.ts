@@ -75,16 +75,6 @@ for (const [name, args, error] of [
     /stdio→stdio not supported/,
   ],
   [
-    'unsupported SSE output',
-    ['--sse', 'http://localhost/sse', '--outputTransport', 'ws'],
-    /sse→ws not supported/,
-  ],
-  [
-    'unsupported HTTP output',
-    ['--streamableHttp', 'http://localhost/mcp', '--outputTransport', 'sse'],
-    /streamableHttp→sse not supported/,
-  ],
-  [
     'zero session timeout',
     [
       '--stdio',

@@ -13,19 +13,18 @@ import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import {
   ChildHandoff,
-  processPeer,
   type ChildOwner,
+  type StartPeer,
 } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
 import {
-  describeCommand,
-  spawnCommand,
-  type ChildCommand,
-} from '../lib/childCommand.js'
+  announceServer,
+  startServer,
+  type ServerSource,
+} from '../lib/serverSource.js'
 
-export interface StdioToWsArgs {
-  stdioCmd: ChildCommand
+interface StdioToWsOptions {
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -42,11 +41,15 @@ export interface StdioToWsArgs {
  * gateway's: given, it is announced with the server's settings, as it is
  * when the server has the port to itself.
  */
-export type StdioToWsMountArgs = Omit<StdioToWsArgs, 'port'> & {
-  port?: number
-  /** The URL path the server's requests start with; `/` by default. */
-  path?: string
-}
+/** A server and how it is served over WebSocket. */
+export type StdioToWsArgs = ServerSource & StdioToWsOptions
+
+export type StdioToWsMountArgs = ServerSource &
+  Omit<StdioToWsOptions, 'port'> & {
+    port?: number
+    /** The URL path the server's requests start with; `/` by default. */
+    path?: string
+  }
 
 /**
  * The WebSocket clients and their children. Each connection has its own child,
@@ -62,7 +65,7 @@ class WsConnections {
   transport!: WebSocketServerTransport
 
   constructor(
-    private readonly stdioCmd: ChildCommand,
+    private readonly source: ServerSource,
     private readonly children: OwnedChildProcesses,
     private readonly handoff: ChildHandoff,
     private readonly logger: Logger,
@@ -74,9 +77,15 @@ class WsConnections {
    */
   open(clientId: string) {
     this.logger.info(`New WebSocket connection: ${clientId}`)
-    let child
+    let server: StartPeer
     try {
-      child = spawnCommand(spawn, this.stdioCmd, this.children.spawnOptions)
+      server = startServer(
+        spawn,
+        this.source,
+        this.children,
+        this.logger,
+        `Client ${clientId}`,
+      )
     } catch (err) {
       // Thrown inside the socket's connection event it would take down the
       // gateway and every other client with it.
@@ -90,7 +99,7 @@ class WsConnections {
     // A client that reconnects and carries on without initializing gets its
     // new child initialized by the gateway (GW-034).
     const connection = new ConnectionChild(
-      processPeer(child, this.children.own(child)),
+      server,
       this.owner(clientId),
       this.handoff,
       this.logger,
@@ -184,7 +193,6 @@ export async function stdioToWs(args: StdioToWsArgs) {
 
 export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   const {
-    stdioCmd,
     port,
     host,
     messagePath,
@@ -198,7 +206,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     logger.info(`  - port: ${port}`)
     announceHost(logger, host)
   }
-  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
+  announceServer(logger, args)
   logger.info(`  - messagePath: ${messagePath}`)
   logger.info(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
@@ -210,7 +218,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
 
   const children = new OwnedChildProcesses(logger)
   const connections = new WsConnections(
-    stdioCmd,
+    args,
     children,
     new ChildHandoff(logger),
     logger,

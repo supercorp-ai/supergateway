@@ -21,17 +21,16 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildLink, processPeer } from '../lib/childHandoff.js'
+import { ChildLink } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 import {
-  describeCommand,
-  spawnCommand,
-  type ChildCommand,
-} from '../lib/childCommand.js'
+  announceServer,
+  startServer,
+  type ServerSource,
+} from '../lib/serverSource.js'
 
-export interface StdioToStreamableHttpArgs {
-  stdioCmd: ChildCommand
+interface StdioToStreamableHttpOptions {
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -44,6 +43,10 @@ export interface StdioToStreamableHttpArgs {
   apiKeys?: string[]
   sessionTimeout: number | null
 }
+
+/** A server and how it is served over Streamable HTTP. */
+export type StdioToStreamableHttpArgs = ServerSource &
+  StdioToStreamableHttpOptions
 
 const setResponseHeaders = ({
   res,
@@ -71,14 +74,14 @@ export async function stdioToStatefulStreamableHttp(
 }
 
 export function stdioToStatefulStreamableHttpMount(
-  args: Omit<StdioToStreamableHttpArgs, 'port'> & {
-    port?: number
-    /** The URL path the server's requests start with; `/` by default. */
-    path?: string
-  },
+  args: ServerSource &
+    Omit<StdioToStreamableHttpOptions, 'port'> & {
+      port?: number
+      /** The URL path the server's requests start with; `/` by default. */
+      path?: string
+    },
 ): Mount {
   const {
-    stdioCmd,
     port,
     host,
     streamableHttpPath,
@@ -96,7 +99,7 @@ export function stdioToStatefulStreamableHttpMount(
     logger.info(`  - port: ${port}`)
     announceHost(logger, host)
   }
-  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
+  announceServer(logger, args)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
 
   logger.info(
@@ -111,7 +114,11 @@ export function stdioToStatefulStreamableHttpMount(
   )
 
   const children = new OwnedChildProcesses(logger)
-  const modern = createModernHttp({ stdioCmd, children, logger })
+  // The 2026-07-28 relay starts a local server per request. A remote one is
+  // served over the sessions of the earlier protocol versions only.
+  const modern = args.upstream
+    ? undefined
+    : createModernHttp({ stdioCmd: args.stdioCmd, children, logger })
 
   const app = express()
   app.use((_req, res, next) => {
@@ -245,8 +252,8 @@ export function stdioToStatefulStreamableHttpMount(
     await server.connect(transport)
     const responses = new Set<express.Response>()
     openResponses.set(transport, responses)
-    const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
-    const stop = children.own(child)
+    const peer = startServer(spawn, args, children, logger, 'Session')
+    const stop = () => link.stop()
     const pendingRequests = new Set<string | number>()
     let childStopped = false
     const stopChild = (reason: string) => {
@@ -270,7 +277,7 @@ export function stdioToStatefulStreamableHttpMount(
       stopChild('child process failure')
       failPendingCalls({ transport, pending: pendingRequests, res, logger })
     }
-    const link = new ChildLink(processPeer(child, stop), {
+    const link = new ChildLink(peer, {
       failure: (_kind, err) => handleChildFailure(err),
       exit: (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)
@@ -398,7 +405,7 @@ export function stdioToStatefulStreamableHttpMount(
       res.status(503).send('Gateway is shutting down')
       return
     }
-    if (await modern.handle(req, res)) return
+    if (await modern?.handle(req, res)) return
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     let transport: StreamableHTTPServerTransport
@@ -495,7 +502,7 @@ export function stdioToStatefulStreamableHttpMount(
         `StreamableHttp endpoint: http://${endpointHost(listenHost)}:${listenPort}${streamableHttpPath}`,
       ),
     close: async () => {
-      await Promise.all([modern.close(), children.close()])
+      await Promise.all([modern?.close(), children.close()])
     },
   }
 }

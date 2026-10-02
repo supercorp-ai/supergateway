@@ -271,6 +271,10 @@ for (const mode of modes) {
       'debug',
     ])
     const all = () => gateway.output() + gateway.errors()
+    // The log arrives through a pipe, after the response that caused it may
+    // already have: wait for the line rather than expect it at once.
+    const logged = (line: RegExp) =>
+      gateway.waitFor(() => line.test(gateway.output()), `log ${line}`)
     await t.test('the startup listing says a key is required', () => {
       assert.match(
         gateway.output(),
@@ -280,8 +284,7 @@ for (const mode of modes) {
 
     await t.test('no key: 401 with the exact headers and body', async () => {
       assertUnauthorized(await open(mode, port, {}))
-      assert.match(
-        gateway.output(),
+      await logged(
         new RegExp(
           `Rejected a request without a valid API key: ${mode.kind === 'http' ? 'POST' : 'GET'} ${mode.path}$`,
           'm',
@@ -367,8 +370,7 @@ for (const mode of modes) {
             body: JSON.stringify(initialize(1)),
           }).then(replyOf)
         assertUnauthorized(await post({}))
-        assert.match(
-          gateway.output(),
+        await logged(
           /Rejected a request without a valid API key: POST \/message$/m,
         )
         // Past the check, the gateway's own answer for an unknown session.
@@ -394,8 +396,7 @@ for (const mode of modes) {
           assertUnauthorized(
             await fetch(`${base}/mcp`, { method }).then(replyOf),
           )
-          assert.match(
-            gateway.output(),
+          await logged(
             new RegExp(
               `Rejected a request without a valid API key: ${method} /mcp$`,
               'm',

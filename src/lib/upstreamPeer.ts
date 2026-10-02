@@ -47,16 +47,8 @@ export const upstreamPeer =
     const transport =
       remote.type === 'sse'
         ? new SSEClientTransport(remote.url, {
-            eventSourceInit: {
-              fetch: async (url, init) => {
-                // The SDK always passes `init`, with a `Headers` object, which
-                // spreading loses; merge, and let the configured headers win.
-                const merged = new Headers(init!.headers)
-                for (const [name, value] of Object.entries(remote.headers))
-                  merged.set(name, value)
-                return held(url, { ...init, headers: merged })
-              },
-            },
+            // The SDK sends requestInit's headers on the event stream too.
+            eventSourceInit: { fetch: held },
             requestInit: { headers: remote.headers },
           })
         : new StreamableHTTPClientTransport(remote.url, {

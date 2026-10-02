@@ -52,6 +52,7 @@ const remote = async (t: TestContext) => {
       (await (await fetch(`${base}/stats`)).json()) as {
         opened: number
         closed: number
+        sseTeam: string | null
       },
   }
 }
@@ -139,6 +140,8 @@ test('a remote server is served over every output', options, async (t) => {
       await text(await connect(t, transport), 'add', { a: 2, b: 3 }),
       '5',
     )
+  // map: an SSE remote's event stream carries the configured headers too
+  assert.equal((await up.stats()).sseTeam, 'core')
 })
 
 test(
@@ -287,12 +290,11 @@ test(
       jsonrpc: '2.0',
       method: 'notifications/roots/list_changed',
     })
-    await eventually(async () => {
-      const { opened, closed } = await up.stats()
-      return opened === closed
-    })
-    const settled = await up.stats()
-    assert.equal(settled.closed, settled.opened)
+    // Five in all: the stateless client's initialize, its call and its
+    // notification each had a session of their own. The notification's 202
+    // comes before it is relayed, so count, rather than compare.
+    assert.equal(await closes(5), 5)
+    assert.equal((await up.stats()).opened, 5)
 
     // map: shutdown, with sessions still open
     await text(
@@ -483,7 +485,8 @@ test(
       assert.equal(response.status, 400, version)
       assert.match(
         await response.text(),
-        new RegExp(`Unsupported protocol version: ${version}`),
+        // Older SDKs leave the version out of the message.
+        /Unsupported protocol version/,
       )
     }
   },

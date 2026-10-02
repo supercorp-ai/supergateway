@@ -7,7 +7,8 @@
 //   can see exactly what the gateway forwarded.
 // - `ask` asks the client to sample, and returns what it answered: a request
 //   from the server to the client, relayed back through the gateway.
-// - GET /stats says how many sessions were opened and how many have closed.
+// - GET /stats says how many sessions were opened and how many have closed,
+//   and the x-team header the last SSE event stream was opened with.
 // - A client named "refuse" has its initialize answered with an error, and
 //   one named "slow" has it answered after a second.
 //
@@ -20,7 +21,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CreateMessageResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
-const stats = { opened: 0, closed: 0 }
+const stats = { opened: 0, closed: 0, sseTeam: null }
 
 const newServer = () => {
   const server = new McpServer({ name: 'remote-server', version: '1.0.0' })
@@ -112,7 +113,9 @@ app.all('/mcp', async (req, res) => {
 })
 
 const events = new Map()
-app.get('/sse', async (_req, res) => {
+app.get('/sse', async (req, res) => {
+  // What the event stream itself was opened with.
+  stats.sseTeam = req.headers['x-team'] ?? null
   const transport = new SSEServerTransport('/message', res)
   events.set(transport.sessionId, transport)
   stats.opened++

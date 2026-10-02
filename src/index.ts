@@ -38,11 +38,21 @@ import {
   inputTransportOf,
   parseCli,
   sessionTimeoutOf,
+  givenOptions,
   unknownArguments,
   type Cli,
   type InputTransport,
 } from './cli.js'
 import type { Logger } from './types.js'
+import type { ChildCommand } from './lib/childCommand.js'
+import { loadConfig, effectiveTransport } from './config/configFile.js'
+import {
+  cliForEntry,
+  configFromCli,
+  entryFlagBesideConfig,
+  overrideFromCli,
+  printableConfig,
+} from './config/cliConfig.js'
 
 // What a listening gateway takes beyond the command line, once checked:
 // `host` is the address `--host` names, or undefined for every interface, and
@@ -50,6 +60,11 @@ import type { Logger } from './types.js'
 type Listening = { host: string | undefined; apiKeys: string[] }
 
 type Start = (argv: Cli, logger: Logger, listening: Listening) => Promise<void>
+
+// A config file can start a server without a shell (`command` + `args`), or
+// with its own environment and directory; it puts that here in place of the
+// `--stdio` string. See cliForEntry.
+const stdioCommand = (argv: Cli) => argv.stdio! as ChildCommand
 
 const unsupported = (
   logger: Logger,
@@ -68,7 +83,7 @@ const stdioToStreamableHttp: Start = async (
   // Built when the gateway starts, after the mode is announced and the
   // timeout checked, so header diagnostics keep their place in the log.
   const shared = () => ({
-    stdioCmd: argv.stdio!,
+    stdioCmd: stdioCommand(argv),
     port: argv.port,
     host,
     streamableHttpPath: argv.streamableHttpPath,
@@ -104,7 +119,7 @@ const start: Record<InputTransport, Start> = {
     const { host, apiKeys } = listening
     if (argv.outputTransport === 'sse')
       await stdioToSse({
-        stdioCmd: argv.stdio!,
+        stdioCmd: stdioCommand(argv),
         port: argv.port,
         host,
         baseUrl: argv.baseUrl,
@@ -118,7 +133,7 @@ const start: Record<InputTransport, Start> = {
       })
     else if (argv.outputTransport === 'ws')
       await stdioToWs({
-        stdioCmd: argv.stdio!,
+        stdioCmd: stdioCommand(argv),
         port: argv.port,
         host,
         messagePath: argv.messagePath,
@@ -151,16 +166,122 @@ const start: Record<InputTransport, Start> = {
   },
 }
 
+// Where a flag refused beside --config belongs in the file.
+function besideHint(flag: string, file: string) {
+  if (flag === 'stdio')
+    return `Put the server under "mcpServers" in ${file}, with "command" and "args", or "stdio"`
+  if (flag === 'sse' || flag === 'streamableHttp')
+    return `Put the server under "mcpServers" in ${file}, with "url" and "type": "${flag}"`
+  return `Set "${flag === 'header' ? 'headers' : flag}" in ${file}, on a server or at the top level`
+}
+
+/**
+ * The command line to run: the one given, or, with `--config`, the one the
+ * file's entry is equivalent to, so a file runs through exactly the code a
+ * command line does. Exits for `--printConfig`, `--checkConfig` and errors.
+ */
+function invocation(args: string[], cli: Cli, logger: Logger) {
+  const given = givenOptions(args)
+  const print = (value: unknown) => {
+    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
+    process.exit(0)
+  }
+  if (!cli.config) {
+    if (cli.checkConfig) {
+      logger.error('Error: --checkConfig checks the file given with --config')
+      process.exit(1)
+    }
+    if (cli.printConfig) {
+      // As without it: a command line that names no server describes none.
+      const chosen = inputTransportOf(cli)
+      if ('error' in chosen) {
+        logger.error(chosen.error)
+        process.exit(1)
+      }
+      print(printableConfig(configFromCli(cli, given)))
+    }
+    return { argv: cli, notes: [] }
+  }
+  const beside = entryFlagBesideConfig(given)
+  if (beside !== undefined) {
+    logger.error(
+      `Error: --${beside} can't be combined with --config. ${besideHint(beside, cli.config)}`,
+    )
+    process.exit(1)
+  }
+  let text: string
+  try {
+    text = readFileSync(cli.config, 'utf8')
+  } catch (err) {
+    logger.error(`Error: Cannot read ${cli.config}: ${(err as Error).message}`)
+    process.exit(1)
+  }
+  const loaded = loadConfig(cli.config, text, process.env)
+  for (const warning of loaded.warnings) logger.error(`Warning: ${warning}`)
+  if ('error' in loaded) {
+    logger.error(loaded.error)
+    process.exit(1)
+  }
+  const { config, extraKeys, extraKeyFiles, notes } = overrideFromCli(
+    loaded.config,
+    cli,
+    given,
+  )
+  if (cli.printConfig) print(printableConfig(config))
+  if (cli.checkConfig) {
+    process.stdout.write(
+      `${cli.config} is valid: ${config.entries.length} ${config.entries.length === 1 ? 'server' : 'servers'}\n` +
+        config.entries
+          .map(
+            (entry) =>
+              `  ${entry.path}  ${entry.name} (${effectiveTransport(entry, config.defaults)})\n`,
+          )
+          .join(''),
+    )
+    process.exit(0)
+  }
+  const [entry, second] = config.entries
+  const notYet =
+    second !== undefined
+      ? 'Several servers on one port'
+      : 'members' in entry.server
+        ? 'Combining servers on one URL'
+        : entry.server.source.kind === 'url' &&
+            effectiveTransport(entry, config.defaults) !== 'stdio'
+          ? 'Serving a remote server over HTTP'
+          : undefined
+  if (notYet) {
+    logger.error(
+      `Error: ${notYet} is coming in a later 4.2 change; ${cli.config} is valid, but this build runs one server per file`,
+    )
+    process.exit(1)
+  }
+  const run = cliForEntry(config, entry, extraKeys, extraKeyFiles)
+  const argv = parseCli(run.args)
+  if (run.command) argv.stdio = run.command as string
+  return { argv, notes }
+}
+
 async function main() {
   const args = hideBin(process.argv)
-  const argv = parseCli(args)
-  const logger = getLogger({
-    logLevel: argv.logLevel,
-    logFormat: argv.logFormat,
-    outputTransport: argv.outputTransport as string,
+  const cli = parseCli(args)
+  const cliLogger = getLogger({
+    logLevel: cli.logLevel,
+    logFormat: cli.logFormat,
+    outputTransport: cli.outputTransport as string,
   })
   // Warned, never refused: a refusal would stop deployments that start today.
-  for (const warning of unknownArguments(args, argv)) logger.error(warning)
+  for (const warning of unknownArguments(args, cli)) cliLogger.error(warning)
+  const { argv, notes } = invocation(args, cli, cliLogger)
+  const logger =
+    argv === cli
+      ? cliLogger
+      : getLogger({
+          logLevel: argv.logLevel,
+          logFormat: argv.logFormat,
+          outputTransport: argv.outputTransport as string,
+        })
+  for (const note of notes) logger.info(note)
   const chosen = inputTransportOf(argv)
   if ('error' in chosen) {
     logger.error(chosen.error)

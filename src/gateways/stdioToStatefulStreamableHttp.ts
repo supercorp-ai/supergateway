@@ -23,9 +23,14 @@ import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
+import {
+  describeCommand,
+  spawnCommand,
+  type ChildCommand,
+} from '../lib/childCommand.js'
 
 export interface StdioToStreamableHttpArgs {
-  stdioCmd: string
+  stdioCmd: ChildCommand
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
@@ -69,7 +74,7 @@ export async function stdioToStatefulStreamableHttp(
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
   announceHost(logger, host)
-  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - stdio: ${describeCommand(stdioCmd)}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
 
   logger.info(
@@ -225,7 +230,7 @@ export async function stdioToStatefulStreamableHttp(
     await server.connect(transport)
     const responses = new Set<express.Response>()
     openResponses.set(transport, responses)
-    const child = spawn(stdioCmd, children.spawnOptions)
+    const child = spawnCommand(spawn, stdioCmd, children.spawnOptions)
     const stop = children.own(child)
     const pendingRequests = new Set<string | number>()
     let childStopped = false

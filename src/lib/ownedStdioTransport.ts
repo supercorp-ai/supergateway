@@ -8,6 +8,7 @@ import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { LineSplitter } from './lineSplitter.js'
 import { holdOutput } from './outputBackpressure.js'
+import { spawnCommand, type ChildCommand } from './childCommand.js'
 
 /** A request-owned pipe whose shutdown also reaps the child's descendants. */
 export class OwnedStdioTransport implements Transport {
@@ -19,13 +20,13 @@ export class OwnedStdioTransport implements Transport {
   private closed = false
 
   constructor(
-    private readonly command: string,
+    private readonly command: ChildCommand,
     private readonly owner: OwnedChildProcesses,
     private readonly logger: Logger,
   ) {}
 
   async start(): Promise<void> {
-    const child = spawn(this.command, this.owner.spawnOptions)
+    const child = spawnCommand(spawn, this.command, this.owner.spawnOptions)
     this.child = child
     this.stop = this.owner.own(child)
     const fail = (error: Error) => {

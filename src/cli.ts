@@ -134,6 +134,20 @@ const cli = (args: string[]) =>
         'MCP protocol version to use for auto-initialization when the request has no MCP-Protocol-Version header. Defaults to "2024-11-05" if not specified.',
       default: '2024-11-05',
     })
+    .option('config', {
+      type: 'string',
+      description:
+        'Read servers and settings from a JSON or JSONC file. It uses "mcpServers" like Claude Desktop, so one of those files works as-is. Gateway-wide flags (--port, --host, --logLevel, --logFormat, --exitWithProcess, --healthEndpoint, --apiKey, --apiKeyFile) override it.',
+    })
+    .option('printConfig', {
+      type: 'boolean',
+      description:
+        'Print the config this command is equivalent to, secrets redacted, and exit',
+    })
+    .option('checkConfig', {
+      type: 'boolean',
+      description: 'Check the --config file and exit',
+    })
     .option('exitWithProcess', {
       type: 'number',
       description:
@@ -205,6 +219,16 @@ const typedOptions = (args: string[]) =>
       ? [...arg.slice(1)].map((name) => ({ name, spelling: `-${name}` }))
       : []
   })
+
+/** The declared options the command line actually gives, as yargs files them. */
+export function givenOptions(args: string[]): Set<string> {
+  const declared = declaredOptions()
+  return new Set(
+    typedOptions(args)
+      .map((option) => option.name)
+      .filter((name) => declared.has(name)),
+  )
+}
 
 /**
  * A warning for each argument the gateway parsed and will ignore.

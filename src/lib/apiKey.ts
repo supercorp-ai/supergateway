@@ -23,7 +23,8 @@ import type { Logger } from '../types.js'
 export function apiKeysOf(
   argv: {
     apiKey?: string[]
-    apiKeyFile?: string
+    // Repeated when a config file and --apiKeyFile both give one.
+    apiKeyFile?: string | string[]
     outputTransport?: string
   },
   env: Record<string, string | undefined>,
@@ -34,7 +35,9 @@ export function apiKeysOf(
     ...named('SUPERGATEWAY_API_KEY', env.SUPERGATEWAY_API_KEY),
   ]
   const files: [string, string][] = [
-    ...named('--apiKeyFile', argv.apiKeyFile),
+    ...[argv.apiKeyFile ?? []]
+      .flat()
+      .map((path): [string, string] => ['--apiKeyFile', path]),
     ...named('SUPERGATEWAY_API_KEY_FILE', env.SUPERGATEWAY_API_KEY_FILE),
   ]
   // `--apiKey` with no value at all parses to an empty list: present, empty.

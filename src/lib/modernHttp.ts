@@ -23,9 +23,10 @@ import {
   RetainedChildren,
   isContinuationHandle,
 } from './retainedChildren.js'
+import type { ChildCommand } from './childCommand.js'
 
 export function createModernHttp(args: {
-  stdioCmd: string
+  stdioCmd: ChildCommand
   children: OwnedChildProcesses
   logger: Logger
 }) {

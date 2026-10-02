@@ -8,27 +8,22 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { createModernHttp } from '../lib/modernHttp.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
 import { SessionLivenessProbe } from '../lib/sessionLivenessProbe.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
-import { describeHeaders } from '../lib/headers.js'
-import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
-import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
-import {
-  announceServer,
-  startServer,
-  type ServerSource,
-} from '../lib/serverSource.js'
+import { requireApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
 
 interface StdioToStreamableHttpOptions {
   port: number
@@ -94,21 +89,16 @@ export function stdioToStatefulStreamableHttpMount(
     sessionTimeout,
   } = args
 
-  logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  if (port !== undefined) {
-    logger.info(`  - port: ${port}`)
-    announceHost(logger, host)
-  }
-  announceServer(logger, args)
-  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
-
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
-  logApiKeys(logger, apiKeys)
+  announceGateway(logger, {
+    headers,
+    port,
+    host,
+    source: args,
+    settings: [`streamableHttpPath: ${streamableHttpPath}`],
+    corsOrigin,
+    healthEndpoints,
+    apiKeys,
+  })
   logger.info(
     `  - Session timeout: ${sessionTimeout ? `${sessionTimeout}ms` : 'disabled'}`,
   )

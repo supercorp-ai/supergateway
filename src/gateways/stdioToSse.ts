@@ -8,22 +8,17 @@ import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
-import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
-import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
-import {
-  announceServer,
-  startServer,
-  type ServerSource,
-} from '../lib/serverSource.js'
+import { requireApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
 
 interface StdioToSseOptions {
   port: number
@@ -93,25 +88,20 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     path = '/',
   } = args
 
-  logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  if (port !== undefined) {
-    logger.info(`  - port: ${port}`)
-    announceHost(logger, host)
-  }
-  announceServer(logger, args)
-  if (baseUrl) {
-    logger.info(`  - baseUrl: ${baseUrl}`)
-  }
-  logger.info(`  - ssePath: ${ssePath}`)
-  logger.info(`  - messagePath: ${messagePath}`)
-
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
-  logApiKeys(logger, apiKeys)
+  announceGateway(logger, {
+    headers,
+    port,
+    host,
+    source: args,
+    settings: [
+      ...(baseUrl ? [`baseUrl: ${baseUrl}`] : []),
+      `ssePath: ${ssePath}`,
+      `messagePath: ${messagePath}`,
+    ],
+    corsOrigin,
+    healthEndpoints,
+    apiKeys,
+  })
 
   const children = new OwnedChildProcesses(logger)
   const handoff = new ChildHandoff(logger)

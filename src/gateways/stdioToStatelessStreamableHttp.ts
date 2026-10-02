@@ -8,24 +8,19 @@ import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { createModernHttp } from '../lib/modernHttp.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
-import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
-import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
-import {
-  announceServer,
-  startServer,
-  type ServerSource,
-} from '../lib/serverSource.js'
+import { requireApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
 
 interface StdioToStreamableHttpOptions {
   port: number
@@ -91,22 +86,19 @@ export function stdioToStatelessStreamableHttpMount(
     protocolVersion,
   } = args
 
-  logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  if (port !== undefined) {
-    logger.info(`  - port: ${port}`)
-    announceHost(logger, host)
-  }
-  announceServer(logger, args)
-  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
-  logger.info(`  - protocolVersion: ${protocolVersion}`)
-
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
-  logApiKeys(logger, apiKeys)
+  announceGateway(logger, {
+    headers,
+    port,
+    host,
+    source: args,
+    settings: [
+      `streamableHttpPath: ${streamableHttpPath}`,
+      `protocolVersion: ${protocolVersion}`,
+    ],
+    corsOrigin,
+    healthEndpoints,
+    apiKeys,
+  })
 
   const children = new OwnedChildProcesses(logger)
   // The 2026-07-28 relay starts a local server per request. A remote one is

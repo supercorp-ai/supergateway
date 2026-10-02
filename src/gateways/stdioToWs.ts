@@ -6,9 +6,9 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
+import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import {
@@ -17,12 +17,8 @@ import {
   type StartPeer,
 } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
-import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
-import {
-  announceServer,
-  startServer,
-  type ServerSource,
-} from '../lib/serverSource.js'
+import { requireApiKey, verifyApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
 
 interface StdioToWsOptions {
   port: number
@@ -202,19 +198,15 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     apiKeys = [],
     path = '/',
   } = args
-  if (port !== undefined) {
-    logger.info(`  - port: ${port}`)
-    announceHost(logger, host)
-  }
-  announceServer(logger, args)
-  logger.info(`  - messagePath: ${messagePath}`)
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
-  logApiKeys(logger, apiKeys)
+  announceGateway(logger, {
+    port,
+    host,
+    source: args,
+    settings: [`messagePath: ${messagePath}`],
+    corsOrigin,
+    healthEndpoints,
+    apiKeys,
+  })
 
   const children = new OwnedChildProcesses(logger)
   const connections = new WsConnections(

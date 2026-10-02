@@ -11,7 +11,11 @@ import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
+import {
+  ChildHandoff,
+  processPeer,
+  type ChildOwner,
+} from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { logApiKeys, requireApiKey, verifyApiKey } from '../lib/apiKey.js'
 import {
@@ -86,8 +90,7 @@ class WsConnections {
     // A client that reconnects and carries on without initializing gets its
     // new child initialized by the gateway (GW-034).
     const connection = new ConnectionChild(
-      child,
-      this.children.own(child),
+      processPeer(child, this.children.own(child)),
       this.owner(clientId),
       this.handoff,
       this.logger,

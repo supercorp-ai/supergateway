@@ -21,7 +21,7 @@ import type { Mount } from '../lib/serve.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildLink } from '../lib/childHandoff.js'
+import { ChildLink, processPeer } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { logApiKeys, requireApiKey } from '../lib/apiKey.js'
 import {
@@ -270,7 +270,7 @@ export function stdioToStatefulStreamableHttpMount(
       stopChild('child process failure')
       failPendingCalls({ transport, pending: pendingRequests, res, logger })
     }
-    const link = new ChildLink(child, stop, {
+    const link = new ChildLink(processPeer(child, stop), {
       failure: (_kind, err) => handleChildFailure(err),
       exit: (code, signal) => {
         logger.error(`Child exited: code=${code}, signal=${signal}`)

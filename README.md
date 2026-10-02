@@ -23,6 +23,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
 - **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
 - **`--port 8000`**: Port to listen on (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: `8000`)
+- **`--host 127.0.0.1`**: Address to listen on, e.g. `127.0.0.1` or `::1` (`[::1]` also works) (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: every interface). `--baseUrl` does not control binding: only `--host` limits which addresses accept connections. Refused in SSE→stdio and Streamable HTTP→stdio mode, which listen on nothing
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE clients (stdio→SSE mode; optional)
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)

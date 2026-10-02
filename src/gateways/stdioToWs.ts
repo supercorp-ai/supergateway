@@ -9,12 +9,15 @@ import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
 
 export interface StdioToWsArgs {
   stdioCmd: string
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   messagePath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
@@ -138,9 +141,17 @@ class WsConnections {
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
-  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
-    args
+  const {
+    stdioCmd,
+    port,
+    host,
+    messagePath,
+    logger,
+    healthEndpoints,
+    corsOrigin,
+  } = args
   logger.info(`  - port: ${port}`)
+  announceHost(logger, host)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - messagePath: ${messagePath}`)
   logger.info(
@@ -208,8 +219,10 @@ export async function stdioToWs(args: StdioToWsArgs) {
 
   wsTransport.start()
 
-  httpServer.listen(port, () => {
+  listenOn(httpServer, port, host, () => {
     logger.info(`Listening on port ${port}`)
-    logger.info(`WebSocket endpoint: ws://localhost:${port}${messagePath}`)
+    logger.info(
+      `WebSocket endpoint: ws://${endpointHost(host)}:${port}${messagePath}`,
+    )
   })
 }

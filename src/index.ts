@@ -30,6 +30,7 @@ import { getLogger } from './lib/getLogger.js'
 import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
 import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
 import {
+  hostOf,
   inputTransportOf,
   parseCli,
   sessionTimeoutOf,
@@ -38,7 +39,12 @@ import {
 } from './cli.js'
 import type { Logger } from './types.js'
 
-type Start = (argv: Cli, logger: Logger) => Promise<void>
+// `host` is the address `--host` names, or undefined for every interface.
+type Start = (
+  argv: Cli,
+  logger: Logger,
+  host: string | undefined,
+) => Promise<void>
 
 const unsupported = (
   logger: Logger,
@@ -49,12 +55,13 @@ const unsupported = (
   process.exit(1)
 }
 
-const stdioToStreamableHttp: Start = async (argv, logger) => {
+const stdioToStreamableHttp: Start = async (argv, logger, host) => {
   // Built when the gateway starts, after the mode is announced and the
   // timeout checked, so header diagnostics keep their place in the log.
   const shared = () => ({
     stdioCmd: argv.stdio!,
     port: argv.port,
+    host,
     streamableHttpPath: argv.streamableHttpPath,
     logger,
     corsOrigin: corsOrigin({ argv }),
@@ -83,11 +90,12 @@ const stdioToStreamableHttp: Start = async (argv, logger) => {
 
 // How each input transport starts, given the output the command line chose.
 const start: Record<InputTransport, Start> = {
-  stdio: async (argv, logger) => {
+  stdio: async (argv, logger, host) => {
     if (argv.outputTransport === 'sse')
       await stdioToSse({
         stdioCmd: argv.stdio!,
         port: argv.port,
+        host,
         baseUrl: argv.baseUrl,
         ssePath: argv.ssePath,
         messagePath: argv.messagePath,
@@ -100,13 +108,14 @@ const start: Record<InputTransport, Start> = {
       await stdioToWs({
         stdioCmd: argv.stdio!,
         port: argv.port,
+        host,
         messagePath: argv.messagePath,
         logger,
         corsOrigin: corsOrigin({ argv }),
         healthEndpoints: argv.healthEndpoint as string[],
       })
     else if (argv.outputTransport === 'streamableHttp')
-      await stdioToStreamableHttp(argv, logger)
+      await stdioToStreamableHttp(argv, logger, host)
     else unsupported(logger, 'stdio', argv.outputTransport)
   },
   sse: async (argv, logger) => {
@@ -140,6 +149,11 @@ async function main() {
     logger.error(chosen.error)
     process.exit(1)
   }
+  const listen = hostOf(argv)
+  if ('error' in listen) {
+    logger.error(listen.error)
+    process.exit(1)
+  }
 
   logger.info('Starting...')
   logger.info(
@@ -148,7 +162,7 @@ async function main() {
   logger.info(`  - outputTransport: ${argv.outputTransport}`)
 
   try {
-    await start[chosen.input](argv, logger)
+    await start[chosen.input](argv, logger, listen.host)
   } catch (err) {
     logger.error('Fatal error:', err)
     process.exit(1)

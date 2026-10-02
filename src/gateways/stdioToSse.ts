@@ -13,6 +13,7 @@ import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
 import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildHandoff, type ChildOwner } from '../lib/childHandoff.js'
 import { ConnectionChild } from '../lib/connectionChild.js'
@@ -20,6 +21,8 @@ import { ConnectionChild } from '../lib/connectionChild.js'
 export interface StdioToSseArgs {
   stdioCmd: string
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   baseUrl: string
   ssePath: string
   messagePath: string
@@ -44,6 +47,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   const {
     stdioCmd,
     port,
+    host,
     baseUrl,
     ssePath,
     messagePath,
@@ -55,6 +59,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
+  announceHost(logger, host)
   logger.info(`  - stdio: ${stdioCmd}`)
   if (baseUrl) {
     logger.info(`  - baseUrl: ${baseUrl}`)
@@ -331,10 +336,14 @@ export async function stdioToSse(args: StdioToSseArgs) {
   })
 
   keepConnectionsAlive(
-    app.listen(port, () => {
+    listenOn(app, port, host, () => {
       logger.info(`Listening on port ${port}`)
-      logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
-      logger.info(`POST messages: http://localhost:${port}${messagePath}`)
+      logger.info(
+        `SSE endpoint: http://${endpointHost(host)}:${port}${ssePath}`,
+      )
+      logger.info(
+        `POST messages: http://${endpointHost(host)}:${port}${messagePath}`,
+      )
     }),
   )
 }

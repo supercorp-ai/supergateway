@@ -14,6 +14,7 @@ import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
@@ -22,6 +23,8 @@ import { failPendingCalls } from '../lib/failPendingCalls.js'
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   streamableHttpPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
@@ -47,6 +50,7 @@ export async function stdioToStatelessStreamableHttp(
   const {
     stdioCmd,
     port,
+    host,
     streamableHttpPath,
     logger,
     corsOrigin,
@@ -57,6 +61,7 @@ export async function stdioToStatelessStreamableHttp(
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
+  announceHost(logger, host)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
   logger.info(`  - protocolVersion: ${protocolVersion}`)
@@ -302,10 +307,10 @@ export async function stdioToStatelessStreamableHttp(
   })
 
   keepConnectionsAlive(
-    app.listen(port, () => {
+    listenOn(app, port, host, () => {
       logger.info(`Listening on port ${port}`)
       logger.info(
-        `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+        `StreamableHttp endpoint: http://${endpointHost(host)}:${port}${streamableHttpPath}`,
       )
     }),
   )

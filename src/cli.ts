@@ -1,5 +1,6 @@
 import yargs from 'yargs'
 import { getVersion } from './lib/getVersion.js'
+import { normalizeHost } from './lib/listenHost.js'
 
 export type InputTransport = 'stdio' | 'sse' | 'streamableHttp'
 
@@ -38,6 +39,11 @@ export function parseCli(args: string[]) {
       type: 'number',
       default: 8000,
       description: '(stdio→SSE, stdio→WS) Port for output MCP server',
+    })
+    .option('host', {
+      type: 'string',
+      description:
+        '(stdio→SSE, stdio→WS, stdio→Streamable HTTP) Address to listen on, e.g. 127.0.0.1 or ::1. Defaults to every interface.',
     })
     .option('baseUrl', {
       type: 'string',
@@ -187,4 +193,28 @@ export function sessionTimeoutOf(
       error: `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
     }
   return { sessionTimeout: argv.sessionTimeout }
+}
+
+/**
+ * The address to listen on, if `--host` names one, or why it cannot be used.
+ *
+ * Unset, a gateway listens on every interface, as it always has. The bridges
+ * listen on nothing, and a flag that restricts who can connect must not be
+ * accepted and then ignored, so there it is an error. So is an empty value,
+ * as `--host "$UNSET_VARIABLE"` gives, which `listen` would also take to mean
+ * every interface.
+ */
+export function hostOf(
+  argv: Cli,
+): { host: string | undefined } | { error: string } {
+  if (argv.host === undefined) return { host: undefined }
+  if (argv.outputTransport === 'stdio')
+    return {
+      error:
+        'Error: --host applies only when supergateway listens (stdio→SSE, stdio→WS or stdio→Streamable HTTP)',
+    }
+  const host = normalizeHost(argv.host)
+  if (host === '')
+    return { error: 'Error: --host needs an address, e.g. 127.0.0.1 or ::1' }
+  return { host }
 }

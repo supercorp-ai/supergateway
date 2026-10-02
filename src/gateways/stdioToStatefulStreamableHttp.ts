@@ -18,6 +18,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import { jsonBodyErrors } from '../lib/jsonBodyErrors.js'
 import { describeHeaders } from '../lib/headers.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
+import { announceHost, endpointHost, listenOn } from '../lib/listenHost.js'
 import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
@@ -25,6 +26,8 @@ import { failPendingCalls } from '../lib/failPendingCalls.js'
 export interface StdioToStreamableHttpArgs {
   stdioCmd: string
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   streamableHttpPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
@@ -50,6 +53,7 @@ export async function stdioToStatefulStreamableHttp(
   const {
     stdioCmd,
     port,
+    host,
     streamableHttpPath,
     logger,
     corsOrigin,
@@ -60,6 +64,7 @@ export async function stdioToStatefulStreamableHttp(
 
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
   logger.info(`  - port: ${port}`)
+  announceHost(logger, host)
   logger.info(`  - stdio: ${stdioCmd}`)
   logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
 
@@ -449,10 +454,10 @@ export async function stdioToStatefulStreamableHttp(
   app.delete(streamableHttpPath, handleSessionRequest)
 
   keepConnectionsAlive(
-    app.listen(port, () => {
+    listenOn(app, port, host, () => {
       logger.info(`Listening on port ${port}`)
       logger.info(
-        `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+        `StreamableHttp endpoint: http://${endpointHost(host)}:${port}${streamableHttpPath}`,
       )
     }),
   )

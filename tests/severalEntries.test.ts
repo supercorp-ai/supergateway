@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import WebSocket from 'ws'
+// The `ws` client, not the global one: `WebSocket` is undefined on Node 20,
+// which the compat job still covers, and the SDK's transport needs one.
+import { WebSocket } from 'ws'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -25,6 +27,7 @@ const mockServer = resolve('tests/helpers/mock-mcp-server.js')
 const identityPeer = resolve('tests/helpers/lifecycle-identity-peer.mjs')
 const mock = { command: node, args: [mockServer, 'stdio'] }
 const options = { timeout: gatewayTimeout(30000) }
+globalThis.WebSocket ??= WebSocket as unknown as typeof globalThis.WebSocket
 
 const writeConfig = (t: TestContext, value: unknown) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-several-'))
@@ -43,6 +46,17 @@ const serve = async (
   const file = writeConfig(t, { port, ...config })
   const gateway = launchGateway(t, ['--config', file, ...args])
   await gateway.ready()
+  // "Listening on port" is one write and each entry's URLs are the next ones,
+  // so a reader can see the first before the rest arrive.
+  const entries = Object.keys(config.mcpServers as object).length
+  await gateway.waitFor(
+    () =>
+      (
+        gateway.output().match(/(SSE|StreamableHttp|WebSocket) endpoint:/g) ??
+        []
+      ).length === entries,
+    "log every entry's endpoint",
+  )
   return { port, file, gateway }
 }
 

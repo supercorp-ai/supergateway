@@ -14,7 +14,7 @@ const routePath = (path: string) => (path.startsWith('/') ? path : `/${path}`)
 
 /** The command line, as every gateway reads it. */
 export function parseCli(args: string[]) {
-  return yargs(args)
+  const argv = yargs(args)
     .version(getVersion())
     .option('stdio', {
       type: 'string',
@@ -31,13 +31,6 @@ export function parseCli(args: string[]) {
     .option('outputTransport', {
       type: 'string',
       choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
-      default: () => {
-        if (args.includes('--stdio')) return 'sse'
-        if (args.includes('--sse')) return 'stdio'
-        if (args.includes('--streamableHttp')) return 'stdio'
-
-        return undefined
-      },
       description:
         'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse or --streamableHttp.',
     })
@@ -117,6 +110,29 @@ export function parseCli(args: string[]) {
     })
     .help()
     .parseSync()
+  argv.outputTransport ??= defaultOutputTransport(argv)
+  return argv
+}
+
+/**
+ * The output transport when none is named: SSE for a local server, stdio for
+ * a remote one.
+ *
+ * Decided from what was parsed. It used to look for the literal argument
+ * `--stdio`, `--sse` or `--streamableHttp`, so the same flag spelled
+ * `--stdio=cmd` or `--streamable-http url`, both of which yargs accepts, left
+ * the output transport undefined and the gateway refused to start
+ * ("stdio→undefined not supported").
+ */
+const defaultOutputTransport = (argv: {
+  stdio?: string
+  sse?: string
+  streamableHttp?: string
+}) => {
+  if (argv.stdio !== undefined) return 'sse'
+  if (argv.sse !== undefined || argv.streamableHttp !== undefined)
+    return 'stdio'
+  return undefined
 }
 
 export type Cli = ReturnType<typeof parseCli>

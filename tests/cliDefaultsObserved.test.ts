@@ -40,6 +40,33 @@ const cases = [
     select: 'Connecting to Streamable HTTP',
     expect: () => 'Connecting to Streamable HTTP...',
   },
+  // The same flags, spelled the other ways yargs accepts. The default used
+  // to be found by looking for the literal argument, so none of these
+  // started: "stdio→undefined not supported".
+  {
+    name: 'stdio default, --stdio=',
+    input: [`--stdio=${peerCommand}`],
+    output: 'sse',
+    extra: [],
+    select: 'SSE endpoint:',
+    expect: (port: number) => `SSE endpoint: http://localhost:${port}/sse`,
+  },
+  {
+    name: 'SSE default, --sse=',
+    input: ['--sse=http://127.0.0.1:54321/events'],
+    output: 'stdio',
+    extra: [],
+    select: 'Connecting to SSE',
+    expect: () => 'Connecting to SSE...',
+  },
+  {
+    name: 'HTTP default, --streamable-http',
+    input: ['--streamable-http', 'http://127.0.0.1:54321/mcp'],
+    output: 'stdio',
+    extra: [],
+    select: 'Connecting to Streamable HTTP',
+    expect: () => 'Connecting to Streamable HTTP...',
+  },
   {
     name: 'stateful timeout',
     input: ['--stdio', peerCommand],
@@ -86,7 +113,7 @@ for (const item of cases) {
         String(port),
       ])
       await gateway.ready()
-      if (item.name === 'stdio default') {
+      if (item.output === 'sse') {
         // Readiness is announced before the two endpoint lines. Wait for the
         // last record on that stream before checking the preceding endpoint.
         await gateway.waitFor(

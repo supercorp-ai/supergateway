@@ -211,6 +211,28 @@ class StatefulSessions {
     this.transports.delete(sessionId)
   }
 
+  // Decrement session access count when the response ends, once, whichever
+  // of finish and close comes first. A POST's session may have no id yet: an
+  // initialize the SDK rejected never gets one.
+  private countResponse(
+    res: express.Response,
+    method: string,
+    sessionId: () => string | undefined,
+    ended?: (sessionId: string) => void,
+  ) {
+    let responseEnded = false
+    const handleResponseEnd = (event: string) => {
+      const id = sessionId()
+      if (responseEnded || !id) return
+      responseEnded = true
+      this.logger.info(`Response ${event}`, id)
+      this.counter?.dec(id, `${method} response ${event}`)
+      ended?.(id)
+    }
+    res.on('finish', () => handleResponseEnd('finished'))
+    res.on('close', () => handleResponseEnd('closed'))
+  }
+
   private watch(
     transport: StreamableHTTPServerTransport,
     res: express.Response,
@@ -259,19 +281,12 @@ class StatefulSessions {
       return
     }
 
-    // Decrement session access count when response ends
-    let responseEnded = false
-    const handleResponseEnd = (event: string) => {
-      if (!responseEnded && transport.sessionId) {
-        responseEnded = true
-        this.logger.info(`Response ${event}`, transport.sessionId)
-        this.counter?.dec(transport.sessionId, `POST response ${event}`)
-        this.liveness.get(transport.sessionId)?.requestFinished()
-      }
-    }
-
-    res.on('finish', () => handleResponseEnd('finished'))
-    res.on('close', () => handleResponseEnd('closed'))
+    this.countResponse(
+      res,
+      'POST',
+      () => transport.sessionId,
+      (id) => this.liveness.get(id)?.requestFinished(),
+    )
     this.watch(transport, res)
 
     // Handle the request
@@ -303,18 +318,7 @@ class StatefulSessions {
       }
     }
 
-    // Decrement session access count when response ends
-    let responseEnded = false
-    const handleResponseEnd = (event: string) => {
-      if (!responseEnded) {
-        responseEnded = true
-        this.logger.info(`Response ${event}`, sessionId)
-        this.counter?.dec(sessionId, `${req.method} response ${event}`)
-      }
-    }
-
-    res.on('finish', () => handleResponseEnd('finished'))
-    res.on('close', () => handleResponseEnd('closed'))
+    this.countResponse(res, req.method, () => sessionId)
 
     const transport = this.transports.get(sessionId)!
     this.watch(transport, res)

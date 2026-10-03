@@ -355,8 +355,19 @@ function reportValid(file: string, config: Config): never {
   process.exit(0)
 }
 
+// Why several entries can't share the port as configured, if they can't.
+const sharedPortConflict = (served: Served[], healthEndpoints: string[]) =>
+  routeConflict(
+    served.map(({ name, path, argv }) => ({
+      name,
+      path,
+      routes: routesOf(argv),
+    })),
+    healthEndpoints,
+  )
+
 // What a valid entry asks for that this build can't serve yet, if anything.
-function notYetServable(
+function entryNotYetServable(
   entry: Entry,
   defaults: EndpointOptions,
   several: boolean,
@@ -367,6 +378,12 @@ function notYetServable(
     return 'Serving an entry over stdio beside others'
   return undefined
 }
+
+// The first thing a valid config asks for that this build can't serve yet.
+const notYetServable = (config: Config, several: boolean) =>
+  config.entries
+    .map((entry) => entryNotYetServable(entry, config.defaults, several))
+    .find((reason) => reason !== undefined)
 
 /**
  * The command line to run: the one given, or, with `--config`, the one each
@@ -390,21 +407,10 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const several = config.entries.length > 1
   const served = servedEntries(overridden, several)
   const healthEndpoints = config.gateway.healthEndpoint ?? []
-  if (several) {
-    const conflict = routeConflict(
-      served.map(({ name, path, argv }) => ({
-        name,
-        path,
-        routes: routesOf(argv),
-      })),
-      healthEndpoints,
-    )
-    if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
-  }
+  const conflict = several && sharedPortConflict(served, healthEndpoints)
+  if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
   if (cli.checkConfig) reportValid(file, config)
-  const notYet = config.entries
-    .map((entry) => notYetServable(entry, config.defaults, several))
-    .find((reason) => reason !== undefined)
+  const notYet = notYetServable(config, several)
   if (notYet)
     exitWithError(
       logger,

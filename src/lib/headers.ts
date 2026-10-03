@@ -1,3 +1,4 @@
+import type { ServerResponse } from 'node:http'
 import { Logger } from '../types.js'
 
 /**
@@ -119,3 +120,12 @@ export const headers = ({
 
   return headers
 }
+
+/** Puts --header's headers on one of the gateway's own responses. */
+export const setResponseHeaders = (
+  res: Pick<ServerResponse, 'setHeader'>,
+  headers: Record<string, string>,
+) =>
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value)
+  })

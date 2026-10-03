@@ -372,6 +372,7 @@ function readInner(
   warnings: string[],
 ): InnerServer | undefined {
   const path = [...parent, name]
+  const entry = pathText(parent.slice(0, -1))
   const raw = object(value, path, fail)
   if ('mcpServers' in raw)
     fail(
@@ -382,12 +383,12 @@ function readInner(
   if (urlSetting !== undefined)
     fail(
       [...path, urlSetting],
-      `"${urlSetting}" is a setting for the URL. Put it on ${pathText(parent.slice(0, -1))} instead`,
+      `"${urlSetting}" is a setting for the URL. Put it on ${entry} instead`,
     )
   if ('path' in raw)
     fail(
       [...path, 'path'],
-      `A combined server is served at ${pathText(parent.slice(0, -1))}'s URL; "path" belongs there`,
+      `A combined server is served at ${entry}'s URL; "path" belongs there`,
     )
   checkKeys(raw, path, INNER_KEYS, fail, warnings)
   if (!isEnabled(raw, path, fail)) return undefined
@@ -557,11 +558,11 @@ export function effectiveTransport(
   if (set) return set
   // As on the command line: a remote server is bridged to stdio, and a local
   // one is served over SSE.
-  if ('members' in entry.server)
-    return entry.server.members.every((m) => m.source.kind === 'url')
-      ? 'stdio'
-      : 'sse'
-  return entry.server.source.kind === 'url' ? 'stdio' : 'sse'
+  const servers =
+    'members' in entry.server ? entry.server.members : [entry.server]
+  return servers.every((server) => server.source.kind === 'url')
+    ? 'stdio'
+    : 'sse'
 }
 
 function isEnabled(
@@ -603,9 +604,6 @@ function checkKeys(
 // ${VAR}, ${VAR:-default} and ${env:VAR} in string values, after parsing, so
 // a comment can never be expanded. `stdio` is a shell command line: the shell
 // expands $VAR there itself, from the environment the child inherits.
-// A server's own keys sit at odd depths (mcpServers.<name>.stdio, and
-// mcpServers.<name>.mcpServers.<member>.stdio); at even depths are the names
-// inside `env` and `headers`, where "stdio" is just a name and is expanded.
 function expand(
   value: unknown,
   path: (string | number)[],
@@ -613,7 +611,7 @@ function expand(
   fail: Fail,
 ): any {
   if (typeof value === 'string')
-    return path.length % 2 === 1 && path[path.length - 1] === 'stdio'
+    return isShellCommandLine(path)
       ? value
       : expandString(value, path, env, fail)
   if (Array.isArray(value))
@@ -627,6 +625,12 @@ function expand(
     )
   return value
 }
+
+// A server's own keys sit at odd depths (mcpServers.<name>.stdio, and
+// mcpServers.<name>.mcpServers.<member>.stdio); at even depths are the names
+// inside `env` and `headers`, where "stdio" is just a name and is expanded.
+const isShellCommandLine = (path: (string | number)[]) =>
+  path.length % 2 === 1 && path[path.length - 1] === 'stdio'
 
 function expandString(
   value: string,

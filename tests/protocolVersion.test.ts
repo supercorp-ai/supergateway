@@ -1,11 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, ChildProcess } from 'child_process'
+import { unusedPort } from './helpers/gateway-process.js'
 
 import { Client } from 'prev-modelcontextprotocol-sdk/client/index.js'
 import { StdioClientTransport } from 'prev-modelcontextprotocol-sdk/client/stdio.js'
 
-const MCP_PORT = 11003
+// A free port, not a fixed one: two suites on one machine (another worktree,
+// another checkout) collided on it and hung.
+const MCP_PORT = await unusedPort()
 const MCP_URL = `http://localhost:${MCP_PORT}/sse`
 
 let serverProc: ChildProcess | undefined

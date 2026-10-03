@@ -9,20 +9,21 @@ export interface OnSignalsOptions {
 // The shutdown of whichever gateway is running. Each process runs exactly one
 // gateway, which registers it once; requestShutdown lets anything else in the
 // process stop it the same way a signal does.
-let registered: ((message: string) => void) | undefined
+let registered: ((message: string, code: number) => void) | undefined
 
 /**
  * Shuts down the way SIGTERM does: logs `message`, runs the gateway's cleanup
- * (stopping its children, ending an upstream session) and exits. Before a
- * gateway has registered there is nothing to clean up, so it just exits.
+ * (stopping its children, ending an upstream session) and exits with `code`.
+ * Before a gateway has registered there is nothing to clean up, so it just
+ * exits.
  *
  * Not a real signal: on Windows `process.kill(process.pid, 'SIGTERM')`
  * terminates without running any handler, and emitting one would log
  * "Caught SIGTERM" for something that was not.
  */
-export function requestShutdown(message: string): void {
-  if (registered) registered(message)
-  else process.exit(0)
+export function requestShutdown(message: string, code = 0): void {
+  if (registered) registered(message, code)
+  else process.exit(code)
 }
 
 /**
@@ -36,20 +37,20 @@ export function onSignals(options: OnSignalsOptions): void {
   const { logger, cleanup } = options
 
   let stopping = false
-  const shutdown = (message: string) => {
+  const shutdown = (message: string, code = 0) => {
     if (stopping) return
     stopping = true
     logger.info(message)
     const pending = cleanup?.()
     if (pending) {
       void pending
-        .then(() => process.exit(0))
+        .then(() => process.exit(code))
         .catch((error) => {
           logger.error('Shutdown cleanup failed:', error)
           process.exit(1)
         })
     } else {
-      process.exit(0)
+      process.exit(code)
     }
   }
 

@@ -31,6 +31,7 @@ import { getLogger } from './lib/getLogger.js'
 import { apiKeysOf } from './lib/apiKey.js'
 import { exitWithProcessOf, watchProcess } from './lib/exitWithProcess.js'
 import { requestShutdown } from './lib/onSignals.js'
+import type { BridgeLifecycle } from './lib/stdioBridge.js'
 import {
   stdioToStatelessStreamableHttp,
   stdioToStatelessStreamableHttpMount,
@@ -253,19 +254,21 @@ const listen = async (argv: Cli, logger: Logger, listening: Listening) => {
 
 // A remote server bridged to stdio output.
 const bridge = {
-  sse: (argv: Cli, logger: Logger) =>
+  sse: (argv: Cli, logger: Logger, lifecycle?: BridgeLifecycle) =>
     sseToStdio({
       sseUrl: argv.sse!,
       logger,
       headers: headers({ argv, logger }),
       toolNames: toolNamesOf(argv, logger),
+      lifecycle,
     }),
-  streamableHttp: (argv: Cli, logger: Logger) =>
+  streamableHttp: (argv: Cli, logger: Logger, lifecycle?: BridgeLifecycle) =>
     streamableHttpToStdio({
       streamableHttpUrl: argv.streamableHttp!,
       logger,
       headers: headers({ argv, logger }),
       toolNames: toolNamesOf(argv, logger),
+      lifecycle,
     }),
 }
 
@@ -381,24 +384,11 @@ const sharedPortConflict = (served: Served[], healthEndpoints: string[]) =>
     healthEndpoints,
   )
 
-// What a valid entry asks for that this build can't serve yet, if anything.
-function entryNotYetServable(
-  entry: Entry,
-  defaults: EndpointOptions,
-  several: boolean,
-) {
-  if ('members' in entry.server) return 'Combining servers on one URL'
-  // Only a remote server can be on stdio: the loader refuses a local one.
-  if (several && effectiveTransport(entry, defaults) === 'stdio')
-    return 'Serving an entry over stdio beside others'
-  return undefined
-}
-
-// The first thing a valid config asks for that this build can't serve yet.
-const notYetServable = (config: Config, several: boolean) =>
-  config.entries
-    .map((entry) => entryNotYetServable(entry, config.defaults, several))
-    .find((reason) => reason !== undefined)
+// What a valid config asks for that this build can't serve yet, if anything.
+const notYetServable = (config: Config) =>
+  config.entries.some((entry) => 'members' in entry.server)
+    ? 'Combining servers on one URL'
+    : undefined
 
 /**
  * The command line to run: the one given, or, with `--config`, the one each
@@ -425,7 +415,7 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const conflict = several && sharedPortConflict(served, healthEndpoints)
   if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
   if (cli.checkConfig) reportValid(file, config)
-  const notYet = notYetServable(config, several)
+  const notYet = notYetServable(config)
   if (notYet)
     exitWithError(
       logger,
@@ -449,7 +439,7 @@ function keyedServers(
           ...server,
           logger: loggerFor(server.name),
         }))
-      : [{ path: '/', argv, logger }]
+      : [{ name: 'default', path: '/', argv, logger }]
   return servers.map((server) => ({
     ...server,
     apiKeys: orExit(
@@ -483,28 +473,62 @@ function announceStart(
   if (pid !== undefined) logger.info(`  - exitWithProcess: ${pid}`)
 }
 
-// Several config entries, each mounted at its path, on one port.
-function serveSeveral(
-  servers: ReturnType<typeof keyedServers>,
+type KeyedServer = ReturnType<typeof keyedServers>[number]
+
+// Several config entries, each mounted at its path, on one port, and at most
+// one on stdio beside them (the loader allows no more).
+async function serveSeveral(
+  servers: KeyedServer[],
   healthEndpoints: string[],
   port: number,
   host: string | undefined,
   logger: Logger,
 ) {
+  const onStdio = servers.find(isOnStdio)
+  let closeStdio: (() => Promise<void>) | undefined
   serve({
     port,
     host,
     logger,
-    mounts: servers.map((server) => {
-      server.logger.info(`  - path: ${server.path}`)
-      server.logger.info(`  - outputTransport: ${server.argv.outputTransport}`)
-      return mountOf(server.argv, server.logger, {
-        host,
-        apiKeys: server.apiKeys,
-        path: server.path,
-      })
-    }),
+    mounts: servers
+      .filter((server) => server !== onStdio)
+      .map((server) => {
+        server.logger.info(`  - path: ${server.path}`)
+        server.logger.info(
+          `  - outputTransport: ${server.argv.outputTransport}`,
+        )
+        return mountOf(server.argv, server.logger, {
+          host,
+          apiKeys: server.apiKeys,
+          path: server.path,
+        })
+      }),
     healthEndpoints,
+    stdio: onStdio && { close: async () => closeStdio?.() },
+  })
+  if (onStdio)
+    await bridgeBeside(onStdio, (cleanup) => {
+      closeStdio = cleanup
+    })
+}
+
+const isOnStdio = (server: { argv: Cli }) =>
+  server.argv.outputTransport === 'stdio'
+
+// The remote server on stdio beside the others. The process is its client's,
+// which started it: when the bridge stops, the others stop too, as at a
+// signal, and the signals stop the bridge with them.
+async function bridgeBeside(
+  server: KeyedServer,
+  register: BridgeLifecycle['register'],
+) {
+  server.logger.info('  - outputTransport: stdio')
+  // The loader allows only a remote server on stdio.
+  const { input } = orExit(server.logger, inputTransportOf(server.argv))
+  await bridge[input as keyof typeof bridge](server.argv, server.logger, {
+    register,
+    exit: (code) =>
+      requestShutdown(`${server.name} on stdio stopped. Exiting...`, code),
   })
 }
 
@@ -521,11 +545,15 @@ async function main() {
   const run = invocation(args, cli, cliLogger)
   // The gateway-wide settings, which every entry's command line carries alike.
   const argv = 'argv' in run ? run.argv : run.servers[0].argv
+  // No log line goes to stdout while it carries an entry's MCP messages.
+  const logsBesideStdio = 'servers' in run && run.servers.some(isOnStdio)
   const loggerFor = (server?: string) =>
     getLogger({
       logLevel: argv.logLevel,
       logFormat: argv.logFormat,
-      outputTransport: argv.outputTransport as string,
+      outputTransport: logsBesideStdio
+        ? 'stdio'
+        : (argv.outputTransport as string),
       server,
     })
   const logger = argv === cli ? cliLogger : loggerFor()
@@ -538,7 +566,7 @@ async function main() {
 
   try {
     if ('servers' in run)
-      serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
+      await serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
     else
       await start(input, argv, logger, {
         host,

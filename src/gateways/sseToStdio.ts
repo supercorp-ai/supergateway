@@ -14,6 +14,7 @@ import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
 import {
   bridgeStdioMessages,
+  type BridgeLifecycle,
   interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
@@ -23,6 +24,8 @@ export interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
   headers: Record<string, string>
+  /** Alone by default: the bridge registers the signals and exits itself. */
+  lifecycle?: BridgeLifecycle
   /** The tools the stdio client sees of the server, if not all as they are. */
   toolNames?: ToolNames
 }
@@ -52,6 +55,7 @@ const openSseTransport = (
   upstreamUrl: URL,
   headers: Record<string, string>,
   logger: Logger,
+  exit: BridgeLifecycle['exit'],
 ) => {
   const stream: EventStream = { opened: false }
   const transport = new SSEClientTransport(upstreamUrl, {
@@ -86,7 +90,7 @@ const openSseTransport = (
 
   transport.onclose = () => {
     logger.error('SSE connection closed')
-    process.exit(1)
+    exit(1)
   }
   return { transport, stream }
 }
@@ -199,7 +203,16 @@ class Upstream {
 }
 
 export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger, headers, toolNames } = args
+  const {
+    sseUrl,
+    logger,
+    headers,
+    toolNames,
+    lifecycle = {
+      register: (cleanup) => onSignals({ logger, cleanup }),
+      exit: (code) => process.exit(code),
+    },
+  } = args
 
   const upstreamUrl = parseUpstreamUrl(sseUrl)
 
@@ -208,12 +221,13 @@ export async function sseToStdio(args: SseToStdioArgs) {
   toolNames?.describe().forEach((setting) => logger.info(`  - ${setting}`))
   logger.info('Connecting to SSE...')
 
-  onSignals({ logger })
+  lifecycle.register()
 
   const { transport: sseTransport, stream } = openSseTransport(
     upstreamUrl,
     headers,
     logger,
+    lifecycle.exit,
   )
   const upstream = new Upstream(sseTransport, stream, upstreamUrl, logger)
 

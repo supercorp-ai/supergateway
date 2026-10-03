@@ -69,6 +69,7 @@ export function serve({
   logger,
   mounts,
   healthEndpoints,
+  stdio,
 }: {
   port: number
   host: string | undefined
@@ -76,13 +77,21 @@ export function serve({
   mounts: Mount[]
   /** The gateway's own health endpoints. */
   healthEndpoints: string[]
+  /**
+   * The entry served on stdio beside the mounts, if one is: what stops it.
+   * It reads stdin itself, so the gateway leaves stdin to it.
+   */
+  stdio?: { close: () => Promise<void> }
 }): Server {
   onSignals({
     logger,
     cleanup: async () => {
-      await Promise.all(mounts.map((mount) => mount.close()))
+      await Promise.all([
+        ...mounts.map((mount) => mount.close()),
+        stdio?.close(),
+      ])
     },
-    drainStdin: true,
+    drainStdin: !stdio,
   })
 
   const handler = shared(mounts, healthEndpoints)

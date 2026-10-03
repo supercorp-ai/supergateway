@@ -18,6 +18,7 @@ import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
 import {
   bridgeStdioMessages,
+  type BridgeLifecycle,
   interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
@@ -28,6 +29,8 @@ export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
   logger: Logger
   headers: Record<string, string>
+  /** Alone by default: the bridge registers the signals and exits itself. */
+  lifecycle?: BridgeLifecycle
   /** The tools the stdio client sees of the server, if not all as they are. */
   toolNames?: ToolNames
 }
@@ -148,6 +151,7 @@ class Upstream {
     private readonly url: URL,
     private readonly headers: Record<string, string>,
     private readonly logger: Logger,
+    private readonly exit: BridgeLifecycle['exit'],
   ) {}
 
   private isCurrent(transport: StreamableHTTPClientTransport) {
@@ -199,7 +203,7 @@ class Upstream {
       this.logger.error('Streamable HTTP connection closed')
       // An upstream that rejects the very first handshake is still a startup
       // failure. Recovery applies only after stdio has a working MCP session.
-      if (!this.hasConnected) process.exit(1)
+      if (!this.hasConnected) this.exit(1)
       this.invalidate(transport)
     }
     return transport
@@ -321,7 +325,16 @@ class Upstream {
 }
 
 export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
-  const { streamableHttpUrl, logger, headers, toolNames } = args
+  const {
+    streamableHttpUrl,
+    logger,
+    headers,
+    toolNames,
+    lifecycle = {
+      register: (cleanup) => onSignals({ logger, cleanup }),
+      exit: (code) => process.exit(code),
+    },
+  } = args
   const upstreamUrl = parseUpstreamUrl(streamableHttpUrl)
 
   logger.info(`  - streamableHttp: ${redactUrl(upstreamUrl)}`)
@@ -329,15 +342,12 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   toolNames?.describe().forEach((setting) => logger.info(`  - ${setting}`))
   logger.info('Connecting to Streamable HTTP...')
 
-  const upstream = new Upstream(upstreamUrl, headers, logger)
+  const upstream = new Upstream(upstreamUrl, headers, logger, lifecycle.exit)
 
-  onSignals({
-    logger,
-    // A stateful upstream keeps this session, and the server process behind it,
-    // until the session is ended or times out (30 minutes by default). Ending
-    // it is the client's job, and the bridge is the client.
-    cleanup: () => upstream.endSession(),
-  })
+  // A stateful upstream keeps this session, and the server process behind it,
+  // until the session is ended or times out (30 minutes by default). Ending
+  // it is the client's job, and the bridge is the client.
+  lifecycle.register(() => upstream.endSession())
 
   const stdioServer = new Server(
     {

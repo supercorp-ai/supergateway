@@ -212,7 +212,11 @@ npx -y supergateway --config servers.json
 - On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
 - Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
 
-A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example. This version can't yet combine servers on one URL (a nested `mcpServers`), or serve a `url` server on stdio beside others. Such a file passes `--checkConfig`, but the gateway says so and exits.
+A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example.
+
+One `url` server may use stdio output beside servers on the port. This is for a client that launches Supergateway with a config file, such as Claude Desktop: it talks to that server over stdin and stdout, and other clients reach the rest over HTTP. All logs then go to stderr. The process belongs to the client that started it. When stdin closes, a signal arrives, or the stdio server stops (its remote server refused the first connection, for example), every server stops, and the exit code is the stdio server's.
+
+This version can't yet combine servers on one URL (a nested `mcpServers`). Such a file passes `--checkConfig`, but the gateway says so and exits.
 
 ## Shutdown
 

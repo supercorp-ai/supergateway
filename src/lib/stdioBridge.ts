@@ -19,6 +19,17 @@ import type { ToolNames } from './toolNames.js'
 // bridge tests replace per test.
 
 /**
+ * How a bridge's life is tied to the process: where it registers what to do
+ * at shutdown, and how it exits. Alone, a bridge registers the signals itself
+ * and exits the process; beside other servers, the gateway passes its own,
+ * so a bridge that stops stops the others the way a signal does.
+ */
+export interface BridgeLifecycle {
+  register(cleanup?: () => Promise<void>): void
+  exit(code: number): void
+}
+
+/**
  * The name and capabilities a bridge's upstream `Client` presents: the stdio
  * client's own, from its initialize request, or the gateway's when the first
  * request was something else.

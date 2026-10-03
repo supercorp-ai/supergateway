@@ -133,6 +133,8 @@ const cases: Case[] = [
       '--cors',
       '--healthEndpoint',
       '/h',
+      '--healthCheck',
+      'server',
     ],
     done: /^WebSocket endpoint:/,
     exercise: overWs,

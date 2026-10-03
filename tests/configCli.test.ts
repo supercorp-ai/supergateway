@@ -477,6 +477,8 @@ test('printableConfig: a config without secrets reads back as itself', () => {
       'http://a.example',
     ],
     ['--sse', 'http://h/sse', '--header', 'x-trace: on', '--logLevel', 'none'],
+    ['--stdio', 'srv', '--toolPrefix', 'gh_', '--tools', 'search', 'get'],
+    ['--stdio', 'srv', '--tools'],
   ]) {
     const config = fromCli(args)
     assert.deepEqual(loaded(printableConfig(config)), config, args.join(' '))

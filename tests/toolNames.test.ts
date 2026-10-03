@@ -89,6 +89,14 @@ test('a call the client cannot see is answered with the unknown-tool error', () 
   assert.deepEqual(gh.inbound(call('gh_delete', 2)), unknown(2, 'gh_delete'))
   assert.deepEqual(gh.inbound(call(undefined, 3)), unknown(3, undefined))
   assert.deepEqual(gh.inbound(call(7, 4)), unknown(4, 7))
+  assert.deepEqual(
+    gh.inbound({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+    } as JSONRPCMessage),
+    unknown(5, undefined),
+  )
   // A filter alone needs no prefix.
   const only = names({ tools: ['search'] })
   assert.equal('forward' in only.inbound(call('search')), true)

@@ -364,18 +364,23 @@ class StatelessRequest {
     })
   }
 
-  private finish() {
-    // handleRequest resolves after dispatch, not after the child replies.
-    // A disconnected HTTP client also does not cancel its in-flight work.
-    if (
-      this.released ||
-      this.finishTimer ||
-      !this.handled ||
-      !this.responseClosed ||
-      this.pendingRequests.size ||
-      this.initialization.pending
+  // Whether the request is over and its child owes it nothing, so the child
+  // can go. handleRequest resolves after dispatch, not after the child
+  // replies, and a disconnected HTTP client does not cancel its in-flight
+  // work, so both are waited for.
+  private get settled() {
+    return (
+      !this.released &&
+      !this.finishTimer &&
+      this.handled &&
+      this.responseClosed &&
+      !this.pendingRequests.size &&
+      !this.initialization.pending
     )
-      return
+  }
+
+  private finish() {
+    if (!this.settled) return
     if (this.hasOneWayMessage) {
       // HTTP 202 precedes delivery, and notifications have no completion
       // reply. Forward first, then allow stdio EOF a bounded grace period.

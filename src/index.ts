@@ -385,6 +385,92 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   return { servers: served, healthEndpoints, notes }
 }
 
+// What a startup check found, or, when it found a problem, exit 1 after
+// logging it.
+function orExit<T extends object>(
+  logger: Logger,
+  result: T | { error: string },
+): T {
+  if ('error' in result) {
+    logger.error(result.error)
+    process.exit(1)
+  }
+  return result as T
+}
+
+// Each server's keys, from its own command line; the environment's, and
+// those given beside --config, are on every one.
+function keyedServers(
+  run: Invocation,
+  argv: Cli,
+  logger: Logger,
+  loggerFor: (server: string) => Logger,
+) {
+  const servers =
+    'servers' in run
+      ? run.servers.map((server) => ({
+          ...server,
+          logger: loggerFor(server.name),
+        }))
+      : [{ path: '/', argv, logger }]
+  return servers.map((server) => ({
+    ...server,
+    apiKeys: orExit(
+      server.logger,
+      apiKeysOf(server.argv, process.env, (path) => readFileSync(path, 'utf8')),
+    ).keys,
+  }))
+}
+
+// The gateway's own lines of the startup listing. Several servers on one port
+// list the port, host and health endpoints they share; a server alone lists
+// them with its own settings.
+function announceStart(
+  logger: Logger,
+  run: Invocation,
+  argv: Cli,
+  host: string | undefined,
+  pid: number | undefined,
+) {
+  logger.info('Starting...')
+  logger.info(
+    'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
+  )
+  if ('servers' in run) {
+    logger.info(`  - port: ${argv.port}`)
+    announceHost(logger, host)
+    logger.info(
+      `  - Health endpoints: ${run.healthEndpoints.length ? run.healthEndpoints.join(', ') : '(none)'}`,
+    )
+  } else logger.info(`  - outputTransport: ${argv.outputTransport}`)
+  if (pid !== undefined) logger.info(`  - exitWithProcess: ${pid}`)
+}
+
+// Several config entries, each mounted at its path, on one port.
+function serveSeveral(
+  servers: ReturnType<typeof keyedServers>,
+  healthEndpoints: string[],
+  port: number,
+  host: string | undefined,
+  logger: Logger,
+) {
+  serve({
+    port,
+    host,
+    logger,
+    mounts: servers.map((server) => {
+      server.logger.info(`  - path: ${server.path}`)
+      server.logger.info(`  - outputTransport: ${server.argv.outputTransport}`)
+      return mountOf(server.argv, server.logger, {
+        host,
+        apiKeys: server.apiKeys,
+        path: server.path,
+      })
+    }),
+    healthEndpoints,
+  })
+}
+
 async function main() {
   const args = hideBin(process.argv)
   const cli = parseCli(args)
@@ -407,77 +493,18 @@ async function main() {
     })
   const logger = argv === cli ? cliLogger : loggerFor()
   for (const note of run.notes) logger.info(note)
-  const chosen = inputTransportOf(argv)
-  if ('error' in chosen) {
-    logger.error(chosen.error)
-    process.exit(1)
-  }
-  const listen = hostOf(argv)
-  if ('error' in listen) {
-    logger.error(listen.error)
-    process.exit(1)
-  }
-  // Each server's keys, from its own command line; the environment's, and
-  // those given beside --config, are on every one.
-  const servers = (
-    'servers' in run
-      ? run.servers.map((server) => ({
-          ...server,
-          logger: loggerFor(server.name),
-        }))
-      : [{ path: '/', argv, logger }]
-  ).map((server) => {
-    const apiKeys = apiKeysOf(server.argv, process.env, (path) =>
-      readFileSync(path, 'utf8'),
-    )
-    if ('error' in apiKeys) {
-      server.logger.error(apiKeys.error)
-      process.exit(1)
-    }
-    return { ...server, apiKeys: apiKeys.keys }
-  })
-  const watched = exitWithProcessOf(argv)
-  if ('error' in watched) {
-    logger.error(watched.error)
-    process.exit(1)
-  }
-
-  logger.info('Starting...')
-  logger.info(
-    'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com',
-  )
-  if ('servers' in run) {
-    logger.info(`  - port: ${argv.port}`)
-    announceHost(logger, listen.host)
-    logger.info(
-      `  - Health endpoints: ${run.healthEndpoints.length ? run.healthEndpoints.join(', ') : '(none)'}`,
-    )
-  } else logger.info(`  - outputTransport: ${argv.outputTransport}`)
-  const { pid } = watched
-  if (pid !== undefined) logger.info(`  - exitWithProcess: ${pid}`)
+  const { input } = orExit(logger, inputTransportOf(argv))
+  const { host } = orExit(logger, hostOf(argv))
+  const servers = keyedServers(run, argv, logger, loggerFor)
+  const { pid } = orExit(logger, exitWithProcessOf(argv))
+  announceStart(logger, run, argv, host, pid)
 
   try {
     if ('servers' in run)
-      serve({
-        port: argv.port,
-        host: listen.host,
-        logger,
-        mounts: servers.map((server) => {
-          server.logger.info(`  - path: ${server.path}`)
-          server.logger.info(
-            `  - outputTransport: ${server.argv.outputTransport}`,
-          )
-          return mountOf(server.argv, server.logger, {
-            host: listen.host,
-            apiKeys: server.apiKeys,
-            path: server.path,
-          })
-        }),
-        healthEndpoints: run.healthEndpoints,
-      })
+      serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
     else
-      await start[chosen.input](argv, logger, {
-        host: listen.host,
+      await start[input](argv, logger, {
+        host,
         apiKeys: servers[0].apiKeys,
       })
   } catch (err) {

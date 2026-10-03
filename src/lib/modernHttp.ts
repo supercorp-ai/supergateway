@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import { randomUUID } from 'node:crypto'
 import {
+  HEADER_MISMATCH,
   HeaderMismatch,
   validateModernHeaders,
   validateToolHeaders,
@@ -65,7 +66,7 @@ export function createModernHttp(args: {
           await transport.close()
           if (!res.destroyed)
             rejectWith(req, res, 400, {
-              code: -32602,
+              code: INVALID_PARAMS,
               message: 'Continuation expired or backend unavailable',
             })
           return true
@@ -120,7 +121,23 @@ const restoredState = (
   return restored
 }
 
-const PROCESS_FAILED = { code: -32603, message: 'MCP server process failed' }
+// The JSON-RPC error codes the relay answers with, or reads a status from.
+const SERVER_ERROR = -32000
+const METHOD_NOT_FOUND = -32601
+const INVALID_PARAMS = -32602
+const INTERNAL_ERROR = -32603
+// The 2026-07-28 errors about the request's framing: a header that does not
+// mirror the body, a missing client capability, an unsupported version.
+const FRAMING_ERRORS = [HEADER_MISMATCH, -32021, -32022]
+
+const PROCESS_FAILED = {
+  code: INTERNAL_ERROR,
+  message: 'MCP server process failed',
+}
+
+// The child asking something of the client, which a modern request cannot.
+const isRequest = (message: JSONRPCMessage) =>
+  'method' in message && 'id' in message
 
 /**
  * A request the gateway itself makes of a request's child, whose reply is
@@ -297,7 +314,7 @@ class ModernRequest {
   private fromChild(message: JSONRPCMessage) {
     const { route, transport, child, res } = this.at
     if (this.stopped) return
-    if ('method' in message && 'id' in message) {
+    if (isRequest(message)) {
       void this.fail(
         new Error('Unexpected server request on a modern connection'),
       )
@@ -398,14 +415,7 @@ class ModernRequest {
           { status: 500 },
         )
     }
-    // Once SSE headers are sent, errors must remain on that stream.
-    return response.headers.get('content-type') === 'application/json' &&
-      this.responseStatus !== response.status
-      ? new globalThis.Response(response.body, {
-          status: this.responseStatus,
-          headers: response.headers,
-        })
-      : response
+    return withStatus(response, this.responseStatus)
   }
 
   async serve(): Promise<boolean> {
@@ -432,6 +442,17 @@ class ModernRequest {
     return true
   }
 }
+
+// A JSON response with the status its reply calls for. Once SSE headers are
+// sent, errors must remain on that stream.
+const withStatus = (response: globalThis.Response, status: number) =>
+  response.headers.get('content-type') === 'application/json' &&
+  status !== response.status
+    ? new globalThis.Response(response.body, {
+        status,
+        headers: response.headers,
+      })
+    : response
 
 // A header as one string, however many times it was sent.
 const headerValue =
@@ -493,7 +514,7 @@ function admit(req: Request, res: Response, value: ReadHeader) {
   if (route.kind === 'legacy') return false
   if (!isJsonContentType(value('content-type') ?? null))
     return reject(415, {
-      code: -32000,
+      code: SERVER_ERROR,
       message: 'Content-Type must be application/json',
     })
   if (route.kind === 'reject')
@@ -502,27 +523,30 @@ function admit(req: Request, res: Response, value: ReadHeader) {
       message: route.message,
       ...(route.data === undefined ? {} : { data: route.data }),
     })
-  const accept = value('accept') ?? ''
-  if (
-    !accept.includes('application/json') ||
-    !accept.includes('text/event-stream')
-  )
+  if (!acceptsBoth(value('accept') ?? ''))
     return reject(406, {
-      code: -32000,
+      code: SERVER_ERROR,
       message: 'Client must accept application/json and text/event-stream',
     })
   try {
     validateModernHeaders(route.message, value)
   } catch (error) {
-    return reject(400, { code: -32020, message: (error as Error).message })
+    return reject(400, {
+      code: HEADER_MISMATCH,
+      message: (error as Error).message,
+    })
   }
   return route
 }
 
+// A modern reply may be JSON or an SSE stream, so the client must take both.
+const acceptsBoth = (accept: string) =>
+  accept.includes('application/json') && accept.includes('text/event-stream')
+
 // The HTTP status of a JSON reply carrying this error: an unknown method is a
-// 404, a header mismatch a 400, and any other error rides a 200.
+// 404, a framing error a 400, and any other error rides a 200.
 const statusForError = (code: number) =>
-  code === -32601 ? 404 : [-32020, -32021, -32022].includes(code) ? 400 : 200
+  code === METHOD_NOT_FOUND ? 404 : FRAMING_ERRORS.includes(code) ? 400 : 200
 
 function mintedState(
   result: Record<string, unknown>,

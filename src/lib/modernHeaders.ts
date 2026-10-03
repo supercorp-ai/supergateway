@@ -1,7 +1,10 @@
 import type { JSONRPCMessage } from './modernSdk.js'
 
+// The JSON-RPC error code of a header that does not mirror the body.
+export const HEADER_MISMATCH = -32020
+
 export class HeaderMismatch extends Error {
-  readonly code = -32020
+  readonly code = HEADER_MISMATCH
   constructor(readonly header: string) {
     super(`Request header ${header} does not match the request body`)
   }

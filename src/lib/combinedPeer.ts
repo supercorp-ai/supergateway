@@ -270,7 +270,9 @@ class Combined implements Peer {
       if (result !== undefined)
         this.toClient({ jsonrpc: '2.0', id: request.id, result })
     } catch (err) {
-      const { code = INTERNAL_ERROR, message, data } = err as RpcError
+      // Everything thrown on the way to an answer is an RpcError: what a
+      // server fails at is caught where it is asked.
+      const { code, message, data } = err as RpcError
       this.toClient({
         jsonrpc: '2.0',
         id: request.id,
@@ -370,17 +372,12 @@ class Combined implements Peer {
     let done!: () => void
     this.ready = new Promise((resolve) => (done = resolve))
     try {
-      this.backends = this.members.map((member) => this.started(member))
+      this.backends = this.members.map((member) => this.start(member))
       await Promise.all(
         this.backends.map((backend) => this.handshake(backend, params)),
       )
-      if (this.live().length === 0)
-        throw new RpcError(
-          INTERNAL_ERROR,
-          `No server of "${this.entry}" started`,
-        )
       // Dates, so the lowest sorts first.
-      const [version] = this.live()
+      const [version] = this.started()
         .map((backend) => backend.version)
         .sort()
       await Promise.all(
@@ -388,7 +385,8 @@ class Combined implements Peer {
           .filter((backend) => backend.version !== version)
           .map((backend) => this.restartAt(backend, version, params)),
       )
-      for (const backend of this.live())
+      // Again: one may have stopped while another was started again.
+      for (const backend of this.started())
         backend.peer.write({
           jsonrpc: '2.0',
           method: 'notifications/initialized',
@@ -416,7 +414,15 @@ class Combined implements Peer {
     }
   }
 
-  private started(member: CombinedMember) {
+  // The servers that are there; without any, there is no session.
+  private started() {
+    const live = this.live()
+    if (live.length === 0)
+      throw new RpcError(INTERNAL_ERROR, `No server of "${this.entry}" started`)
+    return live
+  }
+
+  private start(member: CombinedMember) {
     const backend = new Backend(member)
     backend.peer = member.start()({
       message: (message, line) => this.fromBackend(backend, message, line),
@@ -461,7 +467,7 @@ class Combined implements Peer {
   ) {
     backend.gone = true
     await backend.peer.stop()
-    const again = this.started(backend.member)
+    const again = this.start(backend.member)
     this.backends[this.backends.indexOf(backend)] = again
     await this.handshake(again, { ...params, protocolVersion: version })
     if (!again.gone && again.version !== version)
@@ -472,7 +478,6 @@ class Combined implements Peer {
   }
 
   private leaveOut(backend: Backend, reason: string) {
-    if (backend.gone) return
     backend.gone = true
     this.logger.error(
       `${this.entry}: server "${backend.name}" is left out of this session: ${reason}`,

@@ -878,3 +878,190 @@ test('stopped before any initialize, there is nothing to stop', async () => {
   await client.peer.stop()
   assert.equal(client.peer.gone, true)
 })
+
+// --- Edges ---
+
+test('capabilities that are not objects, or null, are taken as they are', async () => {
+  const { client } = combine({
+    a: { capabilities: { tools: {}, odd: null, flag: false } },
+    b: { capabilities: { tools: true, odd: { x: 1 }, flag: true } },
+  })
+  assert.deepEqual((await result(client.initialize())).capabilities, {
+    // The first server's stands when the other's is no object to add to it.
+    tools: {},
+    odd: { x: 1 },
+    flag: true,
+  })
+})
+
+test('an answer with no result is an empty one', async () => {
+  const { client } = combine({
+    a: {
+      capabilities: { tools: {} },
+      answers: { 'tools/list': () => ({}) },
+    },
+  })
+  await client.initialize()
+  assert.deepEqual(await result(client.request('tools/list')), { tools: [] })
+})
+
+test('requests and notifications without params are placed like any other', async () => {
+  const { client, servers } = combine({ a: { tools: ['x'] } })
+  await client.initialize()
+  assert.equal(
+    (await error(client.request('completion/complete'))).code,
+    -32002,
+  )
+  const before = servers.a.received().length
+  client.notify('notifications/cancelled')
+  client.notify('notifications/progress')
+  // The first names no request of the gateway's; the second goes to every server.
+  assert.deepEqual(
+    servers.a
+      .received()
+      .slice(before)
+      .map((message) => message.method),
+    ['notifications/progress'],
+  )
+  servers.a.say({ jsonrpc: '2.0', method: 'notifications/cancelled' })
+  servers.a.say({ jsonrpc: '2.0', method: 'notifications/message' })
+  assert.deepEqual(client.unasked(), [
+    {
+      jsonrpc: '2.0',
+      method: 'notifications/message',
+      params: { logger: 'a' },
+    },
+  ])
+})
+
+test('empty batches, from the client or a server, are nothing', async () => {
+  const { client, servers } = combine({ a: {} })
+  await client.initialize()
+  const told = client.told.length
+  const received = servers.a.received().length
+  client.peer.write([] as any)
+  servers.a.say([] as any)
+  assert.equal(client.told.length, told)
+  assert.equal(servers.a.received().length, received)
+})
+
+test('with no server left, a notification goes nowhere and a resource is not found', async () => {
+  const { client, servers } = combine({ a: {}, b: { resources: ['r://1'] } })
+  await client.initialize()
+  // No server with a template: a URI no one lists is not found.
+  assert.equal(
+    (await error(client.request('resources/read', { uri: 'r://2' }))).code,
+    -32002,
+  )
+  servers.a.exit(0)
+  servers.b.exit(0)
+  client.notify('notifications/roots/list_changed')
+  assert.equal(servers.a.methods().at(-1), 'notifications/initialized')
+})
+
+test('a server started again that then refuses is left out', async () => {
+  let starts = 0
+  const { client, errors } = combine({
+    old: { versions: ['2024-11-05'], tools: ['a'] },
+    flaky: {
+      versions: ['2024-11-05', '2025-06-18'],
+      answers: {
+        initialize: (request) =>
+          ++starts === 1
+            ? {
+                result: {
+                  protocolVersion: request.params.protocolVersion,
+                  capabilities: {},
+                },
+              }
+            : { error: { code: -32000, message: 'not twice' } },
+      },
+    },
+  })
+  assert.equal(
+    (await result(client.initialize())).protocolVersion,
+    '2024-11-05',
+  )
+  assert.deepEqual(errors, [
+    'tools: server "flaky" is left out of this session: not twice',
+  ])
+})
+
+test('when the servers are all gone by the end of initialize, the session ends', async () => {
+  let starts = 0
+  const { client, servers } = combine({
+    old: { versions: ['2024-11-05'] },
+    newer: {
+      answers: {
+        // Answers a later version at once; started again, it waits.
+        initialize: () =>
+          ++starts === 1
+            ? { result: { protocolVersion: '2025-06-18', capabilities: {} } }
+            : 'hold',
+      },
+    },
+  })
+  const initialized = client.initialize()
+  await settled()
+  // While `newer` is asked again, `old` stops; then `newer` does.
+  servers.old.exit(1)
+  servers.newer.exit(1)
+  assert.deepEqual(await error(initialized), {
+    code: -32603,
+    message: 'No server of "tools" started',
+  })
+  assert.deepEqual(client.exits, [[null, null]])
+})
+
+test('a resource or template of a server that stopped while it was listed is not found', async () => {
+  const lists: Record<string, number> = {}
+  const first = (method: string, answer: Record<string, unknown>) => () =>
+    (lists[method] = (lists[method] ?? 0) + 1) === 1
+      ? 'hold'
+      : { result: answer }
+  const { client, servers } = combine({
+    dies: { resources: ['d://one'], templates: ['d://{id}'] },
+    slow: {
+      capabilities: { resources: {} },
+      answers: {
+        'resources/list': first('resources/list', { resources: [] }),
+        'resources/templates/list': first('resources/templates/list', {
+          resourceTemplates: [],
+        }),
+      },
+    },
+  })
+  await client.initialize()
+  const listed = client.request('resources/list')
+  const templates = client.request('resources/templates/list')
+  await settled()
+  servers.dies.exit(1)
+  for (const request of servers.slow.received().slice(-2))
+    servers.slow.say({ jsonrpc: '2.0', id: request.id, result: {} })
+  assert.deepEqual((await result(listed)).resources, [{ uri: 'd://one' }])
+  assert.deepEqual((await result(templates)).resourceTemplates, [
+    { uriTemplate: 'd://{id}' },
+  ])
+  assert.equal(
+    (await error(client.request('resources/read', { uri: 'd://one' }))).code,
+    -32002,
+  )
+})
+
+test('a server that stops fails only its own calls', async () => {
+  const hold = { answers: { 'tools/call': () => 'hold' as const } }
+  const { client, servers } = combine({
+    a: { tools: ['of-a'], ...hold },
+    b: { tools: ['of-b'], ...hold },
+  })
+  await client.initialize()
+  await client.request('tools/list')
+  const ofA = client.request('tools/call', { name: 'of-a' }, 'a1')
+  const ofB = client.request('tools/call', { name: 'of-b' }, 'b1')
+  await settled()
+  servers.b.exit(1)
+  assert.equal((await error(ofB)).message, 'MCP server "b" failed')
+  const request = servers.a.received().at(-1)!
+  servers.a.say({ jsonrpc: '2.0', id: request.id, result: { content: [] } })
+  assert.deepEqual(await result(ofA), { content: [] })
+})

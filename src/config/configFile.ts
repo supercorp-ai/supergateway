@@ -789,13 +789,11 @@ function describeParseError(code: number) {
 
 const pathText = (path: (string | number)[]) =>
   path
-    .map((part, i) =>
-      typeof part === 'number'
-        ? `[${part}]`
-        : /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part)
-          ? `${i === 0 ? '' : '.'}${part}`
-          : `${i === 0 ? '' : '.'}"${part}"`,
-    )
+    .map((part, i) => {
+      if (typeof part === 'number') return `[${part}]`
+      const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? part : `"${part}"`
+      return i === 0 ? key : `.${key}`
+    })
     .join('')
 
 const entryText = (name: string) => pathText(['mcpServers', name])

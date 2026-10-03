@@ -55,7 +55,13 @@ import {
 } from './cli.js'
 import type { Logger } from './types.js'
 import type { ChildCommand } from './lib/childCommand.js'
-import { loadConfig, effectiveTransport } from './config/configFile.js'
+import {
+  loadConfig,
+  effectiveTransport,
+  type Config,
+  type EndpointOptions,
+  type Entry,
+} from './config/configFile.js'
 import {
   cliForEntry,
   configFromCli,
@@ -279,6 +285,89 @@ type Invocation =
   | { argv: Cli; notes: string[] }
   | { servers: Served[]; healthEndpoints: string[]; notes: string[] }
 
+// `--printConfig`'s output, after which the gateway exits.
+function printAndExit(value: unknown): never {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
+  process.exit(0)
+}
+
+// A command line without `--config` runs as given; `--printConfig` prints the
+// config it is equivalent to.
+function withoutConfig(cli: Cli, given: Set<string>, logger: Logger) {
+  if (cli.checkConfig)
+    exitWithError(
+      logger,
+      'Error: --checkConfig checks the file given with --config',
+    )
+  if (cli.printConfig) {
+    // As without it: a command line that names no server describes none.
+    orExit(logger, inputTransportOf(cli))
+    printAndExit(printableConfig(configFromCli(cli, given)))
+  }
+  return { argv: cli, notes: [] }
+}
+
+// The file `--config` names, read and checked. Its warnings are logged
+// whether or not it holds an error.
+function readConfigFile(file: string, logger: Logger): Config {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    exitWithError(
+      logger,
+      `Error: Cannot read ${file}: ${(err as Error).message}`,
+    )
+  }
+  const loaded = loadConfig(file, text, process.env)
+  for (const warning of loaded.warnings) logger.error(`Warning: ${warning}`)
+  return orExit<{ config: Config }>(logger, loaded).config
+}
+
+// The command line each entry is equivalent to. Combined entries have no
+// command line of their own (a later 4.2 change).
+function servedEntries(
+  { config, extraKeys, extraKeyFiles }: ReturnType<typeof overrideFromCli>,
+  several: boolean,
+) {
+  return config.entries
+    .filter((entry) => !('members' in entry.server))
+    .map((entry): Served => {
+      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
+      const argv = parseCli(run.args)
+      if (run.command) argv.stdio = run.command as string
+      return { name: entry.name, path: entry.path, argv }
+    })
+}
+
+// `--checkConfig`'s report: each entry with its path and output transport.
+function reportValid(file: string, config: Config): never {
+  const count = config.entries.length
+  process.stdout.write(
+    `${file} is valid: ${count} ${count === 1 ? 'server' : 'servers'}\n` +
+      config.entries
+        .map(
+          (entry) =>
+            `  ${entry.path}  ${entry.name} (${effectiveTransport(entry, config.defaults)})\n`,
+        )
+        .join(''),
+  )
+  process.exit(0)
+}
+
+// What a valid entry asks for that this build can't serve yet, if anything.
+function notYetServable(
+  entry: Entry,
+  defaults: EndpointOptions,
+  several: boolean,
+) {
+  if ('members' in entry.server) return 'Combining servers on one URL'
+  // Only a remote server can be on stdio: the loader refuses a local one.
+  if (several && effectiveTransport(entry, defaults) === 'stdio')
+    return 'Serving an entry over stdio beside others'
+  return undefined
+}
+
 /**
  * The command line to run: the one given, or, with `--config`, the one each
  * of the file's entries is equivalent to, so a file runs through exactly the
@@ -287,66 +376,22 @@ type Invocation =
  */
 function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const given = givenOptions(args)
-  const print = (value: unknown) => {
-    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
-    process.exit(0)
-  }
-  if (!cli.config) {
-    if (cli.checkConfig) {
-      logger.error('Error: --checkConfig checks the file given with --config')
-      process.exit(1)
-    }
-    if (cli.printConfig) {
-      // As without it: a command line that names no server describes none.
-      const chosen = inputTransportOf(cli)
-      if ('error' in chosen) {
-        logger.error(chosen.error)
-        process.exit(1)
-      }
-      print(printableConfig(configFromCli(cli, given)))
-    }
-    return { argv: cli, notes: [] }
-  }
+  if (!cli.config) return withoutConfig(cli, given, logger)
+  const file = cli.config
   const beside = entryFlagBesideConfig(given)
-  if (beside !== undefined) {
-    logger.error(
-      `Error: --${beside} can't be combined with --config. ${besideHint(beside, cli.config)}`,
+  if (beside !== undefined)
+    exitWithError(
+      logger,
+      `Error: --${beside} can't be combined with --config. ${besideHint(beside, file)}`,
     )
-    process.exit(1)
-  }
-  let text: string
-  try {
-    text = readFileSync(cli.config, 'utf8')
-  } catch (err) {
-    logger.error(`Error: Cannot read ${cli.config}: ${(err as Error).message}`)
-    process.exit(1)
-  }
-  const loaded = loadConfig(cli.config, text, process.env)
-  for (const warning of loaded.warnings) logger.error(`Warning: ${warning}`)
-  if ('error' in loaded) {
-    logger.error(loaded.error)
-    process.exit(1)
-  }
-  const { config, extraKeys, extraKeyFiles, notes } = overrideFromCli(
-    loaded.config,
-    cli,
-    given,
-  )
-  if (cli.printConfig) print(printableConfig(config))
+  const overridden = overrideFromCli(readConfigFile(file, logger), cli, given)
+  const { config, notes } = overridden
+  if (cli.printConfig) printAndExit(printableConfig(config))
   const several = config.entries.length > 1
-  // Combined entries have no command line of their own (a later 4.2 change).
-  const served = config.entries
-    .filter((entry) => !('members' in entry.server))
-    .map((entry): Served => {
-      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
-      const argv = parseCli(run.args)
-      if (run.command) argv.stdio = run.command as string
-      return { name: entry.name, path: entry.path, argv }
-    })
+  const served = servedEntries(overridden, several)
   const healthEndpoints = config.gateway.healthEndpoint ?? []
-  const conflict =
-    several &&
-    routeConflict(
+  if (several) {
+    const conflict = routeConflict(
       served.map(({ name, path, argv }) => ({
         name,
         path,
@@ -354,38 +399,17 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
       })),
       healthEndpoints,
     )
-  if (conflict) {
-    logger.error(`Error: ${cli.config}: ${conflict}`)
-    process.exit(1)
+    if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
   }
-  if (cli.checkConfig) {
-    process.stdout.write(
-      `${cli.config} is valid: ${config.entries.length} ${config.entries.length === 1 ? 'server' : 'servers'}\n` +
-        config.entries
-          .map(
-            (entry) =>
-              `  ${entry.path}  ${entry.name} (${effectiveTransport(entry, config.defaults)})\n`,
-          )
-          .join(''),
-    )
-    process.exit(0)
-  }
+  if (cli.checkConfig) reportValid(file, config)
   const notYet = config.entries
-    .map((entry) =>
-      'members' in entry.server
-        ? 'Combining servers on one URL'
-        : // Only a remote server can be on stdio: the loader refuses a local one.
-          several && effectiveTransport(entry, config.defaults) === 'stdio'
-          ? 'Serving an entry over stdio beside others'
-          : undefined,
-    )
+    .map((entry) => notYetServable(entry, config.defaults, several))
     .find((reason) => reason !== undefined)
-  if (notYet) {
-    logger.error(
-      `Error: ${notYet} is coming in a later 4.2 change; ${cli.config} is valid, but this build can't serve it yet`,
+  if (notYet)
+    exitWithError(
+      logger,
+      `Error: ${notYet} is coming in a later 4.2 change; ${file} is valid, but this build can't serve it yet`,
     )
-    process.exit(1)
-  }
   if (!several) return { argv: served[0].argv, notes }
   return { servers: served, healthEndpoints, notes }
 }

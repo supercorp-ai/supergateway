@@ -391,78 +391,10 @@ function readServer(
       [...path, given[1]],
       `Has both "${given[0]}" and "${given[1]}". An entry runs one server (command, stdio or url) or combines several (its own "mcpServers")`,
     )
-  let source: ServerSource
-  if (given[0] === 'url') {
-    if ('type' in raw && 'transportType' in raw)
-      fail(
-        [...path, 'transportType'],
-        'Has both "type" and "transportType", which mean the same. Keep "type"',
-      )
-    const type = 'type' in raw ? raw.type : raw.transportType
-    const typeKey = 'type' in raw ? 'type' : 'transportType'
-    if (type === undefined)
-      fail(
-        [...path, 'url'],
-        'Add "type": "streamableHttp" or "sse", so it is clear how to reach this server',
-      )
-    const known = URL_TYPES[text(type, [...path, typeKey], fail)]
-    if (!known)
-      fail(
-        [...path, typeKey],
-        `"${type}" is not a remote transport. Use "streamableHttp" or "sse"`,
-      )
-    ;(['args', 'env', 'cwd'] as const).forEach((key) => {
-      if (key in raw)
-        fail(
-          [...path, key],
-          `"${key}" goes with a local server ("command" or "stdio"), not "url"`,
-        )
-    })
-    source = {
-      kind: 'url',
-      url: urlText(raw.url, [...path, 'url'], fail),
-      type: known,
-    }
-  } else {
-    if ('type' in raw && raw.type !== 'stdio')
-      fail(
-        [...path, 'type'],
-        `"type": ${JSON.stringify(raw.type)} goes with "url". A local server is "type": "stdio", or no type`,
-      )
-    if (given[0] === 'stdio') {
-      if ('args' in raw)
-        fail(
-          [...path, 'args'],
-          '"args" goes with "command". "stdio" is one shell command line',
-        )
-      source = {
-        kind: 'stdio',
-        stdio: text(raw.stdio, [...path, 'stdio'], fail),
-      }
-    } else {
-      source = {
-        kind: 'command',
-        command: text(raw.command, [...path, 'command'], fail),
-        args:
-          'args' in raw
-            ? strings(
-                raw.args,
-                [...path, 'args'],
-                fail,
-                'a list of strings',
-                true,
-              )
-            : [],
-      }
-    }
-    ;(['headers', 'oauth2Bearer'] as const).forEach((key) => {
-      if (inner && key in raw)
-        fail(
-          [...path, key],
-          `"${key}" is sent to a remote server, so it goes with "url"`,
-        )
-    })
-  }
+  const source =
+    given[0] === 'url'
+      ? urlSource(raw, path, fail)
+      : localSource(raw, path, fail, inner)
   const server: Omit<InnerServer, 'name'> = { source }
   if ('env' in raw) server.env = stringMap(raw.env, [...path, 'env'], fail)
   if ('cwd' in raw) server.cwd = text(raw.cwd, [...path, 'cwd'], fail)
@@ -475,6 +407,100 @@ function readServer(
       fail,
     )
   return server
+}
+
+// A remote server: its `url`, and the `type` (or `transportType`) that says
+// how to reach it.
+function urlSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+): ServerSource {
+  if ('type' in raw && 'transportType' in raw)
+    fail(
+      [...path, 'transportType'],
+      'Has both "type" and "transportType", which mean the same. Keep "type"',
+    )
+  const typeKey = 'type' in raw ? 'type' : 'transportType'
+  const type = raw[typeKey]
+  if (type === undefined)
+    fail(
+      [...path, 'url'],
+      'Add "type": "streamableHttp" or "sse", so it is clear how to reach this server',
+    )
+  const known = URL_TYPES[text(type, [...path, typeKey], fail)]
+  if (!known)
+    fail(
+      [...path, typeKey],
+      `"${type}" is not a remote transport. Use "streamableHttp" or "sse"`,
+    )
+  ;(['args', 'env', 'cwd'] as const).forEach((key) => {
+    if (key in raw)
+      fail(
+        [...path, key],
+        `"${key}" goes with a local server ("command" or "stdio"), not "url"`,
+      )
+  })
+  return {
+    kind: 'url',
+    url: urlText(raw.url, [...path, 'url'], fail),
+    type: known,
+  }
+}
+
+// A local server: one shell command line (`stdio`), or a `command` and its
+// `args`.
+function localSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+  inner: boolean,
+): ServerSource {
+  if ('type' in raw && raw.type !== 'stdio')
+    fail(
+      [...path, 'type'],
+      `"type": ${JSON.stringify(raw.type)} goes with "url". A local server is "type": "stdio", or no type`,
+    )
+  const source =
+    'stdio' in raw
+      ? stdioSource(raw, path, fail)
+      : commandSource(raw, path, fail)
+  ;(['headers', 'oauth2Bearer'] as const).forEach((key) => {
+    if (inner && key in raw)
+      fail(
+        [...path, key],
+        `"${key}" is sent to a remote server, so it goes with "url"`,
+      )
+  })
+  return source
+}
+
+function stdioSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+): ServerSource {
+  if ('args' in raw)
+    fail(
+      [...path, 'args'],
+      '"args" goes with "command". "stdio" is one shell command line',
+    )
+  return { kind: 'stdio', stdio: text(raw.stdio, [...path, 'stdio'], fail) }
+}
+
+function commandSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+): ServerSource {
+  return {
+    kind: 'command',
+    command: text(raw.command, [...path, 'command'], fail),
+    args:
+      'args' in raw
+        ? strings(raw.args, [...path, 'args'], fail, 'a list of strings', true)
+        : [],
+  }
 }
 
 // How one setting's value is read and checked; undefined leaves it unset.

@@ -115,7 +115,9 @@ const SOURCE_KEYS = [
   'type',
   'transportType',
 ] as const
-const SERVER_KEYS = [...SOURCE_KEYS, 'env', 'cwd', 'disabled', 'enabled']
+// The keys that say what a server runs, and how.
+const RUN_KEYS = [...SOURCE_KEYS, 'env', 'cwd']
+const SERVER_KEYS = [...RUN_KEYS, 'disabled', 'enabled']
 
 // Keys other clients keep in the same file, for themselves: approval prompts,
 // their own timeouts, trust and visibility. They mean nothing to a gateway.
@@ -148,6 +150,11 @@ const ENTRY_KEYS = new Set<string>([
   'mcpServers',
 ])
 const INNER_KEYS = new Set<string>([...SERVER_KEYS, 'headers', 'oauth2Bearer'])
+// Settings for the URL an entry is served at, which a combined server, served
+// at its entry's URL, can't have.
+const URL_ONLY_KEYS = new Set<string>(
+  ENDPOINT_KEYS.filter((key) => !INNER_KEYS.has(key)),
+)
 
 const TRANSPORTS: readonly string[] = ['stdio', 'sse', 'ws', 'streamableHttp']
 const URL_TYPES: Record<string, 'sse' | 'streamableHttp'> = {
@@ -227,14 +234,18 @@ function readConfig(
   ])
   if (!('mcpServers' in raw))
     fail([], 'Add "mcpServers" with at least one server')
-  const servers = object(raw.mcpServers, ['mcpServers'], fail)
-  const entries: Entry[] = []
-  for (const [name, value] of Object.entries(servers)) {
-    const entry = readEntry(name, value, fail, warnings)
-    if (entry) entries.push(entry)
-  }
+  const entries = Object.entries(object(raw.mcpServers, ['mcpServers'], fail))
+    .map(([name, value]) => readEntry(name, value, fail, warnings))
+    .filter((entry): entry is Entry => entry !== undefined)
   if (entries.length === 0)
     fail(['mcpServers'], 'There is no enabled server to serve')
+  checkPaths(entries, fail)
+  checkStdioOutput(entries, defaults, fail)
+  return { gateway, defaults, entries }
+}
+
+// No two entries may be served at the same path.
+function checkPaths(entries: Entry[], fail: Fail) {
   const byPath = new Map<string, string>()
   // Never empty here, so not a `for` loop with a zero-iteration case.
   entries.forEach((entry) => {
@@ -246,11 +257,18 @@ function readConfig(
       )
     byPath.set(entry.path, entry.name)
   })
+}
+
+// Stdio output carries one entry, and only a remote one: a local server
+// already speaks stdio.
+function checkStdioOutput(
+  entries: Entry[],
+  defaults: EndpointOptions,
+  fail: Fail,
+) {
   const localOnStdio = entries.find(
     (entry) =>
-      !('members' in entry.server) &&
-      entry.server.source.kind !== 'url' &&
-      effectiveTransport(entry, defaults) === 'stdio',
+      isLocal(entry) && effectiveTransport(entry, defaults) === 'stdio',
   )
   if (localOnStdio)
     fail(
@@ -265,8 +283,12 @@ function readConfig(
       ['mcpServers', onStdio[1].name],
       `${entryText(onStdio[0].name)} and ${entryText(onStdio[1].name)} would both use stdio output, which carries one entry. Combine them under one entry's "mcpServers", or set "outputTransport" on one`,
     )
-  return { gateway, defaults, entries }
 }
+
+// An entry that runs one server of its own, rather than reaching a remote one
+// or combining several.
+const isLocal = (entry: Entry) =>
+  !('members' in entry.server) && entry.server.source.kind !== 'url'
 
 function readEntry(
   name: string,
@@ -283,28 +305,36 @@ function readEntry(
     'path' in raw
       ? routePath(raw.path, [...path, 'path'], fail)
       : defaultPath(name, path, fail)
-  if ('mcpServers' in raw) {
-    const extra = SERVER_KEYS.filter(
-      (key) => key in raw && key !== 'disabled' && key !== 'enabled',
-    )
-    if (extra.length > 0)
-      fail(
-        [...path, extra[0]],
-        `An entry with its own "mcpServers" combines them; "${extra[0]}" belongs on one of those servers`,
-      )
-    const members = Object.entries(
-      object(raw.mcpServers, [...path, 'mcpServers'], fail),
-    )
-      .map(([memberName, member]) =>
-        readInner(memberName, member, [...path, 'mcpServers'], fail, warnings),
-      )
-      .filter((member): member is InnerServer => member !== undefined)
-    if (members.length === 0)
-      fail([...path, 'mcpServers'], 'There is no enabled server to combine')
-    return { name, path: urlPath, ...options, server: { members } }
-  }
-  const server = readServer(raw, path, fail, false)
+  const server =
+    'mcpServers' in raw
+      ? readCombined(raw, path, fail, warnings)
+      : readServer(raw, path, fail, false)
   return { name, path: urlPath, ...options, server }
+}
+
+// An entry's own "mcpServers", combined on its URL.
+function readCombined(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+  warnings: string[],
+): { members: InnerServer[] } {
+  const extra = RUN_KEYS.filter((key) => key in raw)
+  if (extra.length > 0)
+    fail(
+      [...path, extra[0]],
+      `An entry with its own "mcpServers" combines them; "${extra[0]}" belongs on one of those servers`,
+    )
+  const members = Object.entries(
+    object(raw.mcpServers, [...path, 'mcpServers'], fail),
+  )
+    .map(([memberName, member]) =>
+      readInner(memberName, member, [...path, 'mcpServers'], fail, warnings),
+    )
+    .filter((member): member is InnerServer => member !== undefined)
+  if (members.length === 0)
+    fail([...path, 'mcpServers'], 'There is no enabled server to combine')
+  return { members }
 }
 
 function readInner(
@@ -321,11 +351,7 @@ function readInner(
       [...path, 'mcpServers'],
       'Combining goes one level deep only; a combined server cannot combine others',
     )
-  const urlSetting = Object.keys(raw).find(
-    (key) =>
-      (ENDPOINT_KEYS as readonly string[]).includes(key) &&
-      !INNER_KEYS.has(key),
-  )
+  const urlSetting = Object.keys(raw).find((key) => URL_ONLY_KEYS.has(key))
   if (urlSetting !== undefined)
     fail(
       [...path, urlSetting],

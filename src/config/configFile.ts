@@ -84,29 +84,56 @@ export interface Config {
 export type Loaded =
   { config: Config; warnings: string[] } | { error: string; warnings: string[] }
 
-const GATEWAY_KEYS = [
-  'port',
-  'host',
-  'logLevel',
-  'logFormat',
-  'exitWithProcess',
-] as const
-const ENDPOINT_KEYS = [
-  'outputTransport',
-  'baseUrl',
-  'ssePath',
-  'messagePath',
-  'streamableHttpPath',
-  'cors',
-  'healthEndpoint',
-  'headers',
-  'oauth2Bearer',
-  'apiKey',
-  'apiKeyFile',
-  'stateful',
-  'sessionTimeout',
-  'protocolVersion',
-] as const
+// How one setting's value is read and checked; undefined leaves it unset.
+type Reader<T> = (value: unknown, path: (string | number)[], fail: Fail) => T
+type Readers<T> = { [K in keyof T]-?: Reader<T[K]> }
+
+// Settings are read, and so checked and printed, in the order listed here.
+const GATEWAY_READERS: Readers<GatewaySettings> = {
+  port: (value, path, fail) => integer(value, path, fail, 0),
+  host: text,
+  logLevel: (value, path, fail) =>
+    oneOf(
+      value,
+      path,
+      ['debug', 'info', 'none'],
+      fail,
+    ) as GatewaySettings['logLevel'],
+  logFormat: (value, path, fail) =>
+    oneOf(value, path, ['text', 'json'], fail) as GatewaySettings['logFormat'],
+  exitWithProcess: (value, path, fail) => integer(value, path, fail, 2),
+  healthEndpoint: paths,
+}
+
+const ENDPOINT_READERS: Readers<EndpointOptions> = {
+  outputTransport: (value, path, fail) =>
+    oneOf(value, path, TRANSPORTS, fail) as Transport,
+  baseUrl: text,
+  ssePath: routePath,
+  messagePath: routePath,
+  streamableHttpPath: routePath,
+  // `false` is the default, so it sets nothing.
+  cors: (value, path, fail) => {
+    if (value === true) return true
+    if (value === false) return undefined
+    return strings(value, path, fail, 'true, false, or a list of origins')
+  },
+  healthEndpoint: paths,
+  apiKey: (value, path, fail) =>
+    typeof value === 'string'
+      ? [text(value, path, fail)]
+      : strings(value, path, fail, 'a key or a list of keys'),
+  apiKeyFile: text,
+  stateful: boolean,
+  sessionTimeout: (value, path, fail) => integer(value, path, fail, 1),
+  protocolVersion: text,
+  headers: stringMap,
+  oauth2Bearer: text,
+}
+
+// The keys a file may set are the ones there is a reader for.
+const GATEWAY_KEYS = Object.keys(GATEWAY_READERS)
+const ENDPOINT_KEYS = Object.keys(ENDPOINT_READERS)
 const SOURCE_KEYS = [
   'command',
   'args',
@@ -501,53 +528,6 @@ function commandSource(
         ? strings(raw.args, [...path, 'args'], fail, 'a list of strings', true)
         : [],
   }
-}
-
-// How one setting's value is read and checked; undefined leaves it unset.
-type Reader<T> = (value: unknown, path: (string | number)[], fail: Fail) => T
-type Readers<T> = { [K in keyof T]-?: Reader<T[K]> }
-
-// Settings are read, and so checked and printed, in the order listed here.
-const GATEWAY_READERS: Readers<GatewaySettings> = {
-  port: (value, path, fail) => integer(value, path, fail, 0),
-  host: text,
-  logLevel: (value, path, fail) =>
-    oneOf(
-      value,
-      path,
-      ['debug', 'info', 'none'],
-      fail,
-    ) as GatewaySettings['logLevel'],
-  logFormat: (value, path, fail) =>
-    oneOf(value, path, ['text', 'json'], fail) as GatewaySettings['logFormat'],
-  exitWithProcess: (value, path, fail) => integer(value, path, fail, 2),
-  healthEndpoint: paths,
-}
-
-const ENDPOINT_READERS: Readers<EndpointOptions> = {
-  outputTransport: (value, path, fail) =>
-    oneOf(value, path, TRANSPORTS, fail) as Transport,
-  baseUrl: text,
-  ssePath: routePath,
-  messagePath: routePath,
-  streamableHttpPath: routePath,
-  // `false` is the default, so it sets nothing.
-  cors: (value, path, fail) => {
-    if (value === true) return true
-    if (value === false) return undefined
-    return strings(value, path, fail, 'true, false, or a list of origins')
-  },
-  healthEndpoint: paths,
-  apiKey: (value, path, fail) =>
-    typeof value === 'string'
-      ? [text(value, path, fail)]
-      : strings(value, path, fail, 'a key or a list of keys'),
-  apiKeyFile: text,
-  stateful: boolean,
-  sessionTimeout: (value, path, fail) => integer(value, path, fail, 1),
-  protocolVersion: text,
-  headers: stringMap,
-  oauth2Bearer: text,
 }
 
 // The settings `readers` knows that `raw` holds, less those in `skip`.

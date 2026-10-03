@@ -36,7 +36,8 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
 - **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
-- **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+- **`--healthEndpoint /healthz`**: Register one or more endpoints (every mode but stdio output; can be used multiple times) that respond with `"ok"`
+- **`--healthCheck gateway | server`**: What the health endpoints check (default: `gateway`). `gateway` answers `"ok"` while the gateway is up. `server` also checks the MCP server: it starts one (or, for `--sse`/`--streamableHttp`, opens a session with the remote server), initializes and pings it, and stops it. It answers `"ok"` if the server responded within 10 seconds, and `503` with the reason otherwise (e.g. `unhealthy: the server exited (code=1, signal=null)`). The answer is reused for 10 seconds, so polling every second starts at most one server per 10 seconds. The startup log says when health turns bad and when it recovers
 - **`--apiKey "some-key"`**: Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>` (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode; can be used multiple times). Also `SUPERGATEWAY_API_KEY=some-key`. See [Requiring an API key](#requiring-an-api-key)
 - **`--apiKeyFile /run/secrets/keys`**: Accept the keys in this file, one per line (blank lines are skipped). Also `SUPERGATEWAY_API_KEY_FILE=/run/secrets/keys`
 - **`--exitWithProcess <pid>`**: Shut down, stopping the MCP server, when process `<pid>` exits (all modes). Pass the launcher's PID (e.g. `$$`); it need not be the direct parent, so it works through `npx`. Checked about once a second. A launcher that spawns Supergateway with a stdin pipe doesn't need this: since 4.0 Supergateway exits when its stdin closes.
@@ -200,7 +201,7 @@ npx -y supergateway --config servers.json
 - **A server** is `command` + `args` (run without a shell, as clients run them), `stdio` (a shell command line, as `--stdio`), or `url` + `type` (`sse` or `http`). `env` and `cwd` set its environment and directory.
 - **Any option** from the list above can be set on a server, by its flag name (`outputTransport`, `stateful`, `cors`, `headers`, `apiKey`, `healthEndpoint`, ...). Set at the top level, it is the default for every server. Defaults are the command line's: a local server is served over SSE, a `url` one on stdio.
 - **`path`** serves a server somewhere other than `/<name>`. A name that can't be part of a URL needs one. The gateway refuses to start if a server's URL would be answered by another server or by the gateway's own `healthEndpoint`.
-- **`port`, `host`, `logLevel`, `logFormat`, `exitWithProcess`** and the top-level `healthEndpoint` are the gateway's own. A top-level `healthEndpoint` answers for the whole gateway; one on a server is under that server's path.
+- **`port`, `host`, `logLevel`, `logFormat`, `exitWithProcess`** and the top-level `healthEndpoint` are the gateway's own. A top-level `healthEndpoint` answers for the whole gateway; one on a server is under that server's path. With `"healthCheck": "server"`, a server's own health endpoints check that server; the gateway's stay `"ok"` while the gateway is up, so one failing server doesn't fail the whole gateway.
 - **`apiKey`** on a server locks that server only. Keys from `--apiKey`, `--apiKeyFile` or `SUPERGATEWAY_API_KEY` lock every server.
 - **`"disabled": true`** skips a server. Keys only clients use (`autoApprove`, `timeout`, `disabledTools`, ...) are warned about and ignored. Any other unknown key is an error that suggests the closest known one.
 - **`${VAR}`**, `${VAR:-default}` and `${env:VAR}` are replaced from the environment in every value except a `stdio` command line, which the shell expands itself. A variable that isn't set is an error. `$$` is a literal `$`.
@@ -524,6 +525,7 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 - [@michaeljguarino](https://github.com/michaeljguarino)
 - [@qdrddr](https://github.com/qdrddr)
 - [@Shellishack](https://github.com/Shellishack)
+- [@anyuan95](https://github.com/anyuan95)
 
 ## Contributing
 

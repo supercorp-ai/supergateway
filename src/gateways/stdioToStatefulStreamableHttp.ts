@@ -22,6 +22,7 @@ import { drained } from '../lib/outputBackpressure.js'
 import { ChildLink, type StartPeer } from '../lib/childHandoff.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
+import { serverHealthOf, type HealthCheck } from '../lib/serverHealth.js'
 
 interface StdioToStreamableHttpOptions {
   port: number
@@ -31,6 +32,8 @@ interface StdioToStreamableHttpOptions {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
@@ -70,6 +73,7 @@ export function stdioToStatefulStreamableHttpMount(
     logger,
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     headers,
     apiKeys = [],
     path = '/',
@@ -84,6 +88,7 @@ export function stdioToStatefulStreamableHttpMount(
     settings: [`streamableHttpPath: ${streamableHttpPath}`],
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     apiKeys,
   })
   logger.info(
@@ -102,6 +107,12 @@ export function stdioToStatefulStreamableHttpMount(
     corsOrigin,
     exposedHeaders: ['Mcp-Session-Id'],
     healthEndpoints,
+    health: serverHealthOf(
+      healthCheck,
+      children,
+      (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+      logger,
+    ),
     apiKeys,
     logger,
   })

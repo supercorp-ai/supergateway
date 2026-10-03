@@ -19,6 +19,7 @@ import { ChildLink, type StartPeer } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
+import { serverHealthOf, type HealthCheck } from '../lib/serverHealth.js'
 
 interface StdioToStreamableHttpOptions {
   port: number
@@ -28,6 +29,8 @@ interface StdioToStreamableHttpOptions {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
@@ -67,6 +70,7 @@ export function stdioToStatelessStreamableHttpMount(
     logger,
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     headers,
     apiKeys = [],
     path = '/',
@@ -84,6 +88,7 @@ export function stdioToStatelessStreamableHttpMount(
     ],
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     apiKeys,
   })
 
@@ -98,6 +103,12 @@ export function stdioToStatelessStreamableHttpMount(
     headers,
     corsOrigin,
     healthEndpoints,
+    health: serverHealthOf(
+      healthCheck,
+      children,
+      (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+      logger,
+    ),
     apiKeys,
     logger,
   })

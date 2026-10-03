@@ -94,6 +94,7 @@ test('entryFlagBesideConfig: a server or URL flag beside --config is named', () 
     'messagePath',
     'streamableHttpPath',
     'cors',
+    'healthCheck',
     'header',
     'oauth2Bearer',
     'stateful',
@@ -187,6 +188,8 @@ test('configFromCli: every flag given is carried, and only those', () => {
       '5000',
       '--protocolVersion',
       '2025-03-26',
+      '--healthCheck',
+      'server',
     ]),
     {
       gateway: {
@@ -208,6 +211,7 @@ test('configFromCli: every flag given is carried, and only those', () => {
           messagePath: '/msgs',
           streamableHttpPath: '/rpc',
           cors: ['http://a.example', '/b$/'],
+          healthCheck: 'server',
           headers: { 'x-team': 'core', Authorization: 'Bearer a:b' },
           oauth2Bearer: 'tok',
           apiKey: ['k1', 'k2'],

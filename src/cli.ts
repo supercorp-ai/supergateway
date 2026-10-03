@@ -94,6 +94,12 @@ const cli = (args: string[]) =>
       coerce: (paths: unknown[]) =>
         paths.map((path) => routePath(String(path))),
     })
+    .option('healthCheck', {
+      choices: ['gateway', 'server'] as const,
+      default: 'gateway',
+      description:
+        'What the health endpoints check: "gateway" (default) answers "ok" while the gateway is up; "server" also starts the MCP server, initializes and pings it, and answers 503 when it does not respond. The result is reused for 10s.',
+    })
     .option('header', {
       type: 'array',
       default: [],

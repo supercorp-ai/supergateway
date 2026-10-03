@@ -6,6 +6,7 @@ import {
   type Node,
   type ParseError,
 } from 'jsonc-parser'
+import type { HealthCheck } from '../lib/serverHealth.js'
 
 /**
  * The `--config` file: JSON or JSONC, rooted at `mcpServers` like the files
@@ -33,6 +34,7 @@ export interface EndpointOptions {
   streamableHttpPath?: string
   cors?: true | string[]
   healthEndpoint?: string[]
+  healthCheck?: HealthCheck
   headers?: Record<string, string>
   oauth2Bearer?: string
   apiKey?: string[]
@@ -119,6 +121,8 @@ const ENDPOINT_READERS: Readers<EndpointOptions> = {
     return strings(value, path, fail, 'true, false, or a list of origins')
   },
   healthEndpoint: paths,
+  healthCheck: (value, path, fail) =>
+    oneOf(value, path, ['gateway', 'server'], fail) as HealthCheck,
   apiKey: (value, path, fail) =>
     typeof value === 'string'
       ? [text(value, path, fail)]

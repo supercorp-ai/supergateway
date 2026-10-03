@@ -95,17 +95,21 @@ function settingsFromCli<T>(
 export function configFromCli(argv: Cli, given: Set<string>): Config {
   const gateway = settingsFromCli(argv, given, GATEWAY_FROM_CLI)
   const options = settingsFromCli(argv, given, ENDPOINT_FROM_CLI)
-  const source: InnerServer['source'] = argv.sse
-    ? { kind: 'url', url: argv.sse, type: 'sse' }
-    : argv.streamableHttp
-      ? { kind: 'url', url: argv.streamableHttp, type: 'streamableHttp' }
-      : // Called only for a command line that names its one server.
-        { kind: 'stdio', stdio: argv.stdio! }
+  const source = sourceFromCli(argv)
   return {
     gateway,
     defaults: {},
     entries: [{ name: 'default', path: '/', ...options, server: { source } }],
   }
+}
+
+// The server a command line names: --sse, --streamableHttp or --stdio.
+function sourceFromCli(argv: Cli): InnerServer['source'] {
+  if (argv.sse) return { kind: 'url', url: argv.sse, type: 'sse' }
+  if (argv.streamableHttp)
+    return { kind: 'url', url: argv.streamableHttp, type: 'streamableHttp' }
+  // Called only for a command line that names its one server.
+  return { kind: 'stdio', stdio: argv.stdio! }
 }
 
 // `--header "Name: value"` as the file writes it. A header without a colon is
@@ -146,16 +150,21 @@ export function overrideFromCli(
     gateway[key] = value
     return `--${key} ${JSON.stringify(value)} overrides ${replaced} from the config file`
   })
-  // Given but empty (`--apiKey`, `--apiKeyFile "$UNSET"`) is passed on, so it
-  // is refused as it is without --config ("is set but empty"). Dropped, it
-  // would start the gateway without the key the operator meant to require.
-  const keys = argv.apiKey as string[]
   return {
     config: { ...config, gateway: gateway as GatewaySettings },
-    extraKeys: !given.has('apiKey') ? [] : keys.length > 0 ? keys : [''],
+    extraKeys: extraKeysOf(argv, given),
     extraKeyFiles: given.has('apiKeyFile') ? [argv.apiKeyFile as string] : [],
     notes,
   }
+}
+
+// Given but empty (`--apiKey`, `--apiKeyFile "$UNSET"`) is passed on, so it
+// is refused as it is without --config ("is set but empty"). Dropped, it
+// would start the gateway without the key the operator meant to require.
+function extraKeysOf(argv: Cli, given: Set<string>) {
+  if (!given.has('apiKey')) return []
+  const keys = argv.apiKey as string[]
+  return keys.length > 0 ? keys : ['']
 }
 
 /** The config as a file would write it, secrets redacted. */

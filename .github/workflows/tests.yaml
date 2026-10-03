@@ -45,7 +45,9 @@ jobs:
       # stale build would let the compiled CLI tests pass against old code.
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 20
+        # The suite runs one file at a time, and took 18 of 20 minutes on Linux
+        # before the multi-server tests were added.
+        timeout-minutes: 30
         run: npm test
         env:
           # The ts-node typechecking loader aborts every file on Node 24.
@@ -309,7 +311,9 @@ jobs:
         run: npm install --no-save @modelcontextprotocol/sdk@${{ matrix.sdk }}
       - name: Run tests
         # Process-group regressions exercise the five-second escalation grace.
-        timeout-minutes: 20
+        # The suite runs one file at a time, and took 18 of 20 minutes on Linux
+        # before the multi-server tests were added.
+        timeout-minutes: 30
         run: npm test
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
@@ -344,7 +348,7 @@ jobs:
 
       - name: Run the version-portable suite
         # Native lifecycle tests include the same shutdown grace as the full suite.
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: npm run test:compat
 
   # Build with the supported SDK toolchain, then install the exact tarball with

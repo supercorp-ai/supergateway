@@ -9,25 +9,33 @@ import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { redactUrl } from './urlCredentials.js'
 import { describeHeaders } from './headers.js'
 import { upstreamPeer, type RemoteServer } from './upstreamPeer.js'
+import { toolNamesPeer, type ToolNames } from './toolNames.js'
 
 /**
  * The MCP server a listening gateway serves: a command it starts for each
- * session, or a remote server it opens a session with for each.
+ * session, or a remote server it opens a session with for each; and, with
+ * --toolPrefix or --tools, the tools a client sees of it.
  */
-export type ServerSource =
+export type ServerSource = (
   | { stdioCmd: ChildCommand; upstream?: undefined }
   | { upstream: RemoteServer; stdioCmd?: undefined }
+) & { toolNames?: ToolNames }
 
 /** The server's lines in a gateway's startup listing. */
 export function announceServer(logger: Logger, source: ServerSource) {
   if (!source.upstream) {
     logger.info(`  - stdio: ${describeCommand(source.stdioCmd)}`)
-    return
+  } else {
+    logger.info(
+      `  - ${source.upstream.type}: ${redactUrl(source.upstream.url)}`,
+    )
+    logger.info(
+      `  - Upstream headers: ${describeHeaders(source.upstream.headers)}`,
+    )
   }
-  logger.info(`  - ${source.upstream.type}: ${redactUrl(source.upstream.url)}`)
-  logger.info(
-    `  - Upstream headers: ${describeHeaders(source.upstream.headers)}`,
-  )
+  source.toolNames
+    ?.describe()
+    .forEach((setting) => logger.info(`  - ${setting}`))
 }
 
 type Spawn = typeof import('child_process').spawn
@@ -43,8 +51,17 @@ export function startServer(
   logger: Logger,
   label: string,
 ): StartPeer {
-  if (source.upstream)
-    return upstreamPeer(source.upstream, children, logger, label)
-  const child = spawnCommand(spawn, source.stdioCmd, children.spawnOptions)
+  const start = source.upstream
+    ? upstreamPeer(source.upstream, children, logger, label)
+    : spawnedPeer(spawn, source.stdioCmd, children)
+  return source.toolNames ? toolNamesPeer(start, source.toolNames) : start
+}
+
+const spawnedPeer = (
+  spawn: Spawn,
+  command: ChildCommand,
+  children: OwnedChildProcesses,
+) => {
+  const child = spawnCommand(spawn, command, children.spawnOptions)
   return processPeer(child, children.own(child))
 }

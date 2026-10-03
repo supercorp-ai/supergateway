@@ -17,11 +17,14 @@ import {
   interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
+import type { ToolNames } from '../lib/toolNames.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
   headers: Record<string, string>
+  /** The tools the stdio client sees of the server, if not all as they are. */
+  toolNames?: ToolNames
 }
 
 // A compliant MCP SSE server sends `event: endpoint` — the URL to POST
@@ -196,12 +199,13 @@ class Upstream {
 }
 
 export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger, headers } = args
+  const { sseUrl, logger, headers, toolNames } = args
 
   const upstreamUrl = parseUpstreamUrl(sseUrl)
 
   logger.info(`  - sse: ${redactUrl(upstreamUrl)}`)
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
+  toolNames?.describe().forEach((setting) => logger.info(`  - ${setting}`))
   logger.info('Connecting to SSE...')
 
   onSignals({ logger })
@@ -227,6 +231,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
   await stdioServer.connect(stdioTransport)
 
   bridgeStdioMessages(stdioServer.transport!, {
+    toolNames,
     label: 'SSE',
     logger,
     request: (req, signal) => upstream.request(req, signal),

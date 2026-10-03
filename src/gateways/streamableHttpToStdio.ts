@@ -22,11 +22,14 @@ import {
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
+import type { ToolNames } from '../lib/toolNames.js'
 
 export interface StreamableHttpToStdioArgs {
   streamableHttpUrl: string
   logger: Logger
   headers: Record<string, string>
+  /** The tools the stdio client sees of the server, if not all as they are. */
+  toolNames?: ToolNames
 }
 
 const FIRST_RECONNECT_DELAY_MS = 1000
@@ -318,11 +321,12 @@ class Upstream {
 }
 
 export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
-  const { streamableHttpUrl, logger, headers } = args
+  const { streamableHttpUrl, logger, headers, toolNames } = args
   const upstreamUrl = parseUpstreamUrl(streamableHttpUrl)
 
   logger.info(`  - streamableHttp: ${redactUrl(upstreamUrl)}`)
   logger.info(`  - Headers: ${describeHeaders(headers)}`)
+  toolNames?.describe().forEach((setting) => logger.info(`  - ${setting}`))
   logger.info('Connecting to Streamable HTTP...')
 
   const upstream = new Upstream(upstreamUrl, headers, logger)
@@ -349,6 +353,7 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
   await stdioServer.connect(stdioTransport)
 
   bridgeStdioMessages(stdioServer.transport!, {
+    toolNames,
     label: 'Streamable HTTP',
     logger,
     request: (req, signal, attempt: Attempt) =>

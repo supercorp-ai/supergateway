@@ -56,6 +56,7 @@ import {
 import type { Logger } from './types.js'
 import type { ChildCommand } from './lib/childCommand.js'
 import type { HealthCheck } from './lib/serverHealth.js'
+import { ToolNames } from './lib/toolNames.js'
 import {
   loadConfig,
   effectiveTransport,
@@ -109,15 +110,25 @@ type ServerOptions = Listening & { path?: string }
 // gateway sends it.
 const serverOf = (argv: Cli, logger: Logger): ServerSource => {
   const url = argv.sse ?? argv.streamableHttp
-  if (url === undefined) return { stdioCmd: stdioCommand(argv) }
+  const toolNames = toolNamesOf(argv, logger)
+  if (url === undefined) return { stdioCmd: stdioCommand(argv), toolNames }
   return {
     upstream: {
       url: parseUpstreamUrl(url),
       type: argv.sse ? 'sse' : 'streamableHttp',
       headers: headers({ argv, logger }),
     },
+    toolNames,
   }
 }
+
+// The tools a client sees of the server: none rewritten unless --toolPrefix
+// or --tools is given.
+const toolNamesOf = (argv: Cli, logger: Logger) =>
+  ToolNames.of(
+    { toolPrefix: argv.toolPrefix, tools: argv.tools as string[] | undefined },
+    logger,
+  )
 
 // What the gateway's own responses carry: --header for a local server. For a
 // remote one, --header is what the gateway sends it; returning that to every
@@ -247,12 +258,14 @@ const bridge = {
       sseUrl: argv.sse!,
       logger,
       headers: headers({ argv, logger }),
+      toolNames: toolNamesOf(argv, logger),
     }),
   streamableHttp: (argv: Cli, logger: Logger) =>
     streamableHttpToStdio({
       streamableHttpUrl: argv.streamableHttp!,
       logger,
       headers: headers({ argv, logger }),
+      toolNames: toolNamesOf(argv, logger),
     }),
 }
 

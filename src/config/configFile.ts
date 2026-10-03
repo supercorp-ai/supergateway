@@ -35,6 +35,8 @@ export interface EndpointOptions {
   cors?: true | string[]
   healthEndpoint?: string[]
   healthCheck?: HealthCheck
+  toolPrefix?: string
+  tools?: string[]
   headers?: Record<string, string>
   oauth2Bearer?: string
   apiKey?: string[]
@@ -123,6 +125,10 @@ const ENDPOINT_READERS: Readers<EndpointOptions> = {
   healthEndpoint: paths,
   healthCheck: (value, path, fail) =>
     oneOf(value, path, ['gateway', 'server'], fail) as HealthCheck,
+  toolPrefix: text,
+  // An empty list is a real choice: none of the server's tools.
+  tools: (value, path, fail) =>
+    strings(value, path, fail, 'a list of tool names'),
   apiKey: (value, path, fail) =>
     typeof value === 'string'
       ? [text(value, path, fail)]

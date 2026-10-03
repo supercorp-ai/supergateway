@@ -60,6 +60,9 @@ const ENDPOINT_FROM_CLI: FromCli<Omit<EndpointOptions, 'healthEndpoint'>> = {
   messagePath: (argv) => argv.messagePath,
   streamableHttpPath: (argv) => argv.streamableHttpPath,
   healthCheck: (argv) => argv.healthCheck as Entry['healthCheck'],
+  // `--toolPrefix ""` is no prefix, which is also the default.
+  toolPrefix: (argv) => argv.toolPrefix || undefined,
+  tools: (argv) => argv.tools as string[],
   cors: (argv) => {
     // Given, it is a list: empty for a bare --cors.
     const origins = (argv.cors as unknown[]).map(String)
@@ -269,6 +272,11 @@ export function cliForEntry(
   for (const path of entry.healthEndpoint ?? [])
     flag('healthEndpoint', path === '/' ? prefix || '/' : `${prefix}${path}`)
   flag('healthCheck', pick('healthCheck'))
+  flag('toolPrefix', pick('toolPrefix'))
+  const tools = pick('tools')
+  // A bare --tools is an empty list: none of the server's tools.
+  if (tools?.length === 0) args.push('--tools')
+  else for (const name of tools ?? []) flag('tools', name)
   const cors = pick('cors')
   if (cors === true) args.push('--cors')
   else for (const origin of cors ?? []) flag('cors', origin)

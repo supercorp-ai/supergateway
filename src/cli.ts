@@ -94,6 +94,17 @@ const cli = (args: string[]) =>
       coerce: (paths: unknown[]) =>
         paths.map((path) => routePath(String(path))),
     })
+    .option('toolPrefix', {
+      type: 'string',
+      description:
+        'Put this before every tool name the server lists, e.g. --toolPrefix github_ turns "search" into "github_search". Clients call the tool by that name; the server still gets its own. Used as given: add your own separator',
+    })
+    .option('tools', {
+      type: 'array',
+      description:
+        "Expose only these tools, by the server's own names, e.g. --tools search --tools get_issue. Other tools are left out of the list, and a call to one gets the error a server gives for a tool it doesn't have",
+      coerce: (names: unknown[]) => names.map(String),
+    })
     .option('healthCheck', {
       choices: ['gateway', 'server'] as const,
       default: 'gateway',

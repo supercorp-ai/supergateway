@@ -211,7 +211,6 @@ class Combined implements Peer {
   /** Progress tokens of those requests, as the client sees them. */
   private readonly tokens = new Map<string, { backend: Backend; token: Id }>()
   private serverRequests = 0
-  private readonly warned = new Set<string>()
   private ended = false
   /** Whether initialize has been answered: before it, nothing is announced. */
   private initialized = false
@@ -221,6 +220,8 @@ class Combined implements Peer {
     private readonly members: CombinedMember[],
     private readonly owner: ChildOwner,
     private readonly logger: Logger,
+    /** The clashes already warned about, for every session of the entry. */
+    private readonly warned: Set<string>,
   ) {}
 
   get gone() {
@@ -725,8 +726,16 @@ class Combined implements Peer {
   }
 }
 
-/** The servers of a combined entry as one peer. */
+/**
+ * The servers of a combined entry as one peer. `warned` is the entry's, so a
+ * clash is warned about once, not once a session.
+ */
 export const combinedPeer =
-  (entry: string, members: CombinedMember[], logger: Logger): StartPeer =>
+  (
+    entry: string,
+    members: CombinedMember[],
+    logger: Logger,
+    warned = new Set<string>(),
+  ): StartPeer =>
   (owner) =>
-    new Combined(entry, members, owner, logger)
+    new Combined(entry, members, owner, logger, warned)

@@ -668,17 +668,23 @@ test('a disabled second entry leaves one to run', options, async (t) => {
   assert.equal(response.status, 200)
 })
 
-test('a combined entry is valid, but not run yet', options, async (t) => {
-  const file = writeConfig(t, {
-    mcpServers: { all: { mcpServers: { a: mock, b: mock } } },
-  })
-  const result = await outcome(launchGateway(t, ['--config', file]))
-  assert.deepEqual(result, {
-    code: 1,
-    stdout: '',
-    stderr: `${prefix}Error: Combining servers on one URL ${later}; ${file} is valid, but this build can't serve it yet\n`,
-  })
-})
+test(
+  'combined servers on stdio are valid, but not run yet',
+  options,
+  async (t) => {
+    // Only remote servers combined: stdio by default, as one would be.
+    const far = { url: 'http://127.0.0.1:1/mcp', type: 'http' }
+    const file = writeConfig(t, {
+      mcpServers: { all: { mcpServers: { a: far, b: far } } },
+    })
+    const result = await outcome(launchGateway(t, ['--config', file]))
+    assert.deepEqual(result, {
+      code: 1,
+      stdout: '',
+      stderr: `${prefix}Error: Serving combined servers over stdio ${later}; ${file} is valid, but this build can't serve it yet\n`,
+    })
+  },
+)
 
 // --- Other clients' files ---
 

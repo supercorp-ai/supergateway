@@ -29,6 +29,8 @@ export interface CombinedServers {
   /** The entry's name. */
   name: string
   members: (ServerSource & { name: string })[]
+  /** The name clashes already warned about, across the entry's sessions. */
+  warned: Set<string>
 }
 
 /** The server's lines in a gateway's startup listing. */
@@ -91,6 +93,7 @@ function serverPeer(
           ),
       })),
       logger,
+      source.combined.warned,
     )
   if (source.upstream)
     return upstreamPeer(source.upstream, children, logger, label)

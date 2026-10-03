@@ -120,6 +120,7 @@ const serverOf = (argv: Cli, logger: Logger): ServerSource => {
       combined: {
         name: argv.stdio!,
         members: members.map((member) => memberSource(member, logger)),
+        warned: new Set(),
       },
       toolNames,
     }

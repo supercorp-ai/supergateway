@@ -1013,6 +1013,42 @@ test('a combined server takes no URL settings, and no "path"', () => {
   )
 })
 
+test("a combined server takes its own tool settings, checked as an entry's are", () => {
+  const entry = entryOf(
+    file({
+      a: {
+        toolPrefix: 'all_',
+        mcpServers: {
+          b: { ...local, toolPrefix: 'b_', tools: ['one', 'two'] },
+          c: { ...local, tools: [] },
+          d: local,
+        },
+      },
+    }),
+  )
+  assert.equal(entry.toolPrefix, 'all_')
+  assert.deepEqual(
+    (entry.server as { members: Record<string, unknown>[] }).members.map(
+      ({ name, toolPrefix, tools }) => ({ name, toolPrefix, tools }),
+    ),
+    [
+      { name: 'b', toolPrefix: 'b_', tools: ['one', 'two'] },
+      { name: 'c', toolPrefix: undefined, tools: [] },
+      { name: 'd', toolPrefix: undefined, tools: undefined },
+    ],
+  )
+  const empty = file({ a: { mcpServers: { b: { ...local, toolPrefix: '' } } } })
+  assert.equal(
+    errorOf(empty),
+    `Error: ${at(empty, '"toolPrefix"')}: mcpServers.a.mcpServers.b.toolPrefix: Expected a non-empty string`,
+  )
+  const notList = file({ a: { mcpServers: { b: { ...local, tools: 'one' } } } })
+  assert.equal(
+    errorOf(notList),
+    `Error: ${at(notList, '"tools"')}: mcpServers.a.mcpServers.b.tools: Expected a list of tool names`,
+  )
+})
+
 test("a combined server's unknown keys are errors, its client keys warnings", () => {
   const text = file({ a: { mcpServers: { b: { ...local, evn: {} } } } })
   assert.equal(

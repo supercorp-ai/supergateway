@@ -27,13 +27,16 @@ import {
   isContinuationHandle,
 } from './retainedChildren.js'
 import type { ChildCommand } from './childCommand.js'
+import type { ToolNames } from './toolNames.js'
 
 export function createModernHttp(args: {
   stdioCmd: ChildCommand
+  /** The tools a client sees of the server, if not all as they are. */
+  toolNames?: ToolNames
   children: OwnedChildProcesses
   logger: Logger
 }) {
-  const { stdioCmd, children, logger } = args
+  const { stdioCmd, toolNames, children, logger } = args
   const active = new Set<() => Promise<void>>()
   const retained = new RetainedChildren({
     idleMs: CONTINUATION_TIMEOUT,
@@ -84,6 +87,7 @@ export function createModernHttp(args: {
         retained,
         active,
         children,
+        toolNames,
         logger,
       }).serve()
     },
@@ -217,6 +221,7 @@ class ModernRequest {
       retained: RetainedChildren
       active: Set<() => Promise<void>>
       children: OwnedChildProcesses
+      toolNames?: ToolNames
       logger: Logger
     },
   ) {
@@ -328,7 +333,7 @@ class ModernRequest {
       if ('error' in message)
         this.responseStatus = statusForError(message.error.code)
       this.awaitingReply = false
-      if ('result' in message) message = this.withHandle(message)
+      if ('result' in message) message = this.withHandle(this.listed(message))
     }
     // The backend state is restored on retry; other payloads stay unchanged.
     // No protocol Client/Server is inserted to renegotiate or rewrite them.
@@ -339,6 +344,13 @@ class ModernRequest {
       })
       .catch(this.fail)
     child.hold(drained([res]))
+  }
+
+  // The reply to a tools/list, as the client is to see it.
+  private listed(message: Extract<JSONRPCMessage, { result: unknown }>) {
+    const { toolNames } = this.at
+    if (!toolNames || this.message.method !== 'tools/list') return message
+    return { ...message, result: toolNames.listed(message.result) }
   }
 
   // A result asking for input keeps this request's child for the client's
@@ -375,9 +387,17 @@ class ModernRequest {
   // What the transport's one message sets off: start the child, check a tool
   // call's headers against its schema, and pass the message on.
   private async dispatch() {
-    const { route, reused, child, children, value } = this.at
+    const { route, reused, child, children, value, toolNames, transport } =
+      this.at
     if (this.stopped || children.closing)
       throw new Error('Gateway is shutting down')
+    // A call to a tool the client can't see is answered here, before any
+    // server starts; any other call goes on under the server's own name.
+    const sent = toolNames?.inbound(this.message) ?? { forward: this.message }
+    if ('reply' in sent) {
+      await transport.send(sent.reply, { relatedRequestId: sent.reply.id })
+      return
+    }
     if (!reused) {
       await child.start()
       if (this.stopped) {
@@ -386,7 +406,7 @@ class ModernRequest {
         return
       }
     }
-    const message = this.message
+    const message = sent.forward as Route['message']
     if (route.messageKind === 'request' && message.method === 'tools/call') {
       // Modern request envelopes are checked by the SDK classifier.
       const params = message.params!

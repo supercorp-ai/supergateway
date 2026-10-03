@@ -86,7 +86,7 @@ const overStdio = async (_t: TestContext, gateway: Gateway) =>
 
 const cases: Case[] = [
   {
-    name: 'stdio→SSE with --baseUrl, --cors and --healthEndpoint',
+    name: 'stdio→SSE with --baseUrl, --cors, --healthEndpoint and tool names',
     args: (port) => [
       '--stdio',
       peerCommand,
@@ -98,6 +98,10 @@ const cases: Case[] = [
       'http://a.example',
       '--healthEndpoint',
       '/healthz',
+      '--toolPrefix',
+      'mock_',
+      '--tools',
+      'add',
     ],
     done: /^POST messages:/,
     exercise: overSse('/sse'),

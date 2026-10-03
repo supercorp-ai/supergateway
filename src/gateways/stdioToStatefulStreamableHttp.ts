@@ -100,7 +100,12 @@ export function stdioToStatefulStreamableHttpMount(
   // served over the sessions of the earlier protocol versions only.
   const modern = args.upstream
     ? undefined
-    : createModernHttp({ stdioCmd: args.stdioCmd, children, logger })
+    : createModernHttp({
+        stdioCmd: args.stdioCmd,
+        toolNames: args.toolNames,
+        children,
+        logger,
+      })
 
   const app = streamableHttpApp(express, cors, {
     headers,

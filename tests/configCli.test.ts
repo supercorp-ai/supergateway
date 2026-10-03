@@ -95,6 +95,8 @@ test('entryFlagBesideConfig: a server or URL flag beside --config is named', () 
     'streamableHttpPath',
     'cors',
     'healthCheck',
+    'toolPrefix',
+    'tools',
     'header',
     'oauth2Bearer',
     'stateful',
@@ -190,6 +192,12 @@ test('configFromCli: every flag given is carried, and only those', () => {
       '2025-03-26',
       '--healthCheck',
       'server',
+      '--toolPrefix',
+      'gh_',
+      '--tools',
+      'search',
+      '--tools',
+      'get',
     ]),
     {
       gateway: {
@@ -212,6 +220,8 @@ test('configFromCli: every flag given is carried, and only those', () => {
           streamableHttpPath: '/rpc',
           cors: ['http://a.example', '/b$/'],
           healthCheck: 'server',
+          toolPrefix: 'gh_',
+          tools: ['search', 'get'],
           headers: { 'x-team': 'core', Authorization: 'Bearer a:b' },
           oauth2Bearer: 'tok',
           apiKey: ['k1', 'k2'],
@@ -228,6 +238,18 @@ test('configFromCli: every flag given is carried, and only those', () => {
 
 test('configFromCli: --cors with no origin allows every origin', () => {
   assert.equal(fromCli(['--stdio', 'x', '--cors']).entries[0].cors, true)
+})
+
+test('configFromCli: an empty --toolPrefix is none; a bare --tools is no tools', () => {
+  const [entry] = fromCli([
+    '--stdio',
+    'x',
+    '--toolPrefix',
+    '',
+    '--tools',
+  ]).entries
+  assert.equal(entry.toolPrefix, undefined)
+  assert.deepEqual(entry.tools, [])
 })
 
 test('configFromCli: --header with no value is no headers', () => {
@@ -455,6 +477,8 @@ test('printableConfig: a config without secrets reads back as itself', () => {
       'http://a.example',
     ],
     ['--sse', 'http://h/sse', '--header', 'x-trace: on', '--logLevel', 'none'],
+    ['--stdio', 'srv', '--toolPrefix', 'gh_', '--tools', 'search', 'get'],
+    ['--stdio', 'srv', '--tools'],
   ]) {
     const config = fromCli(args)
     assert.deepEqual(loaded(printableConfig(config)), config, args.join(' '))
@@ -679,6 +703,25 @@ test('cliForEntry: "cors": true and "stateful": true are bare flags', () => {
   )
   assert.deepEqual(argv.cors, [])
   assert.equal(argv.stateful, true)
+})
+
+test("cliForEntry: an entry's tool settings are its flags, an empty list a bare --tools", () => {
+  const tools = (value: Record<string, unknown>) =>
+    run({ mcpServers: { a: { stdio: 'srv', ...value } } }).args.filter((arg) =>
+      arg.startsWith('--tool'),
+    )
+  assert.deepEqual(tools({ toolPrefix: 'gh_', tools: ['search', 'get'] }), [
+    '--toolPrefix=gh_',
+    '--tools=search',
+    '--tools=get',
+  ])
+  assert.deepEqual(tools({ tools: [] }), ['--tools'])
+  assert.deepEqual(tools({}), [])
+  // And they mean, read back, what they said.
+  const argv = parseCli(
+    run({ mcpServers: { a: { stdio: 'srv', tools: [] } } }).args,
+  )
+  assert.deepEqual(argv.tools, [])
 })
 
 test('cliForEntry: an empty key from beside --config is still passed', () => {

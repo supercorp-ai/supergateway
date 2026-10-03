@@ -11,6 +11,7 @@ import { getVersion } from './getVersion.js'
 import { CancellableRequests } from './cancellableRequests.js'
 import { errorResponse, resultResponse } from './bridgeResponses.js'
 import { relayClientMessage } from './relayClientMessage.js'
+import type { ToolNames } from './toolNames.js'
 
 // The stdio side of the bridges (--sse, --streamableHttp), which both used to
 // write out in full. Nothing here imports the SDK's classes, only their types:
@@ -81,9 +82,12 @@ export function bridgeStdioMessages<Attempt extends object>(
     request,
     failed,
     send,
+    toolNames,
   }: {
     label: string
     logger: Logger
+    /** The tools the stdio client sees of the server, if not all as they are. */
+    toolNames?: ToolNames
     request: (
       req: JSONRPCRequest,
       signal: AbortSignal,
@@ -102,7 +106,14 @@ export function bridgeStdioMessages<Attempt extends object>(
     const isRequest = 'method' in message && 'id' in message
     if (isRequest) {
       logger.info(`Stdio → ${label}:`, message)
-      const req = message as JSONRPCRequest
+      // A call to a tool the client can't see is answered here; any other
+      // goes on under the server's own name.
+      const sent = toolNames?.inbound(message) ?? { forward: message }
+      if ('reply' in sent) {
+        process.stdout.write(JSON.stringify(sent.reply) + '\n')
+        return
+      }
+      const req = sent.forward as JSONRPCRequest
       let result
       const signal = inFlight.begin(req.id)
       const attempt = {} as Attempt
@@ -123,7 +134,12 @@ export function bridgeStdioMessages<Attempt extends object>(
       // Answered, so there is nothing left to cancel.
       inFlight.end(req.id)
       // See resultResponse: whatever `request` returned is a result.
-      const response = resultResponse(req, result as object)
+      const response = resultResponse(
+        req,
+        toolNames && req.method === 'tools/list'
+          ? toolNames.listed(result as Record<string, unknown>)
+          : (result as object),
+      )
       logger.info('Response:', response)
       process.stdout.write(JSON.stringify(response) + '\n')
     } else if (!inFlight.cancel(message)) {

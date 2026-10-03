@@ -17,6 +17,13 @@ type Flow = {
 }
 type Binding = { flow: Flow; state: string | undefined }
 
+// Nothing the child does reaches its previous holder any more.
+const detach = (child: OwnedStdioTransport) => {
+  child.onmessage = undefined
+  child.onerror = undefined
+  child.onclose = undefined
+}
+
 /** Request state stays opaque; gateway handles identify its owning process. */
 export class RetainedChildren {
   private readonly entries = new Map<string, Binding>()
@@ -66,9 +73,7 @@ export class RetainedChildren {
       if (!flow.busy) {
         flow.busy = true
         clearTimeout(flow.timer)
-        flow.child.onmessage = undefined
-        flow.child.onerror = undefined
-        flow.child.onclose = undefined
+        detach(flow.child)
         // Recently used states survive capacity eviction before older ones.
         this.entries.delete(handle)
         this.entries.set(handle, binding)
@@ -114,9 +119,7 @@ export class RetainedChildren {
       this.flows.delete(child)
       this.wake(flow)
     }
-    child.onmessage = undefined
-    child.onerror = undefined
-    child.onclose = undefined
+    detach(child)
     const closing = child.close().catch((error) => {
       this.options.logger.error('Failed to close retained MCP child:', error)
     })

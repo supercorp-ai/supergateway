@@ -17,13 +17,11 @@ const ENCODED_SUFFIX = '?='
 const BASE64 =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
+const isEncoded = (value: string) =>
+  value.startsWith(ENCODED_PREFIX) && value.endsWith(ENCODED_SUFFIX)
+
 export function decodedHeader(value: string | undefined): string | undefined {
-  if (
-    value === undefined ||
-    !value.startsWith(ENCODED_PREFIX) ||
-    !value.endsWith(ENCODED_SUFFIX)
-  )
-    return value
+  if (value === undefined || !isEncoded(value)) return value
   const payload = value.slice(ENCODED_PREFIX.length, -ENCODED_SUFFIX.length)
   if (!BASE64.test(payload)) return undefined
   try {

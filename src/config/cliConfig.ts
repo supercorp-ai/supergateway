@@ -39,39 +39,62 @@ export function entryFlagBesideConfig(given: Set<string>) {
   )
 }
 
-/** The config a command line without `--config` is equivalent to. */
-export function configFromCli(argv: Cli, given: Set<string>): Config {
-  const has = (name: string) => given.has(name)
-  const gateway: GatewaySettings = {}
-  if (has('port')) gateway.port = argv.port
-  if (has('host')) gateway.host = argv.host
-  if (has('logLevel'))
-    gateway.logLevel = argv.logLevel as GatewaySettings['logLevel']
-  if (has('logFormat'))
-    gateway.logFormat = argv.logFormat as GatewaySettings['logFormat']
-  if (has('exitWithProcess')) gateway.exitWithProcess = argv.exitWithProcess
-  if (has('healthEndpoint'))
-    gateway.healthEndpoint = (argv.healthEndpoint as unknown[]).map(String)
-  const options: EndpointOptions = {}
-  if (has('outputTransport'))
-    options.outputTransport = argv.outputTransport as Entry['outputTransport']
-  if (has('baseUrl')) options.baseUrl = argv.baseUrl
-  if (has('ssePath')) options.ssePath = argv.ssePath
-  if (has('messagePath')) options.messagePath = argv.messagePath
-  if (has('streamableHttpPath'))
-    options.streamableHttpPath = argv.streamableHttpPath
-  if (has('cors')) {
+// How each setting is read from the command line, once its flag is given.
+// Settings are read, and so printed, in the order listed here.
+type FromCli<T> = { [K in keyof T]-?: (argv: Cli) => T[K] }
+
+const GATEWAY_FROM_CLI: FromCli<GatewaySettings> = {
+  port: (argv) => argv.port,
+  host: (argv) => argv.host,
+  logLevel: (argv) => argv.logLevel as GatewaySettings['logLevel'],
+  logFormat: (argv) => argv.logFormat as GatewaySettings['logFormat'],
+  exitWithProcess: (argv) => argv.exitWithProcess,
+  healthEndpoint: (argv) => (argv.healthEndpoint as unknown[]).map(String),
+}
+
+// `--healthEndpoint` is the gateway's own, so it is read above.
+const ENDPOINT_FROM_CLI: FromCli<Omit<EndpointOptions, 'healthEndpoint'>> = {
+  outputTransport: (argv) => argv.outputTransport as Entry['outputTransport'],
+  baseUrl: (argv) => argv.baseUrl,
+  ssePath: (argv) => argv.ssePath,
+  messagePath: (argv) => argv.messagePath,
+  streamableHttpPath: (argv) => argv.streamableHttpPath,
+  cors: (argv) => {
     // Given, it is a list: empty for a bare --cors.
     const origins = (argv.cors as unknown[]).map(String)
-    options.cors = origins.length === 0 ? true : origins
-  }
-  if (has('header')) options.headers = headerMap(argv.header as unknown[])
-  if (has('oauth2Bearer')) options.oauth2Bearer = argv.oauth2Bearer
-  if (has('apiKey')) options.apiKey = argv.apiKey as string[]
-  if (has('apiKeyFile')) options.apiKeyFile = argv.apiKeyFile
-  if (has('stateful')) options.stateful = argv.stateful
-  if (has('sessionTimeout')) options.sessionTimeout = argv.sessionTimeout
-  if (has('protocolVersion')) options.protocolVersion = argv.protocolVersion
+    return origins.length === 0 ? true : origins
+  },
+  headers: (argv) => headerMap(argv.header as unknown[]),
+  oauth2Bearer: (argv) => argv.oauth2Bearer,
+  apiKey: (argv) => argv.apiKey as string[],
+  apiKeyFile: (argv) => argv.apiKeyFile,
+  stateful: (argv) => argv.stateful,
+  sessionTimeout: (argv) => argv.sessionTimeout,
+  protocolVersion: (argv) => argv.protocolVersion,
+}
+
+// Each setting has the name of its flag, but for `headers`, which the command
+// line gives one `--header` at a time.
+const flagOf = (setting: string) => (setting === 'headers' ? 'header' : setting)
+
+// The settings whose flags were given, as the command line set them.
+function settingsFromCli<T>(
+  argv: Cli,
+  given: Set<string>,
+  readers: FromCli<T>,
+): T {
+  const settings: Record<string, unknown> = {}
+  // Never empty, so not a `for` loop with a zero-iteration case.
+  Object.entries<(argv: Cli) => unknown>(readers).forEach(([key, read]) => {
+    if (given.has(flagOf(key))) settings[key] = read(argv)
+  })
+  return settings as T
+}
+
+/** The config a command line without `--config` is equivalent to. */
+export function configFromCli(argv: Cli, given: Set<string>): Config {
+  const gateway = settingsFromCli(argv, given, GATEWAY_FROM_CLI)
+  const options = settingsFromCli(argv, given, ENDPOINT_FROM_CLI)
   const source: InnerServer['source'] = argv.sse
     ? { kind: 'url', url: argv.sse, type: 'sse' }
     : argv.streamableHttp
@@ -113,39 +136,22 @@ export function overrideFromCli(
   extraKeyFiles: string[]
   notes: string[]
 } {
-  const gateway = { ...config.gateway }
-  const notes: string[] = []
-  const take = <K extends keyof GatewaySettings>(
-    key: K,
-    value: GatewaySettings[K],
-  ) => {
-    if (!given.has(key)) return
-    notes.push(
-      `--${key} ${JSON.stringify(value)} overrides ${
-        key in gateway
-          ? `"${key}": ${JSON.stringify(gateway[key])}`
-          : 'the default'
-      } from the config file`,
-    )
+  const gateway: Record<string, unknown> = { ...config.gateway }
+  const overrides = settingsFromCli(argv, given, GATEWAY_FROM_CLI)
+  const notes = Object.entries(overrides).map(([key, value]) => {
+    const replaced =
+      key in gateway
+        ? `"${key}": ${JSON.stringify(gateway[key])}`
+        : 'the default'
     gateway[key] = value
-  }
-  take('port', argv.port)
-  take('host', argv.host)
-  take('logLevel', argv.logLevel as GatewaySettings['logLevel'])
-  take('logFormat', argv.logFormat as GatewaySettings['logFormat'])
-  take('exitWithProcess', argv.exitWithProcess)
-  take(
-    'healthEndpoint',
-    given.has('healthEndpoint')
-      ? (argv.healthEndpoint as unknown[]).map(String)
-      : undefined,
-  )
+    return `--${key} ${JSON.stringify(value)} overrides ${replaced} from the config file`
+  })
   // Given but empty (`--apiKey`, `--apiKeyFile "$UNSET"`) is passed on, so it
   // is refused as it is without --config ("is set but empty"). Dropped, it
   // would start the gateway without the key the operator meant to require.
   const keys = argv.apiKey as string[]
   return {
-    config: { ...config, gateway },
+    config: { ...config, gateway: gateway as GatewaySettings },
     extraKeys: !given.has('apiKey') ? [] : keys.length > 0 ? keys : [''],
     extraKeyFiles: given.has('apiKeyFile') ? [argv.apiKeyFile as string] : [],
     notes,

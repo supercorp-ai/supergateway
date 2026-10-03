@@ -39,6 +39,8 @@ test('header parsing preserves colon values, rejects empty fields and applies be
       header: [
         ' X-Trace : left:right ',
         'Bad',
+        'sk-live-token-alone',
+        '  Name  value-after-it ',
         ': value',
         'Empty: ',
         ': Bearer secret-token',
@@ -49,13 +51,15 @@ test('header parsing preserves colon values, rejects empty fields and applies be
   })
   assert.deepEqual(parsed, { 'X-Trace': 'final' })
   assert.deepEqual(errors, [
-    'Invalid header format: Bad, ignoring',
+    'Invalid header format: (no colon), ignoring',
+    'Invalid header format: (no colon), ignoring',
+    'Invalid header format: Name, ignoring',
     'Invalid header format: (missing name), ignoring',
     'Invalid header format: Empty, ignoring',
     'Invalid header format: (missing name), ignoring',
   ])
   assert.equal(
-    errors.some((message) => message.includes('secret-token')),
+    errors.some((message) => /secret-token|sk-live|value-after/.test(message)),
     false,
     'a rejected header never echoes its value',
   )

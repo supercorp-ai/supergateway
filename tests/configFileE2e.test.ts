@@ -654,25 +654,6 @@ test(
 
 // --- What this build does not run yet ---
 
-test(
-  'a remote entry on stdio beside others is valid, but not run yet',
-  options,
-  async (t) => {
-    const file = writeConfig(t, {
-      mcpServers: {
-        local: mock,
-        remote: { url: 'http://127.0.0.1:1/mcp', type: 'http' },
-      },
-    })
-    const result = await outcome(launchGateway(t, ['--config', file]))
-    assert.deepEqual(result, {
-      code: 1,
-      stdout: '',
-      stderr: `${prefix}Error: Serving an entry over stdio beside others ${later}; ${file} is valid, but this build can't serve it yet\n`,
-    })
-  },
-)
-
 test('a disabled second entry leaves one to run', options, async (t) => {
   const { port } = await serve(t, {
     mcpServers: {

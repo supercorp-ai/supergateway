@@ -59,6 +59,7 @@ const ENDPOINT_FROM_CLI: FromCli<Omit<EndpointOptions, 'healthEndpoint'>> = {
   ssePath: (argv) => argv.ssePath,
   messagePath: (argv) => argv.messagePath,
   streamableHttpPath: (argv) => argv.streamableHttpPath,
+  healthCheck: (argv) => argv.healthCheck as Entry['healthCheck'],
   cors: (argv) => {
     // Given, it is a list: empty for a bare --cors.
     const origins = (argv.cors as unknown[]).map(String)
@@ -267,6 +268,7 @@ export function cliForEntry(
       flag('healthEndpoint', path)
   for (const path of entry.healthEndpoint ?? [])
     flag('healthEndpoint', path === '/' ? prefix || '/' : `${prefix}${path}`)
+  flag('healthCheck', pick('healthCheck'))
   const cors = pick('cors')
   if (cors === true) args.push('--cors')
   else for (const origin of cors ?? []) flag('cors', origin)

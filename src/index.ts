@@ -55,6 +55,7 @@ import {
 } from './cli.js'
 import type { Logger } from './types.js'
 import type { ChildCommand } from './lib/childCommand.js'
+import type { HealthCheck } from './lib/serverHealth.js'
 import {
   loadConfig,
   effectiveTransport,
@@ -142,6 +143,7 @@ const listenerArgs = (
       logger,
       corsOrigin: corsOrigin({ argv }),
       healthEndpoints: argv.healthEndpoint as string[],
+      healthCheck: argv.healthCheck as HealthCheck,
       apiKeys,
     },
   }

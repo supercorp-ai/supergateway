@@ -5,6 +5,7 @@ import { announceHost } from './listenHost.js'
 import { announceServer, type ServerSource } from './serverSource.js'
 import { serializeCorsOrigin } from './serializeCorsOrigin.js'
 import { logApiKeys } from './apiKey.js'
+import type { HealthCheck } from './serverHealth.js'
 
 /**
  * A listening gateway's startup listing, in the order every gateway prints
@@ -24,6 +25,7 @@ export function announceGateway(
     settings,
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     apiKeys,
   }: {
     /** Left out by WebSocket, which sets no response headers. */
@@ -35,6 +37,7 @@ export function announceGateway(
     settings: string[]
     corsOrigin: CorsOptions['origin']
     healthEndpoints: string[]
+    healthCheck?: HealthCheck
     apiKeys: string[]
   },
 ) {
@@ -50,7 +53,14 @@ export function announceGateway(
     `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
   )
   logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+    `  - Health endpoints: ${describeHealth(healthEndpoints, healthCheck)}`,
   )
   logApiKeys(logger, apiKeys)
+}
+
+// The endpoints, and what they check when it is more than the gateway.
+const describeHealth = (endpoints: string[], check?: HealthCheck) => {
+  if (!endpoints.length) return '(none)'
+  const listed = endpoints.join(', ')
+  return check === 'server' ? `${listed} (checks the MCP server)` : listed
 }

@@ -5,6 +5,7 @@ import { escapeSseJsonSeparators } from './escapeSseJsonSeparators.js'
 import { setResponseHeaders } from './headers.js'
 import { jsonBodyErrors } from './jsonBodyErrors.js'
 import { requireApiKey } from './apiKey.js'
+import { healthHandler, type ServerHealth } from './serverHealth.js'
 
 /**
  * The Express app both Streamable HTTP gateways start from, with everything
@@ -22,6 +23,7 @@ export function streamableHttpApp(
     corsOrigin,
     exposedHeaders,
     healthEndpoints,
+    health,
     apiKeys,
     logger,
   }: {
@@ -30,6 +32,8 @@ export function streamableHttpApp(
     /** Response headers a browser client may read, such as the session id. */
     exposedHeaders?: string[]
     healthEndpoints: string[]
+    /** The server the health endpoints check, if not the gateway alone. */
+    health?: ServerHealth
     apiKeys: string[]
     logger: Logger
   },
@@ -58,11 +62,7 @@ export function streamableHttpApp(
       ),
     )
 
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      res.send('ok')
-    })
-  }
+  for (const ep of healthEndpoints) app.get(ep, healthHandler(health))
 
   // After CORS and the health endpoints, which stay open; before POST, GET
   // and DELETE on the path, modern 2026-07-28 requests included.

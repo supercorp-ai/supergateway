@@ -19,6 +19,11 @@ import {
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { requireApiKey, verifyApiKey } from '../lib/apiKey.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
+import {
+  healthHandler,
+  serverHealthOf,
+  type HealthCheck,
+} from '../lib/serverHealth.js'
 
 interface StdioToWsOptions {
   port: number
@@ -28,6 +33,8 @@ interface StdioToWsOptions {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
 }
@@ -194,6 +201,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     messagePath,
     logger,
     healthEndpoints,
+    healthCheck,
     corsOrigin,
     apiKeys = [],
     path = '/',
@@ -205,6 +213,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     settings: [`messagePath: ${messagePath}`],
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     apiKeys,
   })
 
@@ -222,13 +231,15 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     app.use(cors({ origin: corsOrigin }))
   }
 
-  // With no process-wide child there is nothing to report but that the
-  // gateway is up, as in SSE mode.
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      res.send('ok')
-    })
-  }
+  // With no process-wide child, the gateway alone is up, or, with
+  // --healthCheck server, a server started for the check answers.
+  const health = serverHealthOf(
+    healthCheck,
+    children,
+    (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+    logger,
+  )
+  for (const ep of healthEndpoints) app.get(ep, healthHandler(health))
 
   // Plain HTTP requests; the upgrade itself is checked by `verifyClient`.
   app.use(requireApiKey(apiKeys, logger))

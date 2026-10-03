@@ -24,6 +24,11 @@ import {
 import { ConnectionChild } from '../lib/connectionChild.js'
 import { requireApiKey } from '../lib/apiKey.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
+import {
+  healthHandler,
+  serverHealthOf,
+  type HealthCheck,
+} from '../lib/serverHealth.js'
 
 interface StdioToSseOptions {
   port: number
@@ -35,6 +40,8 @@ interface StdioToSseOptions {
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
@@ -77,6 +84,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     logger,
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     headers,
     apiKeys = [],
     path = '/',
@@ -94,11 +102,18 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     ],
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     apiKeys,
   })
 
   const children = new OwnedChildProcesses(logger)
   const handoff = new ChildHandoff(logger)
+  const health = serverHealthOf(
+    healthCheck,
+    children,
+    (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+    logger,
+  )
 
   // One `Server` per session, not one per process.
   //
@@ -129,12 +144,11 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     return bodyParser.json()(req, res, next)
   })
 
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      setResponseHeaders(res, headers)
-      res.send('ok')
-    })
-  }
+  for (const ep of healthEndpoints)
+    app.get(
+      ep,
+      healthHandler(health, (res) => setResponseHeaders(res, headers)),
+    )
 
   // After CORS and the health endpoints, which stay open; before the stream
   // and the message endpoint.

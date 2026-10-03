@@ -55,7 +55,13 @@ import {
 } from './cli.js'
 import type { Logger } from './types.js'
 import type { ChildCommand } from './lib/childCommand.js'
-import { loadConfig, effectiveTransport } from './config/configFile.js'
+import {
+  loadConfig,
+  effectiveTransport,
+  type Config,
+  type EndpointOptions,
+  type Entry,
+} from './config/configFile.js'
 import {
   cliForEntry,
   configFromCli,
@@ -69,21 +75,29 @@ import {
 // `apiKeys` is empty when no source gives a key, so authentication is off.
 type Listening = { host: string | undefined; apiKeys: string[] }
 
-type Start = (argv: Cli, logger: Logger, listening: Listening) => Promise<void>
-
 // A config file can start a server without a shell (`command` + `args`), or
 // with its own environment and directory; it puts that here in place of the
 // `--stdio` string. See cliForEntry.
 const stdioCommand = (argv: Cli) => argv.stdio! as ChildCommand
 
-const unsupported = (
-  logger: Logger,
-  input: InputTransport,
-  output: unknown,
-) => {
-  logger.error(`Error: ${input}→${output} not supported`)
+// Startup ends here: the problem is logged, and the gateway exits 1.
+function exitWithError(logger: Logger, message: string): never {
+  logger.error(message)
   process.exit(1)
 }
+
+// What a startup check found, or, when it found a problem, exit 1 after
+// logging it.
+function orExit<T extends object>(
+  logger: Logger,
+  result: T | { error: string },
+): T {
+  if ('error' in result) exitWithError(logger, result.error)
+  return result as T
+}
+
+const unsupported = (logger: Logger, input: InputTransport, output: unknown) =>
+  exitWithError(logger, `Error: ${input}→${output} not supported`)
 
 // What a stdio server's gateway takes beyond the port, in either form: alone
 // on the port, or mounted at `path` beside others.
@@ -110,40 +124,43 @@ const serverOf = (argv: Cli, logger: Logger): ServerSource => {
 const responseHeaders = (source: ServerSource, argv: Cli, logger: Logger) =>
   source.upstream ? {} : headers({ argv, logger })
 
-const sseArgs = (
+// What every listening gateway takes, whichever output it serves. `source`
+// is kept apart, so a gateway that answers with headers can tell whether its
+// server is remote.
+const listenerArgs = (
   argv: Cli,
   logger: Logger,
   { host, apiKeys, path }: ServerOptions,
 ) => {
   const source = serverOf(argv, logger)
   return {
-    ...source,
-    host,
-    path,
-    baseUrl: argv.baseUrl,
-    ssePath: argv.ssePath,
-    messagePath: argv.messagePath,
-    logger,
-    corsOrigin: corsOrigin({ argv }),
-    healthEndpoints: argv.healthEndpoint as string[],
-    headers: responseHeaders(source, argv, logger),
-    apiKeys,
+    source,
+    shared: {
+      ...source,
+      host,
+      path,
+      logger,
+      corsOrigin: corsOrigin({ argv }),
+      healthEndpoints: argv.healthEndpoint as string[],
+      apiKeys,
+    },
   }
 }
 
-const wsArgs = (
-  argv: Cli,
-  logger: Logger,
-  { host, apiKeys, path }: ServerOptions,
-) => ({
-  ...serverOf(argv, logger),
-  host,
-  path,
+const sseArgs = (argv: Cli, logger: Logger, options: ServerOptions) => {
+  const { source, shared } = listenerArgs(argv, logger, options)
+  return {
+    ...shared,
+    baseUrl: argv.baseUrl,
+    ssePath: argv.ssePath,
+    messagePath: argv.messagePath,
+    headers: responseHeaders(source, argv, logger),
+  }
+}
+
+const wsArgs = (argv: Cli, logger: Logger, options: ServerOptions) => ({
+  ...listenerArgs(argv, logger, options).shared,
   messagePath: argv.messagePath,
-  logger,
-  corsOrigin: corsOrigin({ argv }),
-  healthEndpoints: argv.healthEndpoint as string[],
-  apiKeys,
 })
 
 // Announces the mode and checks the timeout before building the arguments,
@@ -151,38 +168,28 @@ const wsArgs = (
 const streamableHttpArgs = (
   argv: Cli,
   logger: Logger,
-  { host, apiKeys, path }: ServerOptions,
+  options: ServerOptions,
 ) => {
-  const shared = () => {
-    const source = serverOf(argv, logger)
+  const common = () => {
+    const { source, shared } = listenerArgs(argv, logger, options)
     return {
-      ...source,
-      host,
-      path,
+      ...shared,
       streamableHttpPath: argv.streamableHttpPath,
-      logger,
-      corsOrigin: corsOrigin({ argv }),
-      healthEndpoints: argv.healthEndpoint as string[],
       headers: responseHeaders(source, argv, logger),
-      apiKeys,
     }
   }
   if (!argv.stateful) {
     logger.info('Running stateless server')
     return {
       stateful: false as const,
-      args: { ...shared(), protocolVersion: argv.protocolVersion },
+      args: { ...common(), protocolVersion: argv.protocolVersion },
     }
   }
   logger.info('Running stateful server')
-  const timeout = sessionTimeoutOf(argv)
-  if ('error' in timeout) {
-    logger.error(timeout.error)
-    process.exit(1)
-  }
+  const { sessionTimeout } = orExit(logger, sessionTimeoutOf(argv))
   return {
     stateful: true as const,
-    args: { ...shared(), sessionTimeout: timeout.sessionTimeout },
+    args: { ...common(), sessionTimeout },
   }
 }
 
@@ -199,17 +206,20 @@ function mountOf(argv: Cli, logger: Logger, options: ServerOptions): Mount {
     : stdioToStatelessStreamableHttpMount(args)
 }
 
+// The URLs each listening output answers, beside its health endpoints.
+const outputRoutes: Record<string, (argv: Cli) => string[]> = {
+  sse: (argv) => [argv.ssePath, argv.messagePath],
+  ws: (argv) => [argv.messagePath],
+  streamableHttp: (argv) => [argv.streamableHttpPath],
+}
+
 // The URLs a server answers, as its command line sets them: none for one on
 // stdio, which listens on nothing.
 const routesOf = (argv: Cli) =>
   argv.outputTransport === 'stdio'
     ? []
     : [
-        ...(argv.outputTransport === 'sse'
-          ? [argv.ssePath, argv.messagePath]
-          : argv.outputTransport === 'ws'
-            ? [argv.messagePath]
-            : [argv.streamableHttpPath]),
+        ...outputRoutes[argv.outputTransport!](argv),
         ...(argv.healthEndpoint as string[]),
       ]
 
@@ -228,33 +238,34 @@ const listen = async (argv: Cli, logger: Logger, listening: Listening) => {
   }
 }
 
-// How each input transport starts, given the output the command line chose.
-// A remote server on stdio is a bridge; on any other output, it is served
-// the way a local one is.
-const start: Record<InputTransport, Start> = {
-  stdio: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      unsupported(logger, 'stdio', argv.outputTransport)
-    else await listen(argv, logger, listening)
-  },
-  sse: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      await sseToStdio({
-        sseUrl: argv.sse!,
-        logger,
-        headers: headers({ argv, logger }),
-      })
-    else await listen(argv, logger, listening)
-  },
-  streamableHttp: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      await streamableHttpToStdio({
-        streamableHttpUrl: argv.streamableHttp!,
-        logger,
-        headers: headers({ argv, logger }),
-      })
-    else await listen(argv, logger, listening)
-  },
+// A remote server bridged to stdio output.
+const bridge = {
+  sse: (argv: Cli, logger: Logger) =>
+    sseToStdio({
+      sseUrl: argv.sse!,
+      logger,
+      headers: headers({ argv, logger }),
+    }),
+  streamableHttp: (argv: Cli, logger: Logger) =>
+    streamableHttpToStdio({
+      streamableHttpUrl: argv.streamableHttp!,
+      logger,
+      headers: headers({ argv, logger }),
+    }),
+}
+
+// How a server alone on the port starts, given the output the command line
+// chose. A remote server on stdio is a bridge; on any other output, it is
+// served the way a local one is. A local server already speaks stdio.
+async function start(
+  input: InputTransport,
+  argv: Cli,
+  logger: Logger,
+  listening: Listening,
+) {
+  if (argv.outputTransport !== 'stdio') await listen(argv, logger, listening)
+  else if (input === 'stdio') unsupported(logger, input, argv.outputTransport)
+  else await bridge[input](argv, logger)
 }
 
 // Where a flag refused beside --config belongs in the file.
@@ -274,6 +285,106 @@ type Invocation =
   | { argv: Cli; notes: string[] }
   | { servers: Served[]; healthEndpoints: string[]; notes: string[] }
 
+// `--printConfig`'s output, after which the gateway exits.
+function printAndExit(value: unknown): never {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
+  process.exit(0)
+}
+
+// A command line without `--config` runs as given; `--printConfig` prints the
+// config it is equivalent to.
+function withoutConfig(cli: Cli, given: Set<string>, logger: Logger) {
+  if (cli.checkConfig)
+    exitWithError(
+      logger,
+      'Error: --checkConfig checks the file given with --config',
+    )
+  if (cli.printConfig) {
+    // As without it: a command line that names no server describes none.
+    orExit(logger, inputTransportOf(cli))
+    printAndExit(printableConfig(configFromCli(cli, given)))
+  }
+  return { argv: cli, notes: [] }
+}
+
+// The file `--config` names, read and checked. Its warnings are logged
+// whether or not it holds an error.
+function readConfigFile(file: string, logger: Logger): Config {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    exitWithError(
+      logger,
+      `Error: Cannot read ${file}: ${(err as Error).message}`,
+    )
+  }
+  const loaded = loadConfig(file, text, process.env)
+  for (const warning of loaded.warnings) logger.error(`Warning: ${warning}`)
+  return orExit<{ config: Config }>(logger, loaded).config
+}
+
+// The command line each entry is equivalent to. Combined entries have no
+// command line of their own (a later 4.2 change).
+function servedEntries(
+  { config, extraKeys, extraKeyFiles }: ReturnType<typeof overrideFromCli>,
+  several: boolean,
+) {
+  return config.entries
+    .filter((entry) => !('members' in entry.server))
+    .map((entry): Served => {
+      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
+      const argv = parseCli(run.args)
+      if (run.command) argv.stdio = run.command as string
+      return { name: entry.name, path: entry.path, argv }
+    })
+}
+
+// `--checkConfig`'s report: each entry with its path and output transport.
+function reportValid(file: string, config: Config): never {
+  const count = config.entries.length
+  process.stdout.write(
+    `${file} is valid: ${count} ${count === 1 ? 'server' : 'servers'}\n` +
+      config.entries
+        .map(
+          (entry) =>
+            `  ${entry.path}  ${entry.name} (${effectiveTransport(entry, config.defaults)})\n`,
+        )
+        .join(''),
+  )
+  process.exit(0)
+}
+
+// Why several entries can't share the port as configured, if they can't.
+const sharedPortConflict = (served: Served[], healthEndpoints: string[]) =>
+  routeConflict(
+    served.map(({ name, path, argv }) => ({
+      name,
+      path,
+      routes: routesOf(argv),
+    })),
+    healthEndpoints,
+  )
+
+// What a valid entry asks for that this build can't serve yet, if anything.
+function entryNotYetServable(
+  entry: Entry,
+  defaults: EndpointOptions,
+  several: boolean,
+) {
+  if ('members' in entry.server) return 'Combining servers on one URL'
+  // Only a remote server can be on stdio: the loader refuses a local one.
+  if (several && effectiveTransport(entry, defaults) === 'stdio')
+    return 'Serving an entry over stdio beside others'
+  return undefined
+}
+
+// The first thing a valid config asks for that this build can't serve yet.
+const notYetServable = (config: Config, several: boolean) =>
+  config.entries
+    .map((entry) => entryNotYetServable(entry, config.defaults, several))
+    .find((reason) => reason !== undefined)
+
 /**
  * The command line to run: the one given, or, with `--config`, the one each
  * of the file's entries is equivalent to, so a file runs through exactly the
@@ -282,120 +393,31 @@ type Invocation =
  */
 function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const given = givenOptions(args)
-  const print = (value: unknown) => {
-    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
-    process.exit(0)
-  }
-  if (!cli.config) {
-    if (cli.checkConfig) {
-      logger.error('Error: --checkConfig checks the file given with --config')
-      process.exit(1)
-    }
-    if (cli.printConfig) {
-      // As without it: a command line that names no server describes none.
-      const chosen = inputTransportOf(cli)
-      if ('error' in chosen) {
-        logger.error(chosen.error)
-        process.exit(1)
-      }
-      print(printableConfig(configFromCli(cli, given)))
-    }
-    return { argv: cli, notes: [] }
-  }
+  if (!cli.config) return withoutConfig(cli, given, logger)
+  const file = cli.config
   const beside = entryFlagBesideConfig(given)
-  if (beside !== undefined) {
-    logger.error(
-      `Error: --${beside} can't be combined with --config. ${besideHint(beside, cli.config)}`,
+  if (beside !== undefined)
+    exitWithError(
+      logger,
+      `Error: --${beside} can't be combined with --config. ${besideHint(beside, file)}`,
     )
-    process.exit(1)
-  }
-  let text: string
-  try {
-    text = readFileSync(cli.config, 'utf8')
-  } catch (err) {
-    logger.error(`Error: Cannot read ${cli.config}: ${(err as Error).message}`)
-    process.exit(1)
-  }
-  const loaded = loadConfig(cli.config, text, process.env)
-  for (const warning of loaded.warnings) logger.error(`Warning: ${warning}`)
-  if ('error' in loaded) {
-    logger.error(loaded.error)
-    process.exit(1)
-  }
-  const { config, extraKeys, extraKeyFiles, notes } = overrideFromCli(
-    loaded.config,
-    cli,
-    given,
-  )
-  if (cli.printConfig) print(printableConfig(config))
+  const overridden = overrideFromCli(readConfigFile(file, logger), cli, given)
+  const { config, notes } = overridden
+  if (cli.printConfig) printAndExit(printableConfig(config))
   const several = config.entries.length > 1
-  // Combined entries have no command line of their own (a later 4.2 change).
-  const served = config.entries
-    .filter((entry) => !('members' in entry.server))
-    .map((entry): Served => {
-      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
-      const argv = parseCli(run.args)
-      if (run.command) argv.stdio = run.command as string
-      return { name: entry.name, path: entry.path, argv }
-    })
+  const served = servedEntries(overridden, several)
   const healthEndpoints = config.gateway.healthEndpoint ?? []
-  const conflict =
-    several &&
-    routeConflict(
-      served.map(({ name, path, argv }) => ({
-        name,
-        path,
-        routes: routesOf(argv),
-      })),
-      healthEndpoints,
+  const conflict = several && sharedPortConflict(served, healthEndpoints)
+  if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
+  if (cli.checkConfig) reportValid(file, config)
+  const notYet = notYetServable(config, several)
+  if (notYet)
+    exitWithError(
+      logger,
+      `Error: ${notYet} is coming in a later 4.2 change; ${file} is valid, but this build can't serve it yet`,
     )
-  if (conflict) {
-    logger.error(`Error: ${cli.config}: ${conflict}`)
-    process.exit(1)
-  }
-  if (cli.checkConfig) {
-    process.stdout.write(
-      `${cli.config} is valid: ${config.entries.length} ${config.entries.length === 1 ? 'server' : 'servers'}\n` +
-        config.entries
-          .map(
-            (entry) =>
-              `  ${entry.path}  ${entry.name} (${effectiveTransport(entry, config.defaults)})\n`,
-          )
-          .join(''),
-    )
-    process.exit(0)
-  }
-  const notYet = config.entries
-    .map((entry) =>
-      'members' in entry.server
-        ? 'Combining servers on one URL'
-        : // Only a remote server can be on stdio: the loader refuses a local one.
-          several && effectiveTransport(entry, config.defaults) === 'stdio'
-          ? 'Serving an entry over stdio beside others'
-          : undefined,
-    )
-    .find((reason) => reason !== undefined)
-  if (notYet) {
-    logger.error(
-      `Error: ${notYet} is coming in a later 4.2 change; ${cli.config} is valid, but this build can't serve it yet`,
-    )
-    process.exit(1)
-  }
   if (!several) return { argv: served[0].argv, notes }
   return { servers: served, healthEndpoints, notes }
-}
-
-// What a startup check found, or, when it found a problem, exit 1 after
-// logging it.
-function orExit<T extends object>(
-  logger: Logger,
-  result: T | { error: string },
-): T {
-  if ('error' in result) {
-    logger.error(result.error)
-    process.exit(1)
-  }
-  return result as T
 }
 
 // Each server's keys, from its own command line; the environment's, and
@@ -503,7 +525,7 @@ async function main() {
     if ('servers' in run)
       serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
     else
-      await start[input](argv, logger, {
+      await start(input, argv, logger, {
         host,
         apiKeys: servers[0].apiKeys,
       })

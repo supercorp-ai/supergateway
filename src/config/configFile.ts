@@ -84,29 +84,56 @@ export interface Config {
 export type Loaded =
   { config: Config; warnings: string[] } | { error: string; warnings: string[] }
 
-const GATEWAY_KEYS = [
-  'port',
-  'host',
-  'logLevel',
-  'logFormat',
-  'exitWithProcess',
-] as const
-const ENDPOINT_KEYS = [
-  'outputTransport',
-  'baseUrl',
-  'ssePath',
-  'messagePath',
-  'streamableHttpPath',
-  'cors',
-  'healthEndpoint',
-  'headers',
-  'oauth2Bearer',
-  'apiKey',
-  'apiKeyFile',
-  'stateful',
-  'sessionTimeout',
-  'protocolVersion',
-] as const
+// How one setting's value is read and checked; undefined leaves it unset.
+type Reader<T> = (value: unknown, path: (string | number)[], fail: Fail) => T
+type Readers<T> = { [K in keyof T]-?: Reader<T[K]> }
+
+// Settings are read, and so checked and printed, in the order listed here.
+const GATEWAY_READERS: Readers<GatewaySettings> = {
+  port: (value, path, fail) => integer(value, path, fail, 0),
+  host: text,
+  logLevel: (value, path, fail) =>
+    oneOf(
+      value,
+      path,
+      ['debug', 'info', 'none'],
+      fail,
+    ) as GatewaySettings['logLevel'],
+  logFormat: (value, path, fail) =>
+    oneOf(value, path, ['text', 'json'], fail) as GatewaySettings['logFormat'],
+  exitWithProcess: (value, path, fail) => integer(value, path, fail, 2),
+  healthEndpoint: paths,
+}
+
+const ENDPOINT_READERS: Readers<EndpointOptions> = {
+  outputTransport: (value, path, fail) =>
+    oneOf(value, path, TRANSPORTS, fail) as Transport,
+  baseUrl: text,
+  ssePath: routePath,
+  messagePath: routePath,
+  streamableHttpPath: routePath,
+  // `false` is the default, so it sets nothing.
+  cors: (value, path, fail) => {
+    if (value === true) return true
+    if (value === false) return undefined
+    return strings(value, path, fail, 'true, false, or a list of origins')
+  },
+  healthEndpoint: paths,
+  apiKey: (value, path, fail) =>
+    typeof value === 'string'
+      ? [text(value, path, fail)]
+      : strings(value, path, fail, 'a key or a list of keys'),
+  apiKeyFile: text,
+  stateful: boolean,
+  sessionTimeout: (value, path, fail) => integer(value, path, fail, 1),
+  protocolVersion: text,
+  headers: stringMap,
+  oauth2Bearer: text,
+}
+
+// The keys a file may set are the ones there is a reader for.
+const GATEWAY_KEYS = Object.keys(GATEWAY_READERS)
+const ENDPOINT_KEYS = Object.keys(ENDPOINT_READERS)
 const SOURCE_KEYS = [
   'command',
   'args',
@@ -115,7 +142,9 @@ const SOURCE_KEYS = [
   'type',
   'transportType',
 ] as const
-const SERVER_KEYS = [...SOURCE_KEYS, 'env', 'cwd', 'disabled', 'enabled']
+// The keys that say what a server runs, and how.
+const RUN_KEYS = [...SOURCE_KEYS, 'env', 'cwd']
+const SERVER_KEYS = [...RUN_KEYS, 'disabled', 'enabled']
 
 // Keys other clients keep in the same file, for themselves: approval prompts,
 // their own timeouts, trust and visibility. They mean nothing to a gateway.
@@ -148,6 +177,11 @@ const ENTRY_KEYS = new Set<string>([
   'mcpServers',
 ])
 const INNER_KEYS = new Set<string>([...SERVER_KEYS, 'headers', 'oauth2Bearer'])
+// Settings for the URL an entry is served at, which a combined server, served
+// at its entry's URL, can't have.
+const URL_ONLY_KEYS = new Set<string>(
+  ENDPOINT_KEYS.filter((key) => !INNER_KEYS.has(key)),
+)
 
 const TRANSPORTS: readonly string[] = ['stdio', 'sse', 'ws', 'streamableHttp']
 const URL_TYPES: Record<string, 'sse' | 'streamableHttp'> = {
@@ -220,43 +254,25 @@ function readConfig(
 ): Config {
   const raw = expand(getNodeValue(root), [], env, fail)
   checkKeys(raw, [], TOP_KEYS, fail, warnings)
-  const gateway: GatewaySettings = {}
-  if ('port' in raw) gateway.port = integer(raw.port, ['port'], fail, 0)
-  if ('host' in raw) gateway.host = text(raw.host, ['host'], fail)
-  if ('logLevel' in raw)
-    gateway.logLevel = oneOf(
-      raw.logLevel,
-      ['logLevel'],
-      ['debug', 'info', 'none'],
-      fail,
-    ) as GatewaySettings['logLevel']
-  if ('logFormat' in raw)
-    gateway.logFormat = oneOf(
-      raw.logFormat,
-      ['logFormat'],
-      ['text', 'json'],
-      fail,
-    ) as GatewaySettings['logFormat']
-  if ('exitWithProcess' in raw)
-    gateway.exitWithProcess = integer(
-      raw.exitWithProcess,
-      ['exitWithProcess'],
-      fail,
-      2,
-    )
-  if ('healthEndpoint' in raw)
-    gateway.healthEndpoint = paths(raw.healthEndpoint, ['healthEndpoint'], fail)
-  const defaults = endpointOptions(raw, [], fail, ['healthEndpoint'])
+  const gateway = readSettings(raw, [], GATEWAY_READERS, fail)
+  // At the top level, `healthEndpoint` is the gateway's own, read above.
+  const defaults = readSettings(raw, [], ENDPOINT_READERS, fail, [
+    'healthEndpoint',
+  ])
   if (!('mcpServers' in raw))
     fail([], 'Add "mcpServers" with at least one server')
-  const servers = object(raw.mcpServers, ['mcpServers'], fail)
-  const entries: Entry[] = []
-  for (const [name, value] of Object.entries(servers)) {
-    const entry = readEntry(name, value, fail, warnings)
-    if (entry) entries.push(entry)
-  }
+  const entries = Object.entries(object(raw.mcpServers, ['mcpServers'], fail))
+    .map(([name, value]) => readEntry(name, value, fail, warnings))
+    .filter((entry): entry is Entry => entry !== undefined)
   if (entries.length === 0)
     fail(['mcpServers'], 'There is no enabled server to serve')
+  checkPaths(entries, fail)
+  checkStdioOutput(entries, defaults, fail)
+  return { gateway, defaults, entries }
+}
+
+// No two entries may be served at the same path.
+function checkPaths(entries: Entry[], fail: Fail) {
   const byPath = new Map<string, string>()
   // Never empty here, so not a `for` loop with a zero-iteration case.
   entries.forEach((entry) => {
@@ -268,11 +284,18 @@ function readConfig(
       )
     byPath.set(entry.path, entry.name)
   })
+}
+
+// Stdio output carries one entry, and only a remote one: a local server
+// already speaks stdio.
+function checkStdioOutput(
+  entries: Entry[],
+  defaults: EndpointOptions,
+  fail: Fail,
+) {
   const localOnStdio = entries.find(
     (entry) =>
-      !('members' in entry.server) &&
-      entry.server.source.kind !== 'url' &&
-      effectiveTransport(entry, defaults) === 'stdio',
+      isLocal(entry) && effectiveTransport(entry, defaults) === 'stdio',
   )
   if (localOnStdio)
     fail(
@@ -287,8 +310,12 @@ function readConfig(
       ['mcpServers', onStdio[1].name],
       `${entryText(onStdio[0].name)} and ${entryText(onStdio[1].name)} would both use stdio output, which carries one entry. Combine them under one entry's "mcpServers", or set "outputTransport" on one`,
     )
-  return { gateway, defaults, entries }
 }
+
+// An entry that runs one server of its own, rather than reaching a remote one
+// or combining several.
+const isLocal = (entry: Entry) =>
+  !('members' in entry.server) && entry.server.source.kind !== 'url'
 
 function readEntry(
   name: string,
@@ -300,33 +327,41 @@ function readEntry(
   const raw = object(value, path, fail)
   checkKeys(raw, path, ENTRY_KEYS, fail, warnings)
   if (!isEnabled(raw, path, fail)) return undefined
-  const options = endpointOptions(raw, path, fail, [])
+  const options = readSettings(raw, path, ENDPOINT_READERS, fail)
   const urlPath =
     'path' in raw
       ? routePath(raw.path, [...path, 'path'], fail)
       : defaultPath(name, path, fail)
-  if ('mcpServers' in raw) {
-    const extra = SERVER_KEYS.filter(
-      (key) => key in raw && key !== 'disabled' && key !== 'enabled',
-    )
-    if (extra.length > 0)
-      fail(
-        [...path, extra[0]],
-        `An entry with its own "mcpServers" combines them; "${extra[0]}" belongs on one of those servers`,
-      )
-    const members = Object.entries(
-      object(raw.mcpServers, [...path, 'mcpServers'], fail),
-    )
-      .map(([memberName, member]) =>
-        readInner(memberName, member, [...path, 'mcpServers'], fail, warnings),
-      )
-      .filter((member): member is InnerServer => member !== undefined)
-    if (members.length === 0)
-      fail([...path, 'mcpServers'], 'There is no enabled server to combine')
-    return { name, path: urlPath, ...options, server: { members } }
-  }
-  const server = readServer(raw, path, fail, false)
+  const server =
+    'mcpServers' in raw
+      ? readCombined(raw, path, fail, warnings)
+      : readServer(raw, path, fail, false)
   return { name, path: urlPath, ...options, server }
+}
+
+// An entry's own "mcpServers", combined on its URL.
+function readCombined(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+  warnings: string[],
+): { members: InnerServer[] } {
+  const extra = RUN_KEYS.filter((key) => key in raw)
+  if (extra.length > 0)
+    fail(
+      [...path, extra[0]],
+      `An entry with its own "mcpServers" combines them; "${extra[0]}" belongs on one of those servers`,
+    )
+  const members = Object.entries(
+    object(raw.mcpServers, [...path, 'mcpServers'], fail),
+  )
+    .map(([memberName, member]) =>
+      readInner(memberName, member, [...path, 'mcpServers'], fail, warnings),
+    )
+    .filter((member): member is InnerServer => member !== undefined)
+  if (members.length === 0)
+    fail([...path, 'mcpServers'], 'There is no enabled server to combine')
+  return { members }
 }
 
 function readInner(
@@ -337,26 +372,23 @@ function readInner(
   warnings: string[],
 ): InnerServer | undefined {
   const path = [...parent, name]
+  const entry = pathText(parent.slice(0, -1))
   const raw = object(value, path, fail)
   if ('mcpServers' in raw)
     fail(
       [...path, 'mcpServers'],
       'Combining goes one level deep only; a combined server cannot combine others',
     )
-  const urlSetting = Object.keys(raw).find(
-    (key) =>
-      (ENDPOINT_KEYS as readonly string[]).includes(key) &&
-      !INNER_KEYS.has(key),
-  )
+  const urlSetting = Object.keys(raw).find((key) => URL_ONLY_KEYS.has(key))
   if (urlSetting !== undefined)
     fail(
       [...path, urlSetting],
-      `"${urlSetting}" is a setting for the URL. Put it on ${pathText(parent.slice(0, -1))} instead`,
+      `"${urlSetting}" is a setting for the URL. Put it on ${entry} instead`,
     )
   if ('path' in raw)
     fail(
       [...path, 'path'],
-      `A combined server is served at ${pathText(parent.slice(0, -1))}'s URL; "path" belongs there`,
+      `A combined server is served at ${entry}'s URL; "path" belongs there`,
     )
   checkKeys(raw, path, INNER_KEYS, fail, warnings)
   if (!isEnabled(raw, path, fail)) return undefined
@@ -387,78 +419,10 @@ function readServer(
       [...path, given[1]],
       `Has both "${given[0]}" and "${given[1]}". An entry runs one server (command, stdio or url) or combines several (its own "mcpServers")`,
     )
-  let source: ServerSource
-  if (given[0] === 'url') {
-    if ('type' in raw && 'transportType' in raw)
-      fail(
-        [...path, 'transportType'],
-        'Has both "type" and "transportType", which mean the same. Keep "type"',
-      )
-    const type = 'type' in raw ? raw.type : raw.transportType
-    const typeKey = 'type' in raw ? 'type' : 'transportType'
-    if (type === undefined)
-      fail(
-        [...path, 'url'],
-        'Add "type": "streamableHttp" or "sse", so it is clear how to reach this server',
-      )
-    const known = URL_TYPES[text(type, [...path, typeKey], fail)]
-    if (!known)
-      fail(
-        [...path, typeKey],
-        `"${type}" is not a remote transport. Use "streamableHttp" or "sse"`,
-      )
-    ;(['args', 'env', 'cwd'] as const).forEach((key) => {
-      if (key in raw)
-        fail(
-          [...path, key],
-          `"${key}" goes with a local server ("command" or "stdio"), not "url"`,
-        )
-    })
-    source = {
-      kind: 'url',
-      url: urlText(raw.url, [...path, 'url'], fail),
-      type: known,
-    }
-  } else {
-    if ('type' in raw && raw.type !== 'stdio')
-      fail(
-        [...path, 'type'],
-        `"type": ${JSON.stringify(raw.type)} goes with "url". A local server is "type": "stdio", or no type`,
-      )
-    if (given[0] === 'stdio') {
-      if ('args' in raw)
-        fail(
-          [...path, 'args'],
-          '"args" goes with "command". "stdio" is one shell command line',
-        )
-      source = {
-        kind: 'stdio',
-        stdio: text(raw.stdio, [...path, 'stdio'], fail),
-      }
-    } else {
-      source = {
-        kind: 'command',
-        command: text(raw.command, [...path, 'command'], fail),
-        args:
-          'args' in raw
-            ? strings(
-                raw.args,
-                [...path, 'args'],
-                fail,
-                'a list of strings',
-                true,
-              )
-            : [],
-      }
-    }
-    ;(['headers', 'oauth2Bearer'] as const).forEach((key) => {
-      if (inner && key in raw)
-        fail(
-          [...path, key],
-          `"${key}" is sent to a remote server, so it goes with "url"`,
-        )
-    })
-  }
+  const source =
+    given[0] === 'url'
+      ? urlSource(raw, path, fail)
+      : localSource(raw, path, fail, inner)
   const server: Omit<InnerServer, 'name'> = { source }
   if ('env' in raw) server.env = stringMap(raw.env, [...path, 'env'], fail)
   if ('cwd' in raw) server.cwd = text(raw.cwd, [...path, 'cwd'], fail)
@@ -473,71 +437,116 @@ function readServer(
   return server
 }
 
-function endpointOptions(
+// A remote server: its `url`, and the `type` (or `transportType`) that says
+// how to reach it.
+function urlSource(
   raw: Record<string, unknown>,
   path: (string | number)[],
   fail: Fail,
-  skip: string[],
-): EndpointOptions {
-  const at = (key: string) => [...path, key]
-  const options: EndpointOptions = {}
-  const has = (key: string) => key in raw && !skip.includes(key)
-  if (has('outputTransport'))
-    options.outputTransport = oneOf(
-      raw.outputTransport,
-      at('outputTransport'),
-      TRANSPORTS,
-      fail,
-    ) as Transport
-  if (has('baseUrl')) options.baseUrl = text(raw.baseUrl, at('baseUrl'), fail)
-  ;(['ssePath', 'messagePath', 'streamableHttpPath'] as const).forEach(
-    (key) => {
-      if (has(key)) options[key] = routePath(raw[key], at(key), fail)
-    },
-  )
-  if (has('cors')) {
-    if (raw.cors === true) options.cors = true
-    else if (raw.cors !== false)
-      options.cors = strings(
-        raw.cors,
-        at('cors'),
-        fail,
-        'true, false, or a list of origins',
+): ServerSource {
+  if ('type' in raw && 'transportType' in raw)
+    fail(
+      [...path, 'transportType'],
+      'Has both "type" and "transportType", which mean the same. Keep "type"',
+    )
+  const typeKey = 'type' in raw ? 'type' : 'transportType'
+  const type = raw[typeKey]
+  if (type === undefined)
+    fail(
+      [...path, 'url'],
+      'Add "type": "streamableHttp" or "sse", so it is clear how to reach this server',
+    )
+  const known = URL_TYPES[text(type, [...path, typeKey], fail)]
+  if (!known)
+    fail(
+      [...path, typeKey],
+      `"${type}" is not a remote transport. Use "streamableHttp" or "sse"`,
+    )
+  ;(['args', 'env', 'cwd'] as const).forEach((key) => {
+    if (key in raw)
+      fail(
+        [...path, key],
+        `"${key}" goes with a local server ("command" or "stdio"), not "url"`,
       )
+  })
+  return {
+    kind: 'url',
+    url: urlText(raw.url, [...path, 'url'], fail),
+    type: known,
   }
-  if (has('healthEndpoint'))
-    options.healthEndpoint = paths(
-      raw.healthEndpoint,
-      at('healthEndpoint'),
-      fail,
+}
+
+// A local server: one shell command line (`stdio`), or a `command` and its
+// `args`.
+function localSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+  inner: boolean,
+): ServerSource {
+  if ('type' in raw && raw.type !== 'stdio')
+    fail(
+      [...path, 'type'],
+      `"type": ${JSON.stringify(raw.type)} goes with "url". A local server is "type": "stdio", or no type`,
     )
-  if (has('apiKey'))
-    options.apiKey =
-      typeof raw.apiKey === 'string'
-        ? [text(raw.apiKey, at('apiKey'), fail)]
-        : strings(raw.apiKey, at('apiKey'), fail, 'a key or a list of keys')
-  if (has('apiKeyFile'))
-    options.apiKeyFile = text(raw.apiKeyFile, at('apiKeyFile'), fail)
-  if (has('stateful'))
-    options.stateful = boolean(raw.stateful, at('stateful'), fail)
-  if (has('sessionTimeout'))
-    options.sessionTimeout = integer(
-      raw.sessionTimeout,
-      at('sessionTimeout'),
-      fail,
-      1,
+  const source =
+    'stdio' in raw
+      ? stdioSource(raw, path, fail)
+      : commandSource(raw, path, fail)
+  ;(['headers', 'oauth2Bearer'] as const).forEach((key) => {
+    if (inner && key in raw)
+      fail(
+        [...path, key],
+        `"${key}" is sent to a remote server, so it goes with "url"`,
+      )
+  })
+  return source
+}
+
+function stdioSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+): ServerSource {
+  if ('args' in raw)
+    fail(
+      [...path, 'args'],
+      '"args" goes with "command". "stdio" is one shell command line',
     )
-  if (has('protocolVersion'))
-    options.protocolVersion = text(
-      raw.protocolVersion,
-      at('protocolVersion'),
-      fail,
-    )
-  if (has('headers'))
-    options.headers = stringMap(raw.headers, at('headers'), fail)
-  if (has('oauth2Bearer'))
-    options.oauth2Bearer = text(raw.oauth2Bearer, at('oauth2Bearer'), fail)
-  return options
+  return { kind: 'stdio', stdio: text(raw.stdio, [...path, 'stdio'], fail) }
+}
+
+function commandSource(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  fail: Fail,
+): ServerSource {
+  return {
+    kind: 'command',
+    command: text(raw.command, [...path, 'command'], fail),
+    args:
+      'args' in raw
+        ? strings(raw.args, [...path, 'args'], fail, 'a list of strings', true)
+        : [],
+  }
+}
+
+// The settings `readers` knows that `raw` holds, less those in `skip`.
+function readSettings<T>(
+  raw: Record<string, unknown>,
+  path: (string | number)[],
+  readers: Readers<T>,
+  fail: Fail,
+  skip: string[] = [],
+): T {
+  const settings: Record<string, unknown> = {}
+  // Never empty, so not a `for` loop with a zero-iteration case.
+  Object.entries<Reader<unknown>>(readers).forEach(([key, read]) => {
+    if (!(key in raw) || skip.includes(key)) return
+    const value = read(raw[key], [...path, key], fail)
+    if (value !== undefined) settings[key] = value
+  })
+  return settings as T
 }
 
 /** The output transport an entry ends up with: its own, the file's, the CLI's. */
@@ -549,11 +558,11 @@ export function effectiveTransport(
   if (set) return set
   // As on the command line: a remote server is bridged to stdio, and a local
   // one is served over SSE.
-  if ('members' in entry.server)
-    return entry.server.members.every((m) => m.source.kind === 'url')
-      ? 'stdio'
-      : 'sse'
-  return entry.server.source.kind === 'url' ? 'stdio' : 'sse'
+  const servers =
+    'members' in entry.server ? entry.server.members : [entry.server]
+  return servers.every((server) => server.source.kind === 'url')
+    ? 'stdio'
+    : 'sse'
 }
 
 function isEnabled(
@@ -595,9 +604,6 @@ function checkKeys(
 // ${VAR}, ${VAR:-default} and ${env:VAR} in string values, after parsing, so
 // a comment can never be expanded. `stdio` is a shell command line: the shell
 // expands $VAR there itself, from the environment the child inherits.
-// A server's own keys sit at odd depths (mcpServers.<name>.stdio, and
-// mcpServers.<name>.mcpServers.<member>.stdio); at even depths are the names
-// inside `env` and `headers`, where "stdio" is just a name and is expanded.
 function expand(
   value: unknown,
   path: (string | number)[],
@@ -605,7 +611,7 @@ function expand(
   fail: Fail,
 ): any {
   if (typeof value === 'string')
-    return path.length % 2 === 1 && path[path.length - 1] === 'stdio'
+    return isShellCommandLine(path)
       ? value
       : expandString(value, path, env, fail)
   if (Array.isArray(value))
@@ -619,6 +625,12 @@ function expand(
     )
   return value
 }
+
+// A server's own keys sit at odd depths (mcpServers.<name>.stdio, and
+// mcpServers.<name>.mcpServers.<member>.stdio); at even depths are the names
+// inside `env` and `headers`, where "stdio" is just a name and is expanded.
+const isShellCommandLine = (path: (string | number)[]) =>
+  path.length % 2 === 1 && path[path.length - 1] === 'stdio'
 
 function expandString(
   value: string,
@@ -670,11 +682,12 @@ function routePath(value: unknown, path: (string | number)[], fail: Fail) {
   return trimmed
 }
 
-const paths = (value: unknown, path: (string | number)[], fail: Fail) =>
-  (typeof value === 'string' ? [value] : strings(value, path, fail)).map(
-    (item, i) =>
-      routePath(item, typeof value === 'string' ? path : [...path, i], fail),
+function paths(value: unknown, path: (string | number)[], fail: Fail) {
+  if (typeof value === 'string') return [routePath(value, path, fail)]
+  return strings(value, path, fail).map((item, i) =>
+    routePath(item, [...path, i], fail),
   )
+}
 
 function object(value: unknown, path: (string | number)[], fail: Fail) {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
@@ -760,13 +773,11 @@ function describeParseError(code: number) {
 
 const pathText = (path: (string | number)[]) =>
   path
-    .map((part, i) =>
-      typeof part === 'number'
-        ? `[${part}]`
-        : /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part)
-          ? `${i === 0 ? '' : '.'}${part}`
-          : `${i === 0 ? '' : '.'}"${part}"`,
-    )
+    .map((part, i) => {
+      if (typeof part === 'number') return `[${part}]`
+      const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? part : `"${part}"`
+      return i === 0 ? key : `.${key}`
+    })
     .join('')
 
 const entryText = (name: string) => pathText(['mcpServers', name])

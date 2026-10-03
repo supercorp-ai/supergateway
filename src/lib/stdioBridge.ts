@@ -1,3 +1,4 @@
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type {
   ClientCapabilities,
@@ -12,9 +13,9 @@ import { errorResponse, resultResponse } from './bridgeResponses.js'
 import { relayClientMessage } from './relayClientMessage.js'
 
 // The stdio side of the bridges (--sse, --streamableHttp), which both used to
-// write out in full. Nothing here imports the SDK's classes: each bridge
-// constructs its own `Client`, `Server` and transports, which the bridge tests
-// replace per test.
+// write out in full. Nothing here imports the SDK's classes, only their types:
+// each bridge constructs its own `Client`, `Server` and transports, which the
+// bridge tests replace per test.
 
 /**
  * The name and capabilities a bridge's upstream `Client` presents: the stdio
@@ -35,6 +36,32 @@ export const upstreamClientIdentity = (initialize?: JSONRPCRequest) => {
       capabilities: clientCapabilities ?? {},
     },
   ] as const
+}
+
+/**
+ * Pass each request `client` sends through `rewrite` first, and keep what the
+ * latest one returned, until `restore` puts the client back as it was. A
+ * bridge connects its upstream client this way: the initialize request that
+ * `Client.connect` sends must carry the stdio client's protocol version, and
+ * its result is the reply to the stdio client's own initialize.
+ */
+export const interceptRequests = (
+  client: Client,
+  rewrite: (request: Parameters<Client['request']>[0]) => void,
+) => {
+  const originalRequest = client.request
+  let latestResult: unknown
+  client.request = async function (request, ...restArgs) {
+    rewrite(request)
+    latestResult = await originalRequest.apply(this, [request, ...restArgs])
+    return latestResult as Awaited<ReturnType<typeof originalRequest>>
+  }
+  return {
+    result: () => latestResult,
+    restore: () => {
+      client.request = originalRequest
+    },
+  }
 }
 
 /**

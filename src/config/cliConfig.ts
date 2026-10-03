@@ -39,50 +39,77 @@ export function entryFlagBesideConfig(given: Set<string>) {
   )
 }
 
-/** The config a command line without `--config` is equivalent to. */
-export function configFromCli(argv: Cli, given: Set<string>): Config {
-  const has = (name: string) => given.has(name)
-  const gateway: GatewaySettings = {}
-  if (has('port')) gateway.port = argv.port
-  if (has('host')) gateway.host = argv.host
-  if (has('logLevel'))
-    gateway.logLevel = argv.logLevel as GatewaySettings['logLevel']
-  if (has('logFormat'))
-    gateway.logFormat = argv.logFormat as GatewaySettings['logFormat']
-  if (has('exitWithProcess')) gateway.exitWithProcess = argv.exitWithProcess
-  if (has('healthEndpoint'))
-    gateway.healthEndpoint = (argv.healthEndpoint as unknown[]).map(String)
-  const options: EndpointOptions = {}
-  if (has('outputTransport'))
-    options.outputTransport = argv.outputTransport as Entry['outputTransport']
-  if (has('baseUrl')) options.baseUrl = argv.baseUrl
-  if (has('ssePath')) options.ssePath = argv.ssePath
-  if (has('messagePath')) options.messagePath = argv.messagePath
-  if (has('streamableHttpPath'))
-    options.streamableHttpPath = argv.streamableHttpPath
-  if (has('cors')) {
+// How each setting is read from the command line, once its flag is given.
+// Settings are read, and so printed, in the order listed here.
+type FromCli<T> = { [K in keyof T]-?: (argv: Cli) => T[K] }
+
+const GATEWAY_FROM_CLI: FromCli<GatewaySettings> = {
+  port: (argv) => argv.port,
+  host: (argv) => argv.host,
+  logLevel: (argv) => argv.logLevel as GatewaySettings['logLevel'],
+  logFormat: (argv) => argv.logFormat as GatewaySettings['logFormat'],
+  exitWithProcess: (argv) => argv.exitWithProcess,
+  healthEndpoint: (argv) => (argv.healthEndpoint as unknown[]).map(String),
+}
+
+// `--healthEndpoint` is the gateway's own, so it is read above.
+const ENDPOINT_FROM_CLI: FromCli<Omit<EndpointOptions, 'healthEndpoint'>> = {
+  outputTransport: (argv) => argv.outputTransport as Entry['outputTransport'],
+  baseUrl: (argv) => argv.baseUrl,
+  ssePath: (argv) => argv.ssePath,
+  messagePath: (argv) => argv.messagePath,
+  streamableHttpPath: (argv) => argv.streamableHttpPath,
+  cors: (argv) => {
     // Given, it is a list: empty for a bare --cors.
     const origins = (argv.cors as unknown[]).map(String)
-    options.cors = origins.length === 0 ? true : origins
-  }
-  if (has('header')) options.headers = headerMap(argv.header as unknown[])
-  if (has('oauth2Bearer')) options.oauth2Bearer = argv.oauth2Bearer
-  if (has('apiKey')) options.apiKey = argv.apiKey as string[]
-  if (has('apiKeyFile')) options.apiKeyFile = argv.apiKeyFile
-  if (has('stateful')) options.stateful = argv.stateful
-  if (has('sessionTimeout')) options.sessionTimeout = argv.sessionTimeout
-  if (has('protocolVersion')) options.protocolVersion = argv.protocolVersion
-  const source: InnerServer['source'] = argv.sse
-    ? { kind: 'url', url: argv.sse, type: 'sse' }
-    : argv.streamableHttp
-      ? { kind: 'url', url: argv.streamableHttp, type: 'streamableHttp' }
-      : // Called only for a command line that names its one server.
-        { kind: 'stdio', stdio: argv.stdio! }
+    return origins.length === 0 ? true : origins
+  },
+  headers: (argv) => headerMap(argv.header as unknown[]),
+  oauth2Bearer: (argv) => argv.oauth2Bearer,
+  apiKey: (argv) => argv.apiKey as string[],
+  apiKeyFile: (argv) => argv.apiKeyFile,
+  stateful: (argv) => argv.stateful,
+  sessionTimeout: (argv) => argv.sessionTimeout,
+  protocolVersion: (argv) => argv.protocolVersion,
+}
+
+// Each setting has the name of its flag, but for `headers`, which the command
+// line gives one `--header` at a time.
+const flagOf = (setting: string) => (setting === 'headers' ? 'header' : setting)
+
+// The settings whose flags were given, as the command line set them.
+function settingsFromCli<T>(
+  argv: Cli,
+  given: Set<string>,
+  readers: FromCli<T>,
+): T {
+  const settings: Record<string, unknown> = {}
+  // Never empty, so not a `for` loop with a zero-iteration case.
+  Object.entries<(argv: Cli) => unknown>(readers).forEach(([key, read]) => {
+    if (given.has(flagOf(key))) settings[key] = read(argv)
+  })
+  return settings as T
+}
+
+/** The config a command line without `--config` is equivalent to. */
+export function configFromCli(argv: Cli, given: Set<string>): Config {
+  const gateway = settingsFromCli(argv, given, GATEWAY_FROM_CLI)
+  const options = settingsFromCli(argv, given, ENDPOINT_FROM_CLI)
+  const source = sourceFromCli(argv)
   return {
     gateway,
     defaults: {},
     entries: [{ name: 'default', path: '/', ...options, server: { source } }],
   }
+}
+
+// The server a command line names: --sse, --streamableHttp or --stdio.
+function sourceFromCli(argv: Cli): InnerServer['source'] {
+  if (argv.sse) return { kind: 'url', url: argv.sse, type: 'sse' }
+  if (argv.streamableHttp)
+    return { kind: 'url', url: argv.streamableHttp, type: 'streamableHttp' }
+  // Called only for a command line that names its one server.
+  return { kind: 'stdio', stdio: argv.stdio! }
 }
 
 // `--header "Name: value"` as the file writes it. A header without a colon is
@@ -113,43 +140,31 @@ export function overrideFromCli(
   extraKeyFiles: string[]
   notes: string[]
 } {
-  const gateway = { ...config.gateway }
-  const notes: string[] = []
-  const take = <K extends keyof GatewaySettings>(
-    key: K,
-    value: GatewaySettings[K],
-  ) => {
-    if (!given.has(key)) return
-    notes.push(
-      `--${key} ${JSON.stringify(value)} overrides ${
-        key in gateway
-          ? `"${key}": ${JSON.stringify(gateway[key])}`
-          : 'the default'
-      } from the config file`,
-    )
+  const gateway: Record<string, unknown> = { ...config.gateway }
+  const overrides = settingsFromCli(argv, given, GATEWAY_FROM_CLI)
+  const notes = Object.entries(overrides).map(([key, value]) => {
+    const replaced =
+      key in gateway
+        ? `"${key}": ${JSON.stringify(gateway[key])}`
+        : 'the default'
     gateway[key] = value
-  }
-  take('port', argv.port)
-  take('host', argv.host)
-  take('logLevel', argv.logLevel as GatewaySettings['logLevel'])
-  take('logFormat', argv.logFormat as GatewaySettings['logFormat'])
-  take('exitWithProcess', argv.exitWithProcess)
-  take(
-    'healthEndpoint',
-    given.has('healthEndpoint')
-      ? (argv.healthEndpoint as unknown[]).map(String)
-      : undefined,
-  )
-  // Given but empty (`--apiKey`, `--apiKeyFile "$UNSET"`) is passed on, so it
-  // is refused as it is without --config ("is set but empty"). Dropped, it
-  // would start the gateway without the key the operator meant to require.
-  const keys = argv.apiKey as string[]
+    return `--${key} ${JSON.stringify(value)} overrides ${replaced} from the config file`
+  })
   return {
-    config: { ...config, gateway },
-    extraKeys: !given.has('apiKey') ? [] : keys.length > 0 ? keys : [''],
+    config: { ...config, gateway: gateway as GatewaySettings },
+    extraKeys: extraKeysOf(argv, given),
     extraKeyFiles: given.has('apiKeyFile') ? [argv.apiKeyFile as string] : [],
     notes,
   }
+}
+
+// Given but empty (`--apiKey`, `--apiKeyFile "$UNSET"`) is passed on, so it
+// is refused as it is without --config ("is set but empty"). Dropped, it
+// would start the gateway without the key the operator meant to require.
+function extraKeysOf(argv: Cli, given: Set<string>) {
+  if (!given.has('apiKey')) return []
+  const keys = argv.apiKey as string[]
+  return keys.length > 0 ? keys : ['']
 }
 
 /** The config as a file would write it, secrets redacted. */
@@ -162,12 +177,7 @@ export function printableConfig(config: Config): unknown {
     return out
   }
   const server = (s: Omit<InnerServer, 'name'>) => {
-    const out: Record<string, unknown> =
-      s.source.kind === 'command'
-        ? { command: s.source.command, args: s.source.args }
-        : s.source.kind === 'stdio'
-          ? { stdio: s.source.stdio }
-          : { type: s.source.type, url: s.source.url }
+    const out = sourceFields(s.source)
     if (s.env) out.env = redactMap(s.env)
     if (s.cwd) out.cwd = s.cwd
     if (s.headers) out.headers = redactMap(s.headers)
@@ -191,6 +201,14 @@ export function printableConfig(config: Config): unknown {
     ]),
   )
   return { ...config.gateway, ...options(config.defaults), mcpServers: entries }
+}
+
+// What to run, or where to connect, as a file writes it.
+function sourceFields(source: InnerServer['source']): Record<string, unknown> {
+  if (source.kind === 'command')
+    return { command: source.command, args: source.args }
+  if (source.kind === 'stdio') return { stdio: source.stdio }
+  return { type: source.type, url: source.url }
 }
 
 const redactMap = (map: Record<string, string>) =>
@@ -224,19 +242,12 @@ export function cliForEntry(
   const flag = (name: string, value: unknown) => {
     if (value !== undefined) args.push(`--${name}=${String(value)}`)
   }
-  const { source, env, cwd } = entry.server
-  let command: ChildCommand | undefined
+  const { source } = entry.server
   if (source.kind === 'url') {
     flag(source.type, source.url)
   } else {
     // The value is replaced by `command`; the flag only selects the mode.
     flag('stdio', source.kind === 'stdio' ? source.stdio : source.command)
-    command =
-      source.kind === 'command'
-        ? { command: source.command, args: source.args, env, cwd }
-        : env || cwd
-          ? { stdio: source.stdio, env, cwd }
-          : source.stdio
   }
   flag('port', gateway.port)
   flag('host', gateway.host)
@@ -269,5 +280,18 @@ export function cliForEntry(
   if (pick('stateful')) args.push('--stateful')
   flag('sessionTimeout', pick('sessionTimeout'))
   flag('protocolVersion', pick('protocolVersion'))
-  return { args, command }
+  return { args, command: childCommand(entry.server) }
+}
+
+// How to start a local server: a command and its arguments, or a shell
+// command line, with an environment and directory if the file gives them.
+function childCommand({
+  source,
+  env,
+  cwd,
+}: Omit<InnerServer, 'name'>): ChildCommand | undefined {
+  if (source.kind === 'url') return undefined
+  if (source.kind === 'command')
+    return { command: source.command, args: source.args, env, cwd }
+  return env || cwd ? { stdio: source.stdio, env, cwd } : source.stdio
 }

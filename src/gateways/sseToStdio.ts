@@ -14,6 +14,7 @@ import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
 import {
   bridgeStdioMessages,
+  interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
 
@@ -22,8 +23,6 @@ export interface SseToStdioArgs {
   logger: Logger
   headers: Record<string, string>
 }
-
-let sseClient: Client | undefined
 
 // A compliant MCP SSE server sends `event: endpoint` — the URL to POST
 // messages to — as the first thing on a new stream, and the SDK's handshake
@@ -36,27 +35,22 @@ const SSE_HANDSHAKE_TIMEOUT_MS = 30_000
 
 class SseHandshakeTimeout extends Error {}
 
-const newFallbackSseClient = async ({
-  connect,
-}: {
-  connect: (client: Client) => Promise<void>
-}) => {
-  const fallbackSseClient = new Client(...upstreamClientIdentity())
-
-  await connect(fallbackSseClient)
-  return fallbackSseClient
+/** Whether the upstream's event stream ever opened. */
+interface EventStream {
+  opened: boolean
 }
 
 /**
- * The transport to the upstream SSE server. The SDK can start it once, so a
- * bridge has exactly one; `opened` says whether its event stream ever opened.
+ * The transport to the upstream SSE server, relaying what the server sends to
+ * stdout. The SDK can start it once, so a bridge has exactly one, and the
+ * bridge exits when it closes.
  */
 const openSseTransport = (
   upstreamUrl: URL,
   headers: Record<string, string>,
   logger: Logger,
 ) => {
-  const stream = { opened: false }
+  const stream: EventStream = { opened: false }
   const transport = new SSEClientTransport(upstreamUrl, {
     eventSourceInit: {
       fetch: async (...props: Parameters<typeof fetch>) => {
@@ -81,6 +75,16 @@ const openSseTransport = (
   transport.onerror = (err) => {
     logger.error('SSE error:', err)
   }
+
+  relayServerMessages(transport, (message) => {
+    logger.info('SSE → Stdio:', message)
+    process.stdout.write(JSON.stringify(message) + '\n')
+  })
+
+  transport.onclose = () => {
+    logger.error('SSE connection closed')
+    process.exit(1)
+  }
   return { transport, stream }
 }
 
@@ -92,7 +96,7 @@ const connectWithin = async (
   client: Client,
   transport: SSEClientTransport,
   // Read when the deadline passes: the stream can open after the connect began.
-  stream: { opened: boolean },
+  stream: EventStream,
   upstreamUrl: URL,
 ) => {
   let timer: NodeJS.Timeout | undefined
@@ -117,54 +121,78 @@ const connectWithin = async (
 }
 
 /**
- * The stdio client's first request, which connects the bridge's client: an
- * initialize as the stdio client's own handshake, anything else through a
- * fallback client.
+ * The bridge's client to the upstream SSE server, connected over the bridge's
+ * one transport by the stdio client's first request.
  */
-const connectFor = async (
-  req: JSONRPCRequest,
-  signal: AbortSignal,
-  connectUpstream: (client: Client) => Promise<void>,
-  logger: Logger,
-) => {
-  let result
-  if (req.method === 'initialize') {
-    sseClient = new Client(...upstreamClientIdentity(req))
+class Upstream {
+  client: Client | undefined
 
-    const originalRequest = sseClient.request
+  constructor(
+    private readonly transport: SSEClientTransport,
+    private readonly stream: EventStream,
+    private readonly url: URL,
+    private readonly logger: Logger,
+  ) {}
 
-    sseClient.request = async function (requestMessage, ...restArgs) {
-      // pass protocol version from original client
-      if (
-        requestMessage.method === 'initialize' &&
-        req.params?.protocolVersion &&
-        requestMessage.params?.protocolVersion
-      ) {
-        requestMessage.params.protocolVersion = req.params.protocolVersion
-      }
+  private connect(client: Client) {
+    return connectWithin(client, this.transport, this.stream, this.url)
+  }
 
-      result = await originalRequest.apply(this, [requestMessage, ...restArgs])
-
-      return result
-    }
-
-    await connectUpstream(sseClient)
-    sseClient.request = originalRequest
-  } else {
-    logger.info('SSE client not initialized, creating fallback client')
-    sseClient = await newFallbackSseClient({
-      connect: connectUpstream,
-    })
-    // The request that triggered the fallback still has to be
-    // answered. Creating the client was never the point of it.
-    result = await sseClient.request(req, z.any(), {
+  /** A stdio request, answered by the upstream server. */
+  request(req: JSONRPCRequest, signal: AbortSignal) {
+    if (!this.client) return this.connectFor(req, signal)
+    return this.client.request(req, z.any(), {
       signal,
       timeout: MAX_TIMEOUT_MS,
     })
   }
 
-  logger.info('SSE connected')
-  return result
+  /**
+   * The stdio client's first request, which connects the bridge's client: an
+   * initialize as the stdio client's own handshake, anything else through a
+   * fallback client.
+   */
+  private async connectFor(req: JSONRPCRequest, signal: AbortSignal) {
+    let result
+    if (req.method === 'initialize') {
+      this.client = new Client(...upstreamClientIdentity(req))
+
+      const intercepted = interceptRequests(this.client, (requestMessage) => {
+        // pass protocol version from original client
+        if (
+          requestMessage.method === 'initialize' &&
+          req.params?.protocolVersion &&
+          requestMessage.params?.protocolVersion
+        ) {
+          requestMessage.params.protocolVersion = req.params.protocolVersion
+        }
+      })
+
+      await this.connect(this.client)
+      intercepted.restore()
+      result = intercepted.result()
+    } else {
+      this.logger.info('SSE client not initialized, creating fallback client')
+      this.client = await this.connectedFallbackClient()
+      // The request that triggered the fallback still has to be
+      // answered. Creating the client was never the point of it.
+      result = await this.client.request(req, z.any(), {
+        signal,
+        timeout: MAX_TIMEOUT_MS,
+      })
+    }
+
+    this.logger.info('SSE connected')
+    return result
+  }
+
+  /** A client in the gateway's own name, once it has connected. */
+  private async connectedFallbackClient() {
+    const fallbackSseClient = new Client(...upstreamClientIdentity())
+
+    await this.connect(fallbackSseClient)
+    return fallbackSseClient
+  }
 }
 
 export async function sseToStdio(args: SseToStdioArgs) {
@@ -183,19 +211,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
     headers,
     logger,
   )
-
-  const connectUpstream = (client: Client) =>
-    connectWithin(client, sseTransport, stream, upstreamUrl)
-
-  relayServerMessages(sseTransport, (message) => {
-    logger.info('SSE → Stdio:', message)
-    process.stdout.write(JSON.stringify(message) + '\n')
-  })
-
-  sseTransport.onclose = () => {
-    logger.error('SSE connection closed')
-    process.exit(1)
-  }
+  const upstream = new Upstream(sseTransport, stream, upstreamUrl, logger)
 
   const stdioServer = new Server(
     {
@@ -213,13 +229,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
   bridgeStdioMessages(stdioServer.transport!, {
     label: 'SSE',
     logger,
-    request: (req, signal) => {
-      if (!sseClient) return connectFor(req, signal, connectUpstream, logger)
-      return sseClient.request(req, z.any(), {
-        signal,
-        timeout: MAX_TIMEOUT_MS,
-      })
-    },
+    request: (req, signal) => upstream.request(req, signal),
     // The SDK's transport cannot be started a second time, so after a
     // handshake that timed out there is nothing left to serve. Closing it
     // exits through `onclose`, once the client has been told why.
@@ -228,7 +238,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
         ? () => void sseTransport.close()
         : undefined,
     send: () =>
-      sseClient ? (relayed) => sseTransport.send(relayed) : undefined,
+      upstream.client ? (relayed) => sseTransport.send(relayed) : undefined,
   })
 
   logger.info('Stdio server listening')

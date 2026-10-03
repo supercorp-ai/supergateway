@@ -29,8 +29,6 @@ export interface StreamableHttpToStdioArgs {
   headers: Record<string, string>
 }
 
-// After the upstream is lost, the first reconnect waits a second, and each
-// failed one doubles the wait, up to half a minute.
 const FIRST_RECONNECT_DELAY_MS = 1000
 const MAX_RECONNECT_DELAY_MS = 30_000
 
@@ -40,15 +38,22 @@ const END_SESSION_TIMEOUT_MS = 2000
 /**
  * Whether a request failed because the upstream no longer serves this
  * connection, so the next request needs a fresh one.
+ *
+ * A 404 means the server no longer recognizes this MCP session. A fresh
+ * transport must initialize before the next stdio request. Never replay the
+ * failed request: a tool call may have had side effects.
  */
 const upstreamLost = (err: unknown) => {
   const rawCode =
     err && typeof err === 'object' && 'code' in err
-      ? (err as any).code
+      ? (err as { code: unknown }).code
       : undefined
-  // A 404 means the server no longer recognizes this MCP session. A fresh
-  // transport must initialize before the next stdio request. Never replay the
-  // failed request: a tool call may have had side effects.
+  const transportHttpFailure =
+    err instanceof Error &&
+    /^Streamable HTTP error: Error POSTing to endpoint:/.test(err.message) &&
+    (rawCode === 404 || (typeof rawCode === 'number' && rawCode >= 500))
+  const fetchFailed =
+    err instanceof TypeError && /fetch failed/i.test(err.message)
   // SDK 1.18-1.23 wrap HTTP failures in a generic MCP error rather than
   // exposing the status as `code`. Recognize that transport's specific message
   // too, so an expired session reconnects there.
@@ -57,15 +62,7 @@ const upstreamLost = (err: unknown) => {
     /^(?:MCP error -32000: )?Error POSTing to endpoint \(HTTP (?:404|5\d\d)\):/.test(
       err.message,
     )
-  const transportHttpFailure =
-    err instanceof Error &&
-    /^Streamable HTTP error: Error POSTing to endpoint:/.test(err.message) &&
-    (rawCode === 404 || (typeof rawCode === 'number' && rawCode >= 500))
-  return (
-    transportHttpFailure ||
-    (err instanceof TypeError && /fetch failed/i.test(err.message)) ||
-    legacyHttpFailure
-  )
+  return transportHttpFailure || fetchFailed || legacyHttpFailure
 }
 
 /**
@@ -96,6 +93,44 @@ interface Connection {
 }
 
 /**
+ * When the next reconnect runs. After the upstream is lost, the first one waits
+ * a second, and each failed one doubles the wait, up to half a minute. At most
+ * one is pending at a time.
+ */
+class ReconnectSchedule {
+  private timer: NodeJS.Timeout | undefined
+  private delay = FIRST_RECONNECT_DELAY_MS
+
+  /** Run `reconnect` after the current wait, unless one is already pending. */
+  schedule(reconnect: () => void) {
+    if (this.timer) return
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      reconnect()
+    }, this.delay)
+    this.timer.unref()
+  }
+
+  /** Drop the pending reconnect: a connection is starting anyway. */
+  cancel() {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+  }
+
+  /** A reconnect failed: wait longer before the next. */
+  backOff() {
+    this.delay = Math.min(this.delay * 2, MAX_RECONNECT_DELAY_MS)
+  }
+
+  /** A connection succeeded: the next loss starts from the first wait again. */
+  reset() {
+    this.delay = FIRST_RECONNECT_DELAY_MS
+  }
+}
+
+/**
  * The bridge's connection to the upstream server, and its replacement after
  * the upstream is lost once a session has worked.
  */
@@ -103,8 +138,7 @@ class Upstream {
   connection: Connection | undefined
   private initializeMessage: JSONRPCRequest | undefined
   private connecting: Promise<unknown> | undefined
-  private reconnectTimer: NodeJS.Timeout | undefined
-  private reconnectDelay = FIRST_RECONNECT_DELAY_MS
+  private readonly reconnects = new ReconnectSchedule()
   private hasConnected = false
 
   constructor(
@@ -130,28 +164,12 @@ class Upstream {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer || !this.hasConnected) return
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined
+    if (!this.hasConnected) return
+    this.reconnects.schedule(() => {
       void this.connect().catch((err) => {
         this.logger.error('Streamable HTTP reconnect failed:', err)
       })
-    }, this.reconnectDelay)
-    this.reconnectTimer.unref()
-  }
-
-  private cancelReconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = undefined
-    }
-  }
-
-  private backOff() {
-    this.reconnectDelay = Math.min(
-      this.reconnectDelay * 2,
-      MAX_RECONNECT_DELAY_MS,
-    )
+    })
   }
 
   private openTransport() {
@@ -207,7 +225,7 @@ class Upstream {
   /** Connect, or join the connection under way; resolves to its handshake. */
   connect(): Promise<unknown> {
     if (this.connecting) return this.connecting
-    this.cancelReconnect()
+    this.reconnects.cancel()
     const transport = this.openTransport()
     const client = new Client(...upstreamClientIdentity(this.initializeMessage))
     const handshake = this.presentInitialize(client)
@@ -217,7 +235,7 @@ class Upstream {
         handshake.restore()
         this.connection = { client, transport }
         this.hasConnected = true
-        this.reconnectDelay = FIRST_RECONNECT_DELAY_MS
+        this.reconnects.reset()
         this.logger.info('Streamable HTTP connected')
         return handshake.result()
       })
@@ -228,7 +246,7 @@ class Upstream {
         } catch {
           // Preserve the connection failure as the error returned to stdio.
         }
-        if (this.hasConnected) this.backOff()
+        if (this.hasConnected) this.reconnects.backOff()
         throw err
       })
       .finally(() => {

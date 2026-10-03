@@ -10,32 +10,45 @@ import { redactUrl } from './urlCredentials.js'
 import { describeHeaders } from './headers.js'
 import { upstreamPeer, type RemoteServer } from './upstreamPeer.js'
 import { toolNamesPeer, type ToolNames } from './toolNames.js'
+import { combinedPeer } from './combinedPeer.js'
 
 /**
  * The MCP server a listening gateway serves: a command it starts for each
- * session, or a remote server it opens a session with for each; and, with
- * --toolPrefix or --tools, the tools a client sees of it.
+ * session, a remote server it opens a session with for each, or several of
+ * either combined as one; and, with --toolPrefix or --tools, the tools a
+ * client sees of it.
  */
 export type ServerSource = (
-  | { stdioCmd: ChildCommand; upstream?: undefined }
-  | { upstream: RemoteServer; stdioCmd?: undefined }
+  | { stdioCmd: ChildCommand; upstream?: undefined; combined?: undefined }
+  | { upstream: RemoteServer; stdioCmd?: undefined; combined?: undefined }
+  | { combined: CombinedServers; stdioCmd?: undefined; upstream?: undefined }
 ) & { toolNames?: ToolNames }
 
+/** The servers combined on one entry's URL, in the order the config lists them. */
+export interface CombinedServers {
+  /** The entry's name. */
+  name: string
+  members: (ServerSource & { name: string })[]
+}
+
 /** The server's lines in a gateway's startup listing. */
-export function announceServer(logger: Logger, source: ServerSource) {
-  if (!source.upstream) {
-    logger.info(`  - stdio: ${describeCommand(source.stdioCmd)}`)
-  } else {
-    logger.info(
-      `  - ${source.upstream.type}: ${redactUrl(source.upstream.url)}`,
+export function announceServer(
+  logger: Logger,
+  source: ServerSource,
+  member = '',
+) {
+  const line = (text: string) => logger.info(`  - ${member}${text}`)
+  if (source.combined) {
+    const { members } = source.combined
+    line(`combines: ${members.map(({ name }) => name).join(', ')}`)
+    members.forEach((server) =>
+      announceServer(logger, server, `${server.name}: `),
     )
-    logger.info(
-      `  - Upstream headers: ${describeHeaders(source.upstream.headers)}`,
-    )
-  }
-  source.toolNames
-    ?.describe()
-    .forEach((setting) => logger.info(`  - ${setting}`))
+  } else if (source.upstream) {
+    line(`${source.upstream.type}: ${redactUrl(source.upstream.url)}`)
+    line(`Upstream headers: ${describeHeaders(source.upstream.headers)}`)
+  } else line(`stdio: ${describeCommand(source.stdioCmd)}`)
+  source.toolNames?.describe().forEach(line)
 }
 
 type Spawn = typeof import('child_process').spawn
@@ -51,17 +64,36 @@ export function startServer(
   logger: Logger,
   label: string,
 ): StartPeer {
-  const start = source.upstream
-    ? upstreamPeer(source.upstream, children, logger, label)
-    : spawnedPeer(spawn, source.stdioCmd, children)
+  const start = serverPeer(spawn, source, children, logger, label)
   return source.toolNames ? toolNamesPeer(start, source.toolNames) : start
 }
 
-const spawnedPeer = (
+function serverPeer(
   spawn: Spawn,
-  command: ChildCommand,
+  source: ServerSource,
   children: OwnedChildProcesses,
-) => {
-  const child = spawnCommand(spawn, command, children.spawnOptions)
+  logger: Logger,
+  label: string,
+): StartPeer {
+  if (source.combined)
+    return combinedPeer(
+      source.combined.name,
+      // Each is started when the session initializes, not before.
+      source.combined.members.map((member) => ({
+        name: member.name,
+        start: () =>
+          startServer(
+            spawn,
+            member,
+            children,
+            logger,
+            `${label} ${member.name}`,
+          ),
+      })),
+      logger,
+    )
+  if (source.upstream)
+    return upstreamPeer(source.upstream, children, logger, label)
+  const child = spawnCommand(spawn, source.stdioCmd, children.spawnOptions)
   return processPeer(child, children.own(child))
 }

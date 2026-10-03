@@ -8,6 +8,7 @@ import type {
   GatewaySettings,
   InnerServer,
 } from './configFile.js'
+import { effectiveTransport } from './configFile.js'
 
 // The command line and the config file describe the same thing: the command
 // line is a config with one entry, named `default`, served at `/`.
@@ -186,6 +187,8 @@ export function printableConfig(config: Config): unknown {
     if (s.cwd) out.cwd = s.cwd
     if (s.headers) out.headers = redactMap(s.headers)
     if (s.oauth2Bearer) out.oauth2Bearer = '<redacted>'
+    if (s.toolPrefix) out.toolPrefix = s.toolPrefix
+    if (s.tools) out.tools = s.tools
     return out
   }
   const entries = Object.fromEntries(
@@ -236,9 +239,7 @@ export function cliForEntry(
   extraKeys: string[],
   extraKeyFiles: string[],
   shared = false,
-): { args: string[]; command?: ChildCommand } {
-  if ('members' in entry.server)
-    throw new Error('A combined entry has no command line equivalent')
+): { args: string[]; command?: ChildCommand; members?: MemberServer[] } {
   const { gateway, defaults } = config
   const pick = <K extends keyof EndpointOptions>(key: K) =>
     entry[key] ?? defaults[key]
@@ -246,19 +247,31 @@ export function cliForEntry(
   const flag = (name: string, value: unknown) => {
     if (value !== undefined) args.push(`--${name}=${String(value)}`)
   }
-  const { source } = entry.server
-  if (source.kind === 'url') {
-    flag(source.type, source.url)
-  } else {
-    // The value is replaced by `command`; the flag only selects the mode.
-    flag('stdio', source.kind === 'stdio' ? source.stdio : source.command)
-  }
+  const { server } = entry
+  // For a local or combined server the value is replaced, by `command` or
+  // `members`; the flag only selects the mode.
+  if ('members' in server) flag('stdio', entry.name)
+  else if (server.source.kind === 'url')
+    flag(server.source.type, server.source.url)
+  else
+    flag(
+      'stdio',
+      server.source.kind === 'stdio'
+        ? server.source.stdio
+        : server.source.command,
+    )
   flag('port', gateway.port)
   flag('host', gateway.host)
   flag('logLevel', gateway.logLevel)
   flag('logFormat', gateway.logFormat)
   flag('exitWithProcess', gateway.exitWithProcess)
-  flag('outputTransport', pick('outputTransport'))
+  // Combined servers have no command line to take a default from.
+  flag(
+    'outputTransport',
+    'members' in server
+      ? effectiveTransport(entry, defaults)
+      : pick('outputTransport'),
+  )
   flag('baseUrl', pick('baseUrl'))
   const prefix = entry.path === '/' ? '' : entry.path
   const under = (path: string | undefined, fallback: string) =>
@@ -290,8 +303,45 @@ export function cliForEntry(
   if (pick('stateful')) args.push('--stateful')
   flag('sessionTimeout', pick('sessionTimeout'))
   flag('protocolVersion', pick('protocolVersion'))
-  return { args, command: childCommand(entry.server) }
+  return 'members' in server
+    ? { args, members: server.members.map(memberServer) }
+    : { args, command: childCommand(server) }
 }
+
+/** One of a combined entry's servers, as the gateway starts it. */
+export interface MemberServer {
+  name: string
+  /** A local server's command. */
+  command?: ChildCommand
+  /** A remote server, and what the gateway sends it. */
+  upstream?: {
+    url: string
+    type: 'sse' | 'streamableHttp'
+    headers: Record<string, string>
+  }
+  toolPrefix?: string
+  tools?: string[]
+}
+
+const memberServer = (member: InnerServer): MemberServer => ({
+  name: member.name,
+  command: childCommand(member),
+  upstream:
+    member.source.kind === 'url'
+      ? {
+          url: member.source.url,
+          type: member.source.type,
+          headers: {
+            ...member.headers,
+            ...(member.oauth2Bearer
+              ? { Authorization: `Bearer ${member.oauth2Bearer}` }
+              : {}),
+          },
+        }
+      : undefined,
+  toolPrefix: member.toolPrefix,
+  tools: member.tools,
+})
 
 // How to start a local server: a command and its arguments, or a shell
 // command line, with an environment and directory if the file gives them.

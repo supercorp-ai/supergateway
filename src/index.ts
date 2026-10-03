@@ -67,6 +67,7 @@ import {
 } from './config/configFile.js'
 import {
   cliForEntry,
+  type MemberServer,
   configFromCli,
   entryFlagBesideConfig,
   overrideFromCli,
@@ -112,6 +113,16 @@ type ServerOptions = Listening & { path?: string }
 const serverOf = (argv: Cli, logger: Logger): ServerSource => {
   const url = argv.sse ?? argv.streamableHttp
   const toolNames = toolNamesOf(argv, logger)
+  // A combined entry's servers, which no command line can name.
+  const members = argv.combined as MemberServer[] | undefined
+  if (members)
+    return {
+      combined: {
+        name: argv.stdio!,
+        members: members.map((member) => memberSource(member, logger)),
+      },
+      toolNames,
+    }
   if (url === undefined) return { stdioCmd: stdioCommand(argv), toolNames }
   return {
     upstream: {
@@ -121,6 +132,22 @@ const serverOf = (argv: Cli, logger: Logger): ServerSource => {
     },
     toolNames,
   }
+}
+
+// One of a combined entry's servers: local or remote, with its own tools.
+const memberSource = (
+  { name, command, upstream, toolPrefix, tools }: MemberServer,
+  logger: Logger,
+): ServerSource & { name: string } => {
+  const toolNames = ToolNames.of({ toolPrefix, tools }, logger)
+  return upstream
+    ? {
+        name,
+        upstream: { ...upstream, url: parseUpstreamUrl(upstream.url) },
+        toolNames,
+      }
+    : // The loader gives a server a command or a url.
+      { name, stdioCmd: command!, toolNames }
 }
 
 // The tools a client sees of the server: none rewritten unless --toolPrefix
@@ -342,20 +369,19 @@ function readConfigFile(file: string, logger: Logger): Config {
   return orExit<{ config: Config }>(logger, loaded).config
 }
 
-// The command line each entry is equivalent to. Combined entries have no
-// command line of their own (a later 4.2 change).
+// The command line each entry is equivalent to. A combined entry's selects
+// the mode and its settings; its servers ride along, as a command does.
 function servedEntries(
   { config, extraKeys, extraKeyFiles }: ReturnType<typeof overrideFromCli>,
   several: boolean,
 ) {
-  return config.entries
-    .filter((entry) => !('members' in entry.server))
-    .map((entry): Served => {
-      const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
-      const argv = parseCli(run.args)
-      if (run.command) argv.stdio = run.command as string
-      return { name: entry.name, path: entry.path, argv }
-    })
+  return config.entries.map((entry): Served => {
+    const run = cliForEntry(config, entry, extraKeys, extraKeyFiles, several)
+    const argv = parseCli(run.args)
+    if (run.command) argv.stdio = run.command as string
+    if (run.members) argv.combined = run.members
+    return { name: entry.name, path: entry.path, argv }
+  })
 }
 
 // `--checkConfig`'s report: each entry with its path and output transport.
@@ -386,8 +412,12 @@ const sharedPortConflict = (served: Served[], healthEndpoints: string[]) =>
 
 // What a valid config asks for that this build can't serve yet, if anything.
 const notYetServable = (config: Config) =>
-  config.entries.some((entry) => 'members' in entry.server)
-    ? 'Combining servers on one URL'
+  config.entries.some(
+    (entry) =>
+      'members' in entry.server &&
+      effectiveTransport(entry, config.defaults) === 'stdio',
+  )
+    ? 'Serving combined servers over stdio'
     : undefined
 
 /**

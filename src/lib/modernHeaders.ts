@@ -7,20 +7,22 @@ export class HeaderMismatch extends Error {
   }
 }
 
+// A mirrored value can arrive base64-encoded, wrapped as =?base64?...?=.
+const ENCODED_PREFIX = '=?base64?'
+const ENCODED_SUFFIX = '?='
+// Padded base64 only; a payload that is not is no encoded value.
+const BASE64 =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+
 export function decodedHeader(value: string | undefined): string | undefined {
   if (
     value === undefined ||
-    !value.startsWith('=?base64?') ||
-    !value.endsWith('?=')
+    !value.startsWith(ENCODED_PREFIX) ||
+    !value.endsWith(ENCODED_SUFFIX)
   )
     return value
-  const payload = value.slice(9, -2)
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      payload,
-    )
-  )
-    return undefined
+  const payload = value.slice(ENCODED_PREFIX.length, -ENCODED_SUFFIX.length)
+  if (!BASE64.test(payload)) return undefined
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(
       Buffer.from(payload, 'base64'),
@@ -30,30 +32,33 @@ export function decodedHeader(value: string | undefined): string | undefined {
   }
 }
 
-type ReadHeader = (name: string) => string | undefined
+export type ReadHeader = (name: string) => string | undefined
+
+// The request field each method's mcp-name header mirrors.
+const NAME_FIELDS = new Map([
+  ['tools/call', 'name'],
+  ['prompts/get', 'name'],
+  ['resources/read', 'uri'],
+])
+
 export function validateModernHeaders(
   message: JSONRPCMessage,
   header: ReadHeader,
 ) {
   if (!('id' in message) || !('method' in message)) return
-  for (const [key, expected] of [
+  const mirrored: [string, unknown][] = [
     [
       'mcp-protocol-version',
       message.params?._meta?.['io.modelcontextprotocol/protocolVersion'],
     ],
     ['mcp-method', message.method],
-    ...(message.method === 'tools/call' || message.method === 'prompts/get'
-      ? [['mcp-name', message.params?.name]]
-      : message.method === 'resources/read'
-        ? [['mcp-name', message.params?.uri]]
-        : []),
-  ]) {
-    if (
-      typeof expected === 'string' &&
-      decodedHeader(header(key as string)) !== expected
-    )
-      throw new HeaderMismatch(key as string)
-  }
+  ]
+  const nameField = NAME_FIELDS.get(message.method)
+  if (nameField) mirrored.push(['mcp-name', message.params?.[nameField]])
+  mirrored.forEach(([key, expected]) => {
+    if (typeof expected === 'string' && decodedHeader(header(key)) !== expected)
+      throw new HeaderMismatch(key)
+  })
 }
 
 type ObjectValue = Record<string, unknown>
@@ -62,6 +67,34 @@ const object = (value: unknown): ObjectValue =>
     ? (value as ObjectValue)
     : {}
 
+// An integer argument is compared as a number, so a header of "1.0" mirrors
+// 1; any other argument as its string form.
+const mirrors = (
+  field: ObjectValue,
+  value: unknown,
+  received: string | undefined,
+) =>
+  field.type === 'integer' &&
+  typeof value === 'number' &&
+  received !== undefined &&
+  /^-?\d+(\.\d+)?$/.test(received)
+    ? Number(received) === value
+    : received === String(value)
+
+// An argument whose schema names an x-mcp-header must be mirrored in that
+// header, when the call gives it a value.
+function checkMirroredHeader(
+  field: ObjectValue,
+  value: unknown,
+  header: ReadHeader,
+) {
+  const name = field['x-mcp-header']
+  if (typeof name !== 'string' || value === undefined || value === null) return
+  const headerName = `mcp-param-${name.toLowerCase()}`
+  if (!mirrors(field, value, decodedHeader(header(headerName))))
+    throw new HeaderMismatch(headerName)
+}
+
 // Read only statically reachable properties. Do not compile schemas or resolve
 // references: this check concerns the HTTP mirrors, not tool argument validity.
 export function validateToolHeaders(
@@ -69,25 +102,13 @@ export function validateToolHeaders(
   args: unknown,
   header: ReadHeader,
 ): void {
+  const values = object(args)
   for (const [key, property] of Object.entries(
     object(object(schema).properties),
   )) {
     const field = object(property)
-    const values = object(args)
     const value = Object.hasOwn(values, key) ? values[key] : undefined
-    const name = field['x-mcp-header']
-    if (typeof name === 'string' && value !== undefined && value !== null) {
-      const headerName = `mcp-param-${name.toLowerCase()}`
-      const received = decodedHeader(header(headerName))
-      const equal =
-        field.type === 'integer' &&
-        typeof value === 'number' &&
-        received !== undefined &&
-        /^-?\d+(\.\d+)?$/.test(received)
-          ? Number(received) === value
-          : received === String(value)
-      if (!equal) throw new HeaderMismatch(headerName)
-    }
+    checkMirroredHeader(field, value, header)
     validateToolHeaders(field, value, header)
   }
 }

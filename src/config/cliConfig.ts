@@ -168,12 +168,7 @@ export function printableConfig(config: Config): unknown {
     return out
   }
   const server = (s: Omit<InnerServer, 'name'>) => {
-    const out: Record<string, unknown> =
-      s.source.kind === 'command'
-        ? { command: s.source.command, args: s.source.args }
-        : s.source.kind === 'stdio'
-          ? { stdio: s.source.stdio }
-          : { type: s.source.type, url: s.source.url }
+    const out = sourceFields(s.source)
     if (s.env) out.env = redactMap(s.env)
     if (s.cwd) out.cwd = s.cwd
     if (s.headers) out.headers = redactMap(s.headers)
@@ -197,6 +192,14 @@ export function printableConfig(config: Config): unknown {
     ]),
   )
   return { ...config.gateway, ...options(config.defaults), mcpServers: entries }
+}
+
+// What to run, or where to connect, as a file writes it.
+function sourceFields(source: InnerServer['source']): Record<string, unknown> {
+  if (source.kind === 'command')
+    return { command: source.command, args: source.args }
+  if (source.kind === 'stdio') return { stdio: source.stdio }
+  return { type: source.type, url: source.url }
 }
 
 const redactMap = (map: Record<string, string>) =>
@@ -230,19 +233,12 @@ export function cliForEntry(
   const flag = (name: string, value: unknown) => {
     if (value !== undefined) args.push(`--${name}=${String(value)}`)
   }
-  const { source, env, cwd } = entry.server
-  let command: ChildCommand | undefined
+  const { source } = entry.server
   if (source.kind === 'url') {
     flag(source.type, source.url)
   } else {
     // The value is replaced by `command`; the flag only selects the mode.
     flag('stdio', source.kind === 'stdio' ? source.stdio : source.command)
-    command =
-      source.kind === 'command'
-        ? { command: source.command, args: source.args, env, cwd }
-        : env || cwd
-          ? { stdio: source.stdio, env, cwd }
-          : source.stdio
   }
   flag('port', gateway.port)
   flag('host', gateway.host)
@@ -275,5 +271,18 @@ export function cliForEntry(
   if (pick('stateful')) args.push('--stateful')
   flag('sessionTimeout', pick('sessionTimeout'))
   flag('protocolVersion', pick('protocolVersion'))
-  return { args, command }
+  return { args, command: childCommand(entry.server) }
+}
+
+// How to start a local server: a command and its arguments, or a shell
+// command line, with an environment and directory if the file gives them.
+function childCommand({
+  source,
+  env,
+  cwd,
+}: Omit<InnerServer, 'name'>): ChildCommand | undefined {
+  if (source.kind === 'url') return undefined
+  if (source.kind === 'command')
+    return { command: source.command, args: source.args, env, cwd }
+  return env || cwd ? { stdio: source.stdio, env, cwd } : source.stdio
 }

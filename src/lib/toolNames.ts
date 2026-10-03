@@ -130,38 +130,48 @@ export class ToolNames {
  * A server whose tools a client sees through `names`. It answers a call to a
  * tool the client can't see itself, and rewrites the results of the
  * `tools/list` requests it was sent.
+ *
+ * A JSON-RPC batch (2025-03-26) is taken message by message: WebSocket
+ * passes one through as it came, and a call inside it must not reach a tool
+ * the client can't see. The rest of the batch stays a batch.
  */
 export const toolNamesPeer =
   (start: StartPeer, names: ToolNames): StartPeer =>
   (owner) => {
     // The ids of the tools/list requests the server has yet to answer.
     const lists = new Set<string | number>()
+    // A message from the server as the client is to see it: an answer to
+    // one of them rewritten, an error as it is.
+    const fromServer = (message: JSONRPCMessage) => {
+      const listed = isResponse(message) && lists.delete(message.id)
+      if (!listed || !('result' in message)) return message
+      return { ...message, result: names.listed(message.result) }
+    }
     const peer = start({
       ...owner,
       message: (message, line) => {
-        // An answer to one of them; an error passes as it is.
-        const listed = isResponse(message) && lists.delete(message.id)
-        if (!listed || !('result' in message)) {
-          owner.message(message, line)
-          return
-        }
-        const rewritten = { ...message, result: names.listed(message.result) }
-        owner.message(rewritten, JSON.stringify(rewritten))
+        const seen = each(message, fromServer)
+        if (seen === message) owner.message(message, line)
+        else owner.message(seen, JSON.stringify(seen))
       },
     })
     return {
       write: (message) => {
-        const sent = names.inbound(message)
-        if ('reply' in sent) {
-          // As the server's own answer would: later, never inside write.
-          queueMicrotask(() =>
-            owner.message(sent.reply, JSON.stringify(sent.reply)),
-          )
-          return
-        }
-        if (isRequest(message) && message.method === 'tools/list')
-          lists.add(message.id)
-        peer.write(sent.forward)
+        const replies: JSONRPCResponse[] = []
+        const sent = each(message, (item) => {
+          const inbound = names.inbound(item)
+          if ('reply' in inbound) {
+            replies.push(inbound.reply)
+            return undefined
+          }
+          if (isRequest(item) && item.method === 'tools/list')
+            lists.add(item.id)
+          return inbound.forward
+        })
+        // As the server's own answers would: later, never inside write.
+        for (const reply of replies)
+          queueMicrotask(() => owner.message(reply, JSON.stringify(reply)))
+        if (sent !== undefined) peer.write(sent)
       },
       end: () => peer.end(),
       stop: () => peer.stop(),
@@ -170,3 +180,22 @@ export const toolNamesPeer =
       },
     }
   }
+
+/**
+ * `change` applied to a message, or to each in a batch: the message itself
+ * when nothing changed, and nothing when nothing is left to send.
+ */
+function each(
+  message: JSONRPCMessage,
+  change: (item: JSONRPCMessage) => JSONRPCMessage | undefined,
+): JSONRPCMessage | undefined {
+  if (!Array.isArray(message)) return change(message)
+  const items = message as JSONRPCMessage[]
+  const changed = items.flatMap((item) => change(item) ?? [])
+  if (
+    changed.length === items.length &&
+    changed.every((item, i) => item === items[i])
+  )
+    return message
+  return changed.length ? (changed as unknown as JSONRPCMessage) : undefined
+}

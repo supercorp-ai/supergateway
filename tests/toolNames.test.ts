@@ -312,3 +312,97 @@ test('a peer ends, stops and goes as the server does', async () => {
   fake.leave()
   assert.equal(peer.gone, true)
 })
+
+test('a batch is taken message by message, and stays a batch', async () => {
+  const fake = fakePeer()
+  const peer = toolNamesPeer(
+    fake.start,
+    names({ toolPrefix: 'gh_', tools: ['ok'] }),
+  )(fake.owner)
+  const list = { jsonrpc: '2.0', id: 'l', method: 'tools/list', params: {} }
+  const note = { jsonrpc: '2.0', method: 'notifications/initialized' }
+  // A refused call is answered; the rest goes on, renamed, as a batch.
+  peer.write([
+    list,
+    call('gh_secret', 'refused'),
+    call('gh_ok', 'allowed'),
+    note,
+  ] as unknown as JSONRPCMessage)
+  assert.deepEqual(fake.written, [
+    [
+      list,
+      {
+        jsonrpc: '2.0',
+        id: 'allowed',
+        method: 'tools/call',
+        params: {
+          name: 'ok',
+          arguments: { a: 1 },
+          _meta: { progressToken: 'p' },
+        },
+      },
+      note,
+    ],
+  ])
+  await Promise.resolve()
+  assert.deepEqual(
+    fake.said.map(([message]) => message),
+    [
+      {
+        jsonrpc: '2.0',
+        id: 'refused',
+        error: { code: -32602, message: 'Unknown tool: gh_secret' },
+      },
+    ],
+  )
+
+  // The server's batch answer: the list rewritten, the rest as it is.
+  const done = { jsonrpc: '2.0', id: 'allowed', result: { content: [] } }
+  fake.server().message(
+    [
+      {
+        jsonrpc: '2.0',
+        id: 'l',
+        result: { tools: [{ name: 'ok' }, { name: 'secret' }] },
+      },
+      done,
+    ],
+    'raw',
+  )
+  const answer = [
+    { jsonrpc: '2.0', id: 'l', result: { tools: [{ name: 'gh_ok' }] } },
+    done,
+  ]
+  assert.deepEqual(fake.said[1], [answer, JSON.stringify(answer)])
+})
+
+test('a batch with nothing to change passes as it is, the same object', () => {
+  const fake = fakePeer()
+  const peer = toolNamesPeer(
+    fake.start,
+    names({ toolPrefix: 'gh_' }),
+  )(fake.owner)
+  const batch = [
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ] as unknown as JSONRPCMessage
+  peer.write(batch)
+  const empty = [] as unknown as JSONRPCMessage
+  peer.write(empty)
+  assert.equal(fake.written[0], batch)
+  assert.equal(fake.written[1], empty)
+  const answers = [{ jsonrpc: '2.0', id: 3, result: {} }]
+  fake.server().message(answers, 'raw batch')
+  assert.deepEqual(fake.said, [[answers, 'raw batch']])
+})
+
+test('a batch of refused calls sends the server nothing', async () => {
+  const fake = fakePeer()
+  const peer = toolNamesPeer(fake.start, names({ tools: [] }))(fake.owner)
+  peer.write([call('a', 1), call('b', 2)] as unknown as JSONRPCMessage)
+  await Promise.resolve()
+  assert.deepEqual(fake.written, [])
+  assert.deepEqual(
+    fake.said.map(([message]) => (message as { id: number }).id),
+    [1, 2],
+  )
+})

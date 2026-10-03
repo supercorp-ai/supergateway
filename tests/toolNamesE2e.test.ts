@@ -12,7 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 // The `ws` client: Node 20 has no global WebSocket.
-import { WebSocket } from 'ws'
+import { WebSocket, type RawData } from 'ws'
 import {
   gatewayTimeout,
   launchGateway,
@@ -28,6 +28,7 @@ const node = process.execPath
 // Five tools over two pages: identity, wait | crash, reverse, echo.
 const pagedPeer = resolve('tests/helpers/modern-bridge-peer.mjs')
 const remoteServer = resolve('tests/helpers/remote-mcp-server.mjs')
+const batchPeer = resolve('tests/helpers/batch-peer.mjs')
 const options = { timeout: gatewayTimeout(30000) }
 globalThis.WebSocket ??= WebSocket as unknown as typeof globalThis.WebSocket
 
@@ -415,3 +416,82 @@ for (const stateful of [false, true])
       assert.deepEqual(calls(), ['echo'], 'no refused call reached a server')
     },
   )
+
+// WebSocket passes a batch on as it came, so the rules apply inside it.
+test(
+  'ws: a call inside a batch is refused like any other',
+  options,
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      `"${node}" "${batchPeer}"`,
+      '--outputTransport',
+      'ws',
+      '--port',
+      String(port),
+      '--toolPrefix',
+      'b_',
+      '--tools',
+      'open',
+    ])
+    await gateway.ready()
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/message`)
+    t.after(() => socket.close())
+    await once(socket, 'open')
+    const received: unknown[] = []
+    socket.on('message', (data: RawData) =>
+      received.push(JSON.parse(String(data))),
+    )
+    const until = async (count: number) => {
+      const deadline = Date.now() + requestTimeout(5000)
+      while (received.length < count && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const request = (id: string, method: string, params = {}) => ({
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    })
+    socket.send(
+      JSON.stringify(
+        request('init', 'initialize', {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'batch', version: '1' },
+        }),
+      ),
+    )
+    await until(1)
+    socket.send(
+      JSON.stringify([
+        request('list', 'tools/list'),
+        request('secret', 'tools/call', { name: 'b_secret', arguments: {} }),
+        request('open', 'tools/call', { name: 'b_open', arguments: {} }),
+      ]),
+    )
+    await until(3)
+    assert.deepEqual(received.slice(1), [
+      {
+        jsonrpc: '2.0',
+        id: 'secret',
+        error: { code: -32602, message: 'Unknown tool: b_secret' },
+      },
+      [
+        {
+          jsonrpc: '2.0',
+          id: 'list',
+          result: {
+            tools: [{ name: 'b_open', inputSchema: { type: 'object' } }],
+          },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 'open',
+          result: { content: [{ type: 'text', text: 'reached open' }] },
+        },
+      ],
+    ])
+  },
+)

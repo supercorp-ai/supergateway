@@ -3,7 +3,10 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
-import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+  ErrorCode,
+  InitializeRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
@@ -25,6 +28,14 @@ export interface StreamableHttpToStdioArgs {
   logger: Logger
   headers: Record<string, string>
 }
+
+// After the upstream is lost, the first reconnect waits a second, and each
+// failed one doubles the wait, up to half a minute.
+const FIRST_RECONNECT_DELAY_MS = 1000
+const MAX_RECONNECT_DELAY_MS = 30_000
+
+// How long ending the upstream session may hold up the exit.
+const END_SESSION_TIMEOUT_MS = 2000
 
 /**
  * Whether a request failed because the upstream no longer serves this
@@ -57,23 +68,43 @@ const upstreamLost = (err: unknown) => {
   )
 }
 
+/**
+ * Refuse an initialize request with malformed params, as invalid params,
+ * before anything is sent upstream.
+ */
+const rejectMalformedInitialize = (req: JSONRPCRequest) => {
+  if (
+    req.method === 'initialize' &&
+    req.params !== undefined &&
+    !InitializeRequestSchema.safeParse(req).success
+  ) {
+    throw Object.assign(new Error('Invalid initialize parameters'), {
+      code: ErrorCode.InvalidParams,
+    })
+  }
+}
+
 /** One stdio request: the transport it was sent on, once it was. */
 interface Attempt {
   transport?: StreamableHTTPClientTransport
 }
 
+/** The SDK client and the transport it connected over, in use together. */
+interface Connection {
+  client: Client
+  transport: StreamableHTTPClientTransport
+}
+
 /**
- * The bridge's connection to the upstream server: the SDK client and its
- * transport, installed and cleared together, and their replacement after the
- * upstream is lost once a session has worked.
+ * The bridge's connection to the upstream server, and its replacement after
+ * the upstream is lost once a session has worked.
  */
 class Upstream {
-  client: Client | undefined
-  transport: StreamableHTTPClientTransport | undefined
+  connection: Connection | undefined
   private initializeMessage: JSONRPCRequest | undefined
   private connecting: Promise<unknown> | undefined
   private reconnectTimer: NodeJS.Timeout | undefined
-  private reconnectDelay = 1000
+  private reconnectDelay = FIRST_RECONNECT_DELAY_MS
   private hasConnected = false
 
   constructor(
@@ -82,12 +113,14 @@ class Upstream {
     private readonly logger: Logger,
   ) {}
 
+  private isCurrent(transport: StreamableHTTPClientTransport) {
+    return this.connection?.transport === transport
+  }
+
   private invalidate(transport: StreamableHTTPClientTransport) {
-    if (this.transport !== transport) return
-    // The client and transport are installed and cleared together.
-    const stale = this.client!
-    this.client = undefined
-    this.transport = undefined
+    if (!this.isCurrent(transport)) return
+    const stale = this.connection!.client
+    this.connection = undefined
     void Promise.resolve()
       .then(() => stale.close())
       .catch((err) =>
@@ -105,6 +138,20 @@ class Upstream {
       })
     }, this.reconnectDelay)
     this.reconnectTimer.unref()
+  }
+
+  private cancelReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+    }
+  }
+
+  private backOff() {
+    this.reconnectDelay = Math.min(
+      this.reconnectDelay * 2,
+      MAX_RECONNECT_DELAY_MS,
+    )
   }
 
   private openTransport() {
@@ -125,16 +172,14 @@ class Upstream {
       }
     }
     transport.onclose = () => {
+      // Once a session has worked, a transport that is no longer in use
+      // closing is expected.
+      if (this.hasConnected && !this.isCurrent(transport)) return
+      this.logger.error('Streamable HTTP connection closed')
       // An upstream that rejects the very first handshake is still a startup
       // failure. Recovery applies only after stdio has a working MCP session.
-      if (!this.hasConnected) {
-        this.logger.error('Streamable HTTP connection closed')
-        process.exit(1)
-      }
-      if (this.transport === transport) {
-        this.logger.error('Streamable HTTP connection closed')
-        this.invalidate(transport)
-      }
+      if (!this.hasConnected) process.exit(1)
+      this.invalidate(transport)
     }
     return transport
   }
@@ -162,10 +207,7 @@ class Upstream {
   /** Connect, or join the connection under way; resolves to its handshake. */
   connect(): Promise<unknown> {
     if (this.connecting) return this.connecting
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = undefined
-    }
+    this.cancelReconnect()
     const transport = this.openTransport()
     const client = new Client(...upstreamClientIdentity(this.initializeMessage))
     const handshake = this.presentInitialize(client)
@@ -173,10 +215,9 @@ class Upstream {
       .connect(transport)
       .then(() => {
         handshake.restore()
-        this.client = client
-        this.transport = transport
+        this.connection = { client, transport }
         this.hasConnected = true
-        this.reconnectDelay = 1000
+        this.reconnectDelay = FIRST_RECONNECT_DELAY_MS
         this.logger.info('Streamable HTTP connected')
         return handshake.result()
       })
@@ -187,34 +228,31 @@ class Upstream {
         } catch {
           // Preserve the connection failure as the error returned to stdio.
         }
-        if (this.hasConnected)
-          this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000)
+        if (this.hasConnected) this.backOff()
         throw err
       })
       .finally(() => {
         this.connecting = undefined
-        if (!this.client) this.scheduleReconnect()
+        if (!this.connection) this.scheduleReconnect()
       })
     return this.connecting
   }
 
+  /**
+   * Whether `req` is the stdio client's initialize, arriving before any
+   * connection began, so the upstream handshake answers it.
+   */
+  private opensSession(req: JSONRPCRequest) {
+    return (
+      req.method === 'initialize' && !this.initializeMessage && !this.connecting
+    )
+  }
+
   /** A stdio request, answered by the upstream server. */
   async request(req: JSONRPCRequest, signal: AbortSignal, attempt: Attempt) {
-    if (
-      req.method === 'initialize' &&
-      req.params !== undefined &&
-      !InitializeRequestSchema.safeParse(req).success
-    ) {
-      throw Object.assign(new Error('Invalid initialize parameters'), {
-        code: -32602,
-      })
-    }
-    if (!this.client) {
-      if (
-        req.method === 'initialize' &&
-        !this.initializeMessage &&
-        !this.connecting
-      ) {
+    rejectMalformedInitialize(req)
+    if (!this.connection) {
+      if (this.opensSession(req)) {
         this.initializeMessage = req
         return this.connect()
       }
@@ -227,8 +265,9 @@ class Upstream {
       // The request that triggered the fallback still has to be answered.
       // Creating the client was never the point of it.
     }
-    attempt.transport = this.transport
-    return this.client!.request(req, z.any(), {
+    const { client, transport } = this.connection!
+    attempt.transport = transport
+    return client.request(req, z.any(), {
       signal,
       timeout: MAX_TIMEOUT_MS,
     })
@@ -249,11 +288,14 @@ class Upstream {
    * not hold up the exit.
    */
   async endSession() {
-    if (!this.transport?.sessionId) return
-    const ended = this.transport.terminateSession().catch((err) => {
+    if (!this.connection?.transport.sessionId) return
+    const ended = this.connection.transport.terminateSession().catch((err) => {
       this.logger.error('Failed to end the upstream session:', err)
     })
-    await Promise.race([ended, delay(2000, undefined, { ref: false })])
+    await Promise.race([
+      ended,
+      delay(END_SESSION_TIMEOUT_MS, undefined, { ref: false }),
+    ])
   }
 }
 
@@ -295,8 +337,8 @@ export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
       upstream.request(req, signal, attempt),
     failed: (err, attempt) => upstream.failed(err, attempt),
     send: () =>
-      upstream.client
-        ? (relayed) => upstream.transport!.send(relayed)
+      upstream.connection
+        ? (relayed) => upstream.connection!.transport.send(relayed)
         : undefined,
   })
 

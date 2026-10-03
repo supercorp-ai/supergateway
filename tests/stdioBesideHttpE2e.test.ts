@@ -160,19 +160,29 @@ test(
   },
 )
 
-test('stdin closing stops every entry', options, async (t) => {
-  const up = await remote(t)
-  const { gateway, port } = await launch(t, {
-    url: `${up.base}/mcp`,
-    type: 'streamableHttp',
-  })
-  await holdSession(t, port)
-  await stdioRpc(gateway, initialize())
-  gateway.child.stdin.end()
-  assert.deepEqual(await exit(gateway), { code: 0, signal: null })
-  assert.match(gateway.errors(), /stdin closed\. Exiting\.\.\./)
-  assert.deepEqual(await leftBehind(gateway), [])
-})
+// An SSE remote has no session of its own to end at shutdown; a Streamable
+// HTTP one has.
+for (const [type, path] of [
+  ['streamableHttp', '/mcp'],
+  ['sse', '/sse'],
+])
+  test(
+    `stdin closing stops every entry (${type} on stdio)`,
+    options,
+    async (t) => {
+      const up = await remote(t)
+      const { gateway, port } = await launch(t, {
+        url: `${up.base}${path}`,
+        type,
+      })
+      await holdSession(t, port)
+      await stdioRpc(gateway, initialize())
+      gateway.child.stdin.end()
+      assert.deepEqual(await exit(gateway), { code: 0, signal: null })
+      assert.match(gateway.errors(), /stdin closed\. Exiting\.\.\./)
+      assert.deepEqual(await leftBehind(gateway), [])
+    },
+  )
 
 test(
   "a signal stops every entry, and ends the stdio entry's remote session",

@@ -28,15 +28,35 @@ import {
 } from './retainedChildren.js'
 import type { ChildCommand } from './childCommand.js'
 import type { ToolNames } from './toolNames.js'
+import type { RemoteServer } from './upstreamPeer.js'
+import type { ServerSource } from './serverSource.js'
+import { UpstreamModernChild, type ModernChild } from './upstreamModernChild.js'
 
-export function createModernHttp(args: {
-  stdioCmd: ChildCommand
-  /** The tools a client sees of the server, if not all as they are. */
-  toolNames?: ToolNames
-  children: OwnedChildProcesses
-  logger: Logger
-}) {
-  const { stdioCmd, toolNames, children, logger } = args
+export function createModernHttp(
+  args: {
+    /** The tools a client sees of the server, if not all as they are. */
+    toolNames?: ToolNames
+    children: OwnedChildProcesses
+    logger: Logger
+  } & (
+    | { stdioCmd: ChildCommand; upstream?: undefined }
+    | { upstream: RemoteServer; stdioCmd?: undefined }
+  ),
+) {
+  const { toolNames, children, logger } = args
+  // The server one request is for: a process started for it, or the remote
+  // server, told what the client's request declared.
+  const childFor = (req: Request): ModernChild =>
+    args.upstream
+      ? new UpstreamModernChild(
+          args.upstream,
+          {
+            version: headerValue(req)('mcp-protocol-version'),
+            params: paramHeaders(req),
+          },
+          logger,
+        )
+      : new OwnedStdioTransport(args.stdioCmd, children, logger)
   const active = new Set<() => Promise<void>>()
   const retained = new RetainedChildren({
     idleMs: CONTINUATION_TIMEOUT,
@@ -82,8 +102,7 @@ export function createModernHttp(args: {
         value,
         transport,
         reused,
-        child:
-          reused?.child ?? new OwnedStdioTransport(stdioCmd, children, logger),
+        child: reused?.child ?? childFor(req),
         retained,
         active,
         children,
@@ -92,6 +111,36 @@ export function createModernHttp(args: {
       }).serve()
     },
   }
+}
+
+/**
+ * The 2026-07-28 relay for a gateway's server, if it can have one: a local
+ * server is started for each request, and a remote Streamable HTTP server is
+ * sent each. A remote SSE server has no such requests, and servers combined
+ * answer the earlier protocol versions only; a client asking either for
+ * 2026-07-28 is told it is not spoken, and falls back by itself.
+ */
+export function modernRelayFor(
+  source: ServerSource,
+  children: OwnedChildProcesses,
+  logger: Logger,
+) {
+  const { toolNames } = source
+  if (source.stdioCmd)
+    return createModernHttp({
+      stdioCmd: source.stdioCmd,
+      toolNames,
+      children,
+      logger,
+    })
+  if (source.upstream?.type === 'streamableHttp')
+    return createModernHttp({
+      upstream: source.upstream,
+      toolNames,
+      children,
+      logger,
+    })
+  return undefined
 }
 
 type Route = Exclude<ReturnType<typeof admit>, boolean>
@@ -163,7 +212,7 @@ class ChildQuery {
 
   // Not async, so that awaiting it is awaiting the reply itself.
   ask(
-    child: OwnedStdioTransport,
+    child: ModernChild,
     method: string,
     params: Record<string, unknown>,
   ): Promise<JSONRPCResponse> {
@@ -217,7 +266,7 @@ class ModernRequest {
       value: ReadHeader
       transport: PerRequestHTTPServerTransport
       reused: Reused
-      child: OwnedStdioTransport
+      child: ModernChild
       retained: RetainedChildren
       active: Set<() => Promise<void>>
       children: OwnedChildProcesses
@@ -481,6 +530,14 @@ const headerValue =
     const header = req.headers[name]
     return Array.isArray(header) ? header.join(', ') : header
   }
+
+// The client's mirrors of a tool call's arguments, as it sent them.
+const paramHeaders = (req: Request) =>
+  Object.fromEntries(
+    Object.keys(req.headers)
+      .filter((name) => name.startsWith('mcp-param-'))
+      .map((name) => [name, headerValue(req)(name)!]),
+  )
 
 // The id a rejection answers: the request's own, when it has a usable one.
 const requestIdOf = (body: unknown) => {

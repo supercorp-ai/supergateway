@@ -56,11 +56,7 @@ const DISCOVER_TIMEOUT_MS = 10_000
 
 // One request of the gateway's own to a server started for it, and its
 // answer. Whatever else the server says meanwhile is not the client's.
-function ask(
-  child: ModernChild,
-  request: Request,
-  signal?: AbortSignal,
-): Promise<Answer> {
+function ask(child: ModernChild, request: Request): Promise<Answer> {
   return new Promise((resolve, reject) => {
     child.onmessage = (message) => {
       if (
@@ -72,7 +68,6 @@ function ask(
     }
     child.onerror = reject
     child.onclose = () => reject(new Error('The server stopped'))
-    signal?.addEventListener('abort', () => reject(new Error('No answer')))
     child.send(request as JSONRPCMessage).catch(reject)
   })
 }
@@ -117,11 +112,16 @@ export function combinedSpeaksModern(
     const child = member.child({ version: MODERN_VERSION, params: {} })
     try {
       await child.start()
-      const answer = await ask(
-        child,
-        discoverRequest(),
-        AbortSignal.timeout(DISCOVER_TIMEOUT_MS),
-      )
+      let timer!: NodeJS.Timeout
+      const answer = await Promise.race([
+        ask(child, discoverRequest()),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('No answer')),
+            DISCOVER_TIMEOUT_MS,
+          )
+        }),
+      ]).finally(() => clearTimeout(timer))
       return answer.result!.supportedVersions.includes(MODERN_VERSION)
     } catch {
       return false

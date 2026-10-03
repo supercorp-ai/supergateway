@@ -15,6 +15,7 @@ import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
 import {
   bridgeStdioMessages,
+  interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
@@ -138,6 +139,26 @@ class Upstream {
     return transport
   }
 
+  /**
+   * While `client` connects, the initialize request it sends carries the
+   * protocol version the stdio client asked for, and its result is kept as the
+   * reply to the stdio client's own initialize. A fallback client, with no
+   * initialize to answer, connects as it is.
+   */
+  private presentInitialize(client: Client) {
+    const initialize = this.initializeMessage
+    if (!initialize) return { restore: () => {}, result: () => undefined }
+    return interceptRequests(client, (request) => {
+      if (
+        InitializeRequestSchema.safeParse(request).success &&
+        initialize.params?.protocolVersion
+      ) {
+        const params = request.params as { protocolVersion?: unknown }
+        params.protocolVersion = initialize.params.protocolVersion
+      }
+    })
+  }
+
   /** Connect, or join the connection under way; resolves to its handshake. */
   connect(): Promise<unknown> {
     if (this.connecting) return this.connecting
@@ -146,45 +167,21 @@ class Upstream {
       this.reconnectTimer = undefined
     }
     const transport = this.openTransport()
-    const initForConnection = this.initializeMessage
-    const client = new Client(...upstreamClientIdentity(initForConnection))
-    let initializeResult: unknown
-    const originalRequest = client.request
-    if (initForConnection) {
-      client.request = async function (
-        possibleInitRequestMessage,
-        ...restArgs
-      ) {
-        if (
-          InitializeRequestSchema.safeParse(possibleInitRequestMessage)
-            .success &&
-          initForConnection.params?.protocolVersion
-        ) {
-          const params = possibleInitRequestMessage.params as {
-            protocolVersion?: unknown
-          }
-          params.protocolVersion = initForConnection.params.protocolVersion
-        }
-        initializeResult = await originalRequest.apply(this, [
-          possibleInitRequestMessage,
-          ...restArgs,
-        ])
-        return initializeResult as Awaited<ReturnType<typeof originalRequest>>
-      }
-    }
+    const client = new Client(...upstreamClientIdentity(this.initializeMessage))
+    const handshake = this.presentInitialize(client)
     this.connecting = client
       .connect(transport)
       .then(() => {
-        client.request = originalRequest
+        handshake.restore()
         this.client = client
         this.transport = transport
         this.hasConnected = true
         this.reconnectDelay = 1000
         this.logger.info('Streamable HTTP connected')
-        return initializeResult
+        return handshake.result()
       })
       .catch(async (err) => {
-        client.request = originalRequest
+        handshake.restore()
         try {
           await client.close()
         } catch {

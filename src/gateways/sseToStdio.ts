@@ -14,6 +14,7 @@ import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
 import {
   bridgeStdioMessages,
+  interceptRequests,
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
 
@@ -131,9 +132,7 @@ const connectFor = async (
   if (req.method === 'initialize') {
     sseClient = new Client(...upstreamClientIdentity(req))
 
-    const originalRequest = sseClient.request
-
-    sseClient.request = async function (requestMessage, ...restArgs) {
+    const intercepted = interceptRequests(sseClient, (requestMessage) => {
       // pass protocol version from original client
       if (
         requestMessage.method === 'initialize' &&
@@ -142,14 +141,11 @@ const connectFor = async (
       ) {
         requestMessage.params.protocolVersion = req.params.protocolVersion
       }
-
-      result = await originalRequest.apply(this, [requestMessage, ...restArgs])
-
-      return result
-    }
+    })
 
     await connectUpstream(sseClient)
-    sseClient.request = originalRequest
+    intercepted.restore()
+    result = intercepted.result()
   } else {
     logger.info('SSE client not initialized, creating fallback client')
     sseClient = await newFallbackSseClient({

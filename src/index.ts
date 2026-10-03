@@ -76,14 +76,24 @@ type Start = (argv: Cli, logger: Logger, listening: Listening) => Promise<void>
 // `--stdio` string. See cliForEntry.
 const stdioCommand = (argv: Cli) => argv.stdio! as ChildCommand
 
-const unsupported = (
-  logger: Logger,
-  input: InputTransport,
-  output: unknown,
-) => {
-  logger.error(`Error: ${input}→${output} not supported`)
+// Startup ends here: the problem is logged, and the gateway exits 1.
+function exitWithError(logger: Logger, message: string): never {
+  logger.error(message)
   process.exit(1)
 }
+
+// What a startup check found, or, when it found a problem, exit 1 after
+// logging it.
+function orExit<T extends object>(
+  logger: Logger,
+  result: T | { error: string },
+): T {
+  if ('error' in result) exitWithError(logger, result.error)
+  return result as T
+}
+
+const unsupported = (logger: Logger, input: InputTransport, output: unknown) =>
+  exitWithError(logger, `Error: ${input}→${output} not supported`)
 
 // What a stdio server's gateway takes beyond the port, in either form: alone
 // on the port, or mounted at `path` beside others.
@@ -110,40 +120,43 @@ const serverOf = (argv: Cli, logger: Logger): ServerSource => {
 const responseHeaders = (source: ServerSource, argv: Cli, logger: Logger) =>
   source.upstream ? {} : headers({ argv, logger })
 
-const sseArgs = (
+// What every listening gateway takes, whichever output it serves. `source`
+// is kept apart, so a gateway that answers with headers can tell whether its
+// server is remote.
+const listenerArgs = (
   argv: Cli,
   logger: Logger,
   { host, apiKeys, path }: ServerOptions,
 ) => {
   const source = serverOf(argv, logger)
   return {
-    ...source,
-    host,
-    path,
-    baseUrl: argv.baseUrl,
-    ssePath: argv.ssePath,
-    messagePath: argv.messagePath,
-    logger,
-    corsOrigin: corsOrigin({ argv }),
-    healthEndpoints: argv.healthEndpoint as string[],
-    headers: responseHeaders(source, argv, logger),
-    apiKeys,
+    source,
+    shared: {
+      ...source,
+      host,
+      path,
+      logger,
+      corsOrigin: corsOrigin({ argv }),
+      healthEndpoints: argv.healthEndpoint as string[],
+      apiKeys,
+    },
   }
 }
 
-const wsArgs = (
-  argv: Cli,
-  logger: Logger,
-  { host, apiKeys, path }: ServerOptions,
-) => ({
-  ...serverOf(argv, logger),
-  host,
-  path,
+const sseArgs = (argv: Cli, logger: Logger, options: ServerOptions) => {
+  const { source, shared } = listenerArgs(argv, logger, options)
+  return {
+    ...shared,
+    baseUrl: argv.baseUrl,
+    ssePath: argv.ssePath,
+    messagePath: argv.messagePath,
+    headers: responseHeaders(source, argv, logger),
+  }
+}
+
+const wsArgs = (argv: Cli, logger: Logger, options: ServerOptions) => ({
+  ...listenerArgs(argv, logger, options).shared,
   messagePath: argv.messagePath,
-  logger,
-  corsOrigin: corsOrigin({ argv }),
-  healthEndpoints: argv.healthEndpoint as string[],
-  apiKeys,
 })
 
 // Announces the mode and checks the timeout before building the arguments,
@@ -151,38 +164,28 @@ const wsArgs = (
 const streamableHttpArgs = (
   argv: Cli,
   logger: Logger,
-  { host, apiKeys, path }: ServerOptions,
+  options: ServerOptions,
 ) => {
-  const shared = () => {
-    const source = serverOf(argv, logger)
+  const common = () => {
+    const { source, shared } = listenerArgs(argv, logger, options)
     return {
-      ...source,
-      host,
-      path,
+      ...shared,
       streamableHttpPath: argv.streamableHttpPath,
-      logger,
-      corsOrigin: corsOrigin({ argv }),
-      healthEndpoints: argv.healthEndpoint as string[],
       headers: responseHeaders(source, argv, logger),
-      apiKeys,
     }
   }
   if (!argv.stateful) {
     logger.info('Running stateless server')
     return {
       stateful: false as const,
-      args: { ...shared(), protocolVersion: argv.protocolVersion },
+      args: { ...common(), protocolVersion: argv.protocolVersion },
     }
   }
   logger.info('Running stateful server')
-  const timeout = sessionTimeoutOf(argv)
-  if ('error' in timeout) {
-    logger.error(timeout.error)
-    process.exit(1)
-  }
+  const { sessionTimeout } = orExit(logger, sessionTimeoutOf(argv))
   return {
     stateful: true as const,
-    args: { ...shared(), sessionTimeout: timeout.sessionTimeout },
+    args: { ...common(), sessionTimeout },
   }
 }
 
@@ -383,19 +386,6 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   }
   if (!several) return { argv: served[0].argv, notes }
   return { servers: served, healthEndpoints, notes }
-}
-
-// What a startup check found, or, when it found a problem, exit 1 after
-// logging it.
-function orExit<T extends object>(
-  logger: Logger,
-  result: T | { error: string },
-): T {
-  if ('error' in result) {
-    logger.error(result.error)
-    process.exit(1)
-  }
-  return result as T
 }
 
 // Each server's keys, from its own command line; the environment's, and

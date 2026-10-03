@@ -208,8 +208,9 @@ export async function sseToStdio(args: SseToStdioArgs) {
     logger,
     headers,
     toolNames,
+    // It has nothing of its own to clean up at a signal.
     lifecycle = {
-      register: (cleanup) => onSignals({ logger, cleanup }),
+      register: () => onSignals({ logger }),
       exit: (code) => process.exit(code),
     },
   } = args

@@ -30,7 +30,11 @@ import type { ChildCommand } from './childCommand.js'
 import type { ToolNames } from './toolNames.js'
 import type { RemoteServer } from './upstreamPeer.js'
 import type { ServerSource } from './serverSource.js'
-import { UpstreamModernChild, type ModernChild } from './upstreamModernChild.js'
+import {
+  UpstreamModernChild,
+  remoteSpeaksModern,
+  type ModernChild,
+} from './upstreamModernChild.js'
 
 export function createModernHttp(
   args: {
@@ -44,6 +48,11 @@ export function createModernHttp(
   ),
 ) {
   const { toolNames, children, logger } = args
+  // A local server is sent whatever its client sends. A remote one is asked
+  // first whether it speaks the version at all.
+  const speaks = args.upstream
+    ? remoteSpeaksModern(args.upstream, logger)
+    : () => true
   // The server one request is for: a process started for it, or the remote
   // server, told what the client's request declared.
   const childFor = (req: Request): ModernChild =>
@@ -71,7 +80,7 @@ export function createModernHttp(
     },
     async handle(req: Request, res: Response): Promise<boolean> {
       const value = headerValue(req)
-      const route = admit(req, res, value)
+      const route = await admit(req, res, value, speaks)
       if (typeof route === 'boolean') return route
       const transport = new PerRequestHTTPServerTransport({
         classification: route.classification,
@@ -143,7 +152,7 @@ export function modernRelayFor(
   return undefined
 }
 
-type Route = Exclude<ReturnType<typeof admit>, boolean>
+type Route = Exclude<Awaited<ReturnType<typeof admit>>, boolean>
 type Reused = Awaited<ReturnType<RetainedChildren['take']>>
 
 // A signal that aborts if the client goes away, until `done`.
@@ -570,10 +579,16 @@ const withoutProgressToken = (
 
 /**
  * Whether this POST is a modern request this gateway serves. `false` hands it
- * to the legacy path, `true` means it has been answered with a rejection, and
- * a route means serve it.
+ * to the legacy path (it is no modern request, or the server speaks none),
+ * `true` means it has been answered with a rejection, and a route means serve
+ * it.
  */
-function admit(req: Request, res: Response, value: ReadHeader) {
+async function admit(
+  req: Request,
+  res: Response,
+  value: ReadHeader,
+  speaks: () => boolean | Promise<boolean>,
+) {
   const reject = (
     status: number,
     error: Parameters<typeof rejectWith>[3],
@@ -589,6 +604,8 @@ function admit(req: Request, res: Response, value: ReadHeader) {
     mcpNameHeader: value('mcp-name'),
   })
   if (route.kind === 'legacy') return false
+  // A server that does not speak it is served as before there was a relay.
+  if (!(await speaks())) return false
   if (!isJsonContentType(value('content-type') ?? null))
     return reject(415, {
       code: SERVER_ERROR,

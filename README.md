@@ -156,7 +156,7 @@ npx -y supergateway \
 - `--header` and `--oauth2Bearer` go to the remote server. The client's own `Authorization` and API key never do.
 - Requests from the remote server to the client (sampling, roots, elicitation) are passed through.
 - A remote server that is down, refuses the client or goes away fails that session only.
-- The 2026-07-28 protocol's stateless requests are served only for local servers so far.
+- The 2026-07-28 protocol's stateless requests are passed on to a remote Streamable HTTP server that speaks that version. The gateway asks it once a minute (`server/discover`). One that doesn't, and any remote SSE server, is served as before: its clients are told the version isn't supported, and those that negotiate fall back to an earlier one.
 
 ## Requiring an API key
 

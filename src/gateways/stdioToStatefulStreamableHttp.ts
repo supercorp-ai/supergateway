@@ -237,7 +237,10 @@ class StatefulSessions {
       if (responseEnded || !id) return
       responseEnded = true
       this.logger.info(`Response ${event}`, id)
-      this.counter?.dec(id, `${method} response ${event}`)
+      // A session forgotten while this response was open, because its server
+      // failed or it expired, has no count left to lower.
+      if (this.transports.has(id))
+        this.counter?.dec(id, `${method} response ${event}`)
       ended?.(id)
     }
     res.on('finish', () => handleResponseEnd('finished'))

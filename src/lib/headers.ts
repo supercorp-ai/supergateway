@@ -74,8 +74,12 @@ const parseHeaders = ({
       // Only the first token, never the whole argument. `--header
       // "Authorization Bearer abc"` is a plausible typo, and echoing it back
       // would put the credential in the log by a second route. The first token
-      // is the part that identifies which argument was wrong.
-      logger.error(`Invalid header format: ${header.split(/\s/)[0]}, ignoring`)
+      // is the part that identifies which argument was wrong. Alone, it may be
+      // the credential itself (`--header "$TOKEN"`), so then nothing is shown.
+      const [first, ...rest] = header.trim().split(/\s+/)
+      logger.error(
+        `Invalid header format: ${rest.length ? first : '(no colon)'}, ignoring`,
+      )
       return acc
     }
 

@@ -1,11 +1,9 @@
-import {
-  JSONRPCMessage,
-  isInitializeRequest,
-} from '@modelcontextprotocol/sdk/types.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import {
   ChildHandoff,
   ChildLink,
+  isHandshake,
   type ChildOwner,
   type StartPeer,
 } from './childHandoff.js'
@@ -56,8 +54,7 @@ export class ConnectionChild {
    */
   fromClient(message: JSONRPCMessage, protocolVersion?: string) {
     this.received++
-    this.onlyInitialize =
-      this.received === 1 && isInitializeRequest(message) && 'id' in message
+    this.onlyInitialize = this.received === 1 && isHandshake(message)
     if (this.onlyInitialize) {
       const adopted = this.handoff.adopt(message, this.owner, this.label)
       if (adopted) {

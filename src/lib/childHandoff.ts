@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { StringDecoder } from 'node:string_decoder'
 import {
+  InitializeRequest,
   JSONRPCMessage,
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js'
@@ -80,6 +81,15 @@ export const processPeer =
     }
   }
 
+/**
+ * Whether a client's message is an initialize request with an id, the
+ * handshake a child answers; `isInitializeRequest` also accepts one without.
+ */
+export const isHandshake = (
+  message: JSONRPCMessage,
+): message is JSONRPCMessage & InitializeRequest & { id: string | number } =>
+  isInitializeRequest(message) && 'id' in message
+
 // Whether a message from the child is its response to the request with this
 // id.
 const isResponseTo = (message: any, id: string | number | undefined) =>
@@ -123,8 +133,8 @@ export class ChildLink {
 
   write(message: JSONRPCMessage) {
     // Only the first initialize is the handshake the child is answering.
-    if (!this.initialize && isInitializeRequest(message) && 'id' in message)
-      this.initialize = { id: message.id!, params: message.params }
+    if (!this.initialize && isHandshake(message))
+      this.initialize = { id: message.id, params: message.params }
     this.peer.write(message)
   }
 }
@@ -319,12 +329,12 @@ export class ChildHandoff {
     owner: ChildOwner,
     label: string,
   ): ChildLink | undefined {
-    if (!isInitializeRequest(message) || !('id' in message)) return
+    if (!isHandshake(message)) return
     const waiting = this.parked.get(canonical(message.params))?.[0]
     if (!waiting) return
     waiting.settle()
     const { link } = waiting
-    link.owner = renumbered(owner, link.initialize!.id, message.id!)
+    link.owner = renumbered(owner, link.initialize!.id, message.id)
     this.logger.info(
       `${label}: took over a server whose previous client left during an identical initialize`,
     )

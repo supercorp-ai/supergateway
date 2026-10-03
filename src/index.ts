@@ -69,8 +69,6 @@ import {
 // `apiKeys` is empty when no source gives a key, so authentication is off.
 type Listening = { host: string | undefined; apiKeys: string[] }
 
-type Start = (argv: Cli, logger: Logger, listening: Listening) => Promise<void>
-
 // A config file can start a server without a shell (`command` + `args`), or
 // with its own environment and directory; it puts that here in place of the
 // `--stdio` string. See cliForEntry.
@@ -202,17 +200,20 @@ function mountOf(argv: Cli, logger: Logger, options: ServerOptions): Mount {
     : stdioToStatelessStreamableHttpMount(args)
 }
 
+// The URLs each listening output answers, beside its health endpoints.
+const outputRoutes: Record<string, (argv: Cli) => string[]> = {
+  sse: (argv) => [argv.ssePath, argv.messagePath],
+  ws: (argv) => [argv.messagePath],
+  streamableHttp: (argv) => [argv.streamableHttpPath],
+}
+
 // The URLs a server answers, as its command line sets them: none for one on
 // stdio, which listens on nothing.
 const routesOf = (argv: Cli) =>
   argv.outputTransport === 'stdio'
     ? []
     : [
-        ...(argv.outputTransport === 'sse'
-          ? [argv.ssePath, argv.messagePath]
-          : argv.outputTransport === 'ws'
-            ? [argv.messagePath]
-            : [argv.streamableHttpPath]),
+        ...outputRoutes[argv.outputTransport!](argv),
         ...(argv.healthEndpoint as string[]),
       ]
 
@@ -231,33 +232,34 @@ const listen = async (argv: Cli, logger: Logger, listening: Listening) => {
   }
 }
 
-// How each input transport starts, given the output the command line chose.
-// A remote server on stdio is a bridge; on any other output, it is served
-// the way a local one is.
-const start: Record<InputTransport, Start> = {
-  stdio: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      unsupported(logger, 'stdio', argv.outputTransport)
-    else await listen(argv, logger, listening)
-  },
-  sse: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      await sseToStdio({
-        sseUrl: argv.sse!,
-        logger,
-        headers: headers({ argv, logger }),
-      })
-    else await listen(argv, logger, listening)
-  },
-  streamableHttp: async (argv, logger, listening) => {
-    if (argv.outputTransport === 'stdio')
-      await streamableHttpToStdio({
-        streamableHttpUrl: argv.streamableHttp!,
-        logger,
-        headers: headers({ argv, logger }),
-      })
-    else await listen(argv, logger, listening)
-  },
+// A remote server bridged to stdio output.
+const bridge = {
+  sse: (argv: Cli, logger: Logger) =>
+    sseToStdio({
+      sseUrl: argv.sse!,
+      logger,
+      headers: headers({ argv, logger }),
+    }),
+  streamableHttp: (argv: Cli, logger: Logger) =>
+    streamableHttpToStdio({
+      streamableHttpUrl: argv.streamableHttp!,
+      logger,
+      headers: headers({ argv, logger }),
+    }),
+}
+
+// How a server alone on the port starts, given the output the command line
+// chose. A remote server on stdio is a bridge; on any other output, it is
+// served the way a local one is. A local server already speaks stdio.
+async function start(
+  input: InputTransport,
+  argv: Cli,
+  logger: Logger,
+  listening: Listening,
+) {
+  if (argv.outputTransport !== 'stdio') await listen(argv, logger, listening)
+  else if (input === 'stdio') unsupported(logger, input, argv.outputTransport)
+  else await bridge[input](argv, logger)
 }
 
 // Where a flag refused beside --config belongs in the file.
@@ -493,7 +495,7 @@ async function main() {
     if ('servers' in run)
       serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
     else
-      await start[input](argv, logger, {
+      await start(input, argv, logger, {
         host,
         apiKeys: servers[0].apiKeys,
       })

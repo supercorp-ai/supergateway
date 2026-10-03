@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -20,8 +20,10 @@ import {
 import { WebSocket } from 'ws'
 import {
   gatewayTimeout,
+  initialize,
   launchGateway,
   requestTimeout,
+  stdioRpc,
   unusedPort,
 } from './helpers/gateway-process.js'
 import { descendantsOf } from './helpers/process-tree.js'
@@ -37,6 +39,7 @@ const mockServer = resolve('tests/helpers/mock-mcp-server.js')
 const pagedPeer = resolve('tests/helpers/modern-bridge-peer.mjs')
 const unhealthyPeer = resolve('tests/helpers/unhealthy-peer.mjs')
 const remoteServer = resolve('tests/helpers/remote-mcp-server.mjs')
+const lingeringPeer = resolve('tests/helpers/lingering-peer.mjs')
 const mock = { command: node, args: [mockServer, 'stdio'] }
 const paged = { command: node, args: [pagedPeer] }
 const options = { timeout: gatewayTimeout(30000) }
@@ -618,5 +621,83 @@ test(
     const pid = transport.pid!
     await client.close()
     assert.equal(await gone(pid), true)
+  },
+)
+
+test(
+  'two servers asking the client at once each get their own answer',
+  options,
+  async (t) => {
+    // Both number their requests alike, so only the gateway's ids tell the
+    // client's answers apart.
+    const far = await remote(t)
+    const { port } = await serve(t, {
+      mcpServers: {
+        all: {
+          mcpServers: {
+            a: { ...far, toolPrefix: 'a_' },
+            b: { ...far, toolPrefix: 'b_' },
+          },
+          outputTransport: 'ws',
+        },
+      },
+    })
+    const client = await connect(
+      t,
+      new WebSocketClientTransport(
+        new URL(`ws://127.0.0.1:${port}/all/message`),
+      ),
+    )
+    assert.deepEqual(
+      await Promise.all([
+        text(client, 'a_ask'),
+        text(client, 'b_ask'),
+        text(client, 'a_ask'),
+      ]),
+      ['client said pong', 'client said pong', 'client said pong'],
+    )
+  },
+)
+
+test(
+  'combined servers on stdio: stdin closing stops the gateway and its servers',
+  options,
+  async (t) => {
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'sg-lingers-')), 'pid')
+    t.after(() => rmSync(join(pidFile, '..'), { recursive: true, force: true }))
+    const file = writeConfig(t, {
+      mcpServers: {
+        all: {
+          outputTransport: 'stdio',
+          // One of them does not exit when its stdin closes: the gateway
+          // stops its servers, it does not leave them to notice.
+          mcpServers: {
+            near: mock,
+            lingers: { command: node, args: [lingeringPeer, pidFile] },
+          },
+        },
+      },
+    })
+    const gateway = launchGateway(t, ['--config', file])
+    await gateway.ready()
+    const answer = await stdioRpc(gateway, initialize())
+    assert.equal(answer.result.serverInfo.name, 'supergateway')
+    const lingering = Number(readFileSync(pidFile, 'utf8'))
+    // Stopped later in any case, should the gateway leave it.
+    t.after(() => {
+      try {
+        process.kill(lingering, 'SIGKILL')
+      } catch {
+        // Gone, as it should be.
+      }
+    })
+    gateway.child.stdin.end()
+    const exit = await Promise.race([
+      gateway.exited,
+      delay(requestTimeout(10000), 'still running' as const, { ref: false }),
+    ])
+    assert.deepEqual(exit, { code: 0, signal: null })
+    assert.match(gateway.errors(), /stdin closed\. Exiting\.\.\./)
+    assert.equal(await gone(lingering), true, 'the gateway stopped it')
   },
 )

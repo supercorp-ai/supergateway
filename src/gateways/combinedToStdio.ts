@@ -53,8 +53,10 @@ export function combinedToStdio(args: CombinedToStdioArgs) {
       logger.error(`Server ${kind} failure:`, err)
       lifecycle.exit(1)
     },
-    // The session is over: every server has stopped.
+    // The session is over: every server has stopped. At shutdown the
+    // gateway stopped them itself, and is already on its way out.
     exit: (code, signal) => {
+      if (children.closing) return
       logger.error(`Servers stopped: code=${code}, signal=${signal}`)
       lifecycle.exit(1)
     },

@@ -216,7 +216,43 @@ A `url` server is served like a local one when it has an output other than stdio
 
 One `url` server may use stdio output beside servers on the port. This is for a client that launches Supergateway with a config file, such as Claude Desktop: it talks to that server over stdin and stdout, and other clients reach the rest over HTTP. All logs then go to stderr. The process belongs to the client that started it. When stdin closes, a signal arrives, or the stdio server stops (its remote server refused the first connection, for example), every server stops, and the exit code is the stdio server's.
 
-This version can't yet combine servers on one URL (a nested `mcpServers`). Such a file passes `--checkConfig`, but the gateway says so and exits.
+### Combining servers on one URL
+
+An entry with its own `mcpServers` serves them as one MCP server, at the entry's URL:
+
+```jsonc
+{
+  "port": 8000,
+  "outputTransport": "streamableHttp",
+  "mcpServers": {
+    "dev": {
+      "mcpServers": {
+        "git": { "command": "uvx", "args": ["mcp-server-git"] },
+        "files": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        },
+        "docs": {
+          "url": "https://docs.example.com/mcp",
+          "type": "http",
+          "toolPrefix": "docs_",
+        },
+      },
+    },
+  },
+}
+```
+
+A client of `http://localhost:8000/dev/mcp` sees the tools, prompts and resources of all three.
+
+- **Names are not changed.** A request goes to the server that has the tool, prompt or resource it names. When two servers offer the same name, the first one listed wins and the other's is hidden; the log says so once. Set `toolPrefix` on a server to keep both, and `tools` to choose which of a server's tools are shown. Many tools behind one URL make a model's choice harder, so combine what belongs together.
+- **Each session has its own servers,** started when the client initializes. A server that can't start is left out, with a line in the log; the session fails only if none starts. A server that stops later fails the calls it had, the client is told the lists changed, and the rest go on.
+- **Requests from a server to the client** (sampling, roots, elicitation) work as they do for one server, on outputs that carry them (SSE, WebSocket, stateful Streamable HTTP).
+- **The protocol version** is the lowest any of the servers answers; the capabilities are everything any of them has; their `instructions` are joined, each under its server's name.
+- **Lists come as one page,** every server's in the order listed.
+- **Settings for the URL** (`outputTransport`, `apiKey`, `cors`, `healthEndpoint`, ...) go on the entry. A combined server has `command`/`args`/`env`/`cwd`, `stdio`, or `url`/`type`/`headers`/`oauth2Bearer`, and `toolPrefix`/`tools`. Combining goes one level deep.
+- **On stdio** (`"outputTransport": "stdio"`), a combined entry is what a desktop client launches to reach several servers through one entry of its own config. It can run beside servers on the port, as a single remote server can.
+- **Not yet:** the 2026-07-28 protocol version (a combined entry answers the earlier ones), and tasks. Combined servers share one model context, so combine only servers you trust with each other's results.
 
 ## Shutdown
 

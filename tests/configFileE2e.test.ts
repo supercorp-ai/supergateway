@@ -29,7 +29,6 @@ const node = process.execPath
 // The mock server, as a config file runs it: no shell.
 const mock = { command: node, args: [mockServer, 'stdio'] }
 const options = { timeout: gatewayTimeout(30000) }
-const later = 'is coming in a later 4.2 change'
 
 type Gateway = ReturnType<typeof launchGateway>
 
@@ -652,8 +651,6 @@ test(
   },
 )
 
-// --- What this build does not run yet ---
-
 test('a disabled second entry leaves one to run', options, async (t) => {
   const { port } = await serve(t, {
     mcpServers: {
@@ -667,24 +664,6 @@ test('a disabled second entry leaves one to run', options, async (t) => {
   )
   assert.equal(response.status, 200)
 })
-
-test(
-  'combined servers on stdio are valid, but not run yet',
-  options,
-  async (t) => {
-    // Only remote servers combined: stdio by default, as one would be.
-    const far = { url: 'http://127.0.0.1:1/mcp', type: 'http' }
-    const file = writeConfig(t, {
-      mcpServers: { all: { mcpServers: { a: far, b: far } } },
-    })
-    const result = await outcome(launchGateway(t, ['--config', file]))
-    assert.deepEqual(result, {
-      code: 1,
-      stdout: '',
-      stderr: `${prefix}Error: Serving combined servers over stdio ${later}; ${file} is valid, but this build can't serve it yet\n`,
-    })
-  },
-)
 
 // --- Other clients' files ---
 

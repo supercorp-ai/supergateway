@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { hideBin } from 'yargs/helpers'
 import { stdioToSse, stdioToSseMount } from './gateways/stdioToSse.js'
 import { sseToStdio } from './gateways/sseToStdio.js'
+import { combinedToStdio } from './gateways/combinedToStdio.js'
 import { stdioToWs, stdioToWsMount } from './gateways/stdioToWs.js'
 import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
 import { headers } from './lib/headers.js'
@@ -310,8 +311,22 @@ async function start(
   listening: Listening,
 ) {
   if (argv.outputTransport !== 'stdio') await listen(argv, logger, listening)
-  else if (input === 'stdio') unsupported(logger, input, argv.outputTransport)
-  else await bridge[input](argv, logger)
+  else if (input === 'stdio' && !argv.combined)
+    unsupported(logger, input, argv.outputTransport)
+  else await onStdio(input, argv, logger)
+}
+
+// A server on stdio output: servers combined as one, or a remote one bridged.
+// The loader and the check above allow no other.
+const onStdio = async (
+  input: InputTransport,
+  argv: Cli,
+  logger: Logger,
+  lifecycle?: BridgeLifecycle,
+) => {
+  if (argv.combined)
+    combinedToStdio({ ...serverOf(argv, logger), logger, lifecycle })
+  else await bridge[input as keyof typeof bridge](argv, logger, lifecycle)
 }
 
 // Where a flag refused beside --config belongs in the file.
@@ -411,16 +426,6 @@ const sharedPortConflict = (served: Served[], healthEndpoints: string[]) =>
     healthEndpoints,
   )
 
-// What a valid config asks for that this build can't serve yet, if anything.
-const notYetServable = (config: Config) =>
-  config.entries.some(
-    (entry) =>
-      'members' in entry.server &&
-      effectiveTransport(entry, config.defaults) === 'stdio',
-  )
-    ? 'Serving combined servers over stdio'
-    : undefined
-
 /**
  * The command line to run: the one given, or, with `--config`, the one each
  * of the file's entries is equivalent to, so a file runs through exactly the
@@ -446,12 +451,6 @@ function invocation(args: string[], cli: Cli, logger: Logger): Invocation {
   const conflict = several && sharedPortConflict(served, healthEndpoints)
   if (conflict) exitWithError(logger, `Error: ${file}: ${conflict}`)
   if (cli.checkConfig) reportValid(file, config)
-  const notYet = notYetServable(config)
-  if (notYet)
-    exitWithError(
-      logger,
-      `Error: ${notYet} is coming in a later 4.2 change; ${file} is valid, but this build can't serve it yet`,
-    )
   if (!several) return { argv: served[0].argv, notes }
   return { servers: served, healthEndpoints, notes }
 }
@@ -546,7 +545,7 @@ async function serveSeveral(
 const isOnStdio = (server: { argv: Cli }) =>
   server.argv.outputTransport === 'stdio'
 
-// The remote server on stdio beside the others. The process is its client's,
+// The entry on stdio beside the others. The process is its client's,
 // which started it: when the bridge stops, the others stop too, as at a
 // signal, and the signals stop the bridge with them.
 async function bridgeBeside(
@@ -554,9 +553,8 @@ async function bridgeBeside(
   register: BridgeLifecycle['register'],
 ) {
   server.logger.info('  - outputTransport: stdio')
-  // The loader allows only a remote server on stdio.
   const { input } = orExit(server.logger, inputTransportOf(server.argv))
-  await bridge[input as keyof typeof bridge](server.argv, server.logger, {
+  await onStdio(input, server.argv, server.logger, {
     register,
     exit: (code) =>
       requestShutdown(`${server.name} on stdio stopped. Exiting...`, code),

@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -446,5 +447,176 @@ test(
       503,
       'unhealthy: the server refused: No server of "bad" started',
     ])
+  },
+)
+
+// --- On stdio: one entry of a desktop client's config, several servers ---
+
+const stdioClient = async (t: TestContext, file: string) => {
+  const transport = new StdioClientTransport({
+    command: node,
+    args: ['dist/index.js', '--config', file],
+    stderr: 'pipe',
+  })
+  let errors = ''
+  transport.stderr!.on('data', (chunk) => (errors += chunk))
+  const client = await connect(t, transport)
+  return { client, transport, errors: () => errors }
+}
+
+const writeConfig = (t: TestContext, config: Record<string, unknown>) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sg-combined-stdio-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'servers.json')
+  writeFileSync(file, JSON.stringify(config, null, 2))
+  return file
+}
+
+const gone = async (pid: number) => {
+  const deadline = Date.now() + requestTimeout(5000)
+  const alive = () => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  while (alive() && Date.now() < deadline) await delay(50)
+  return !alive()
+}
+
+test(
+  'combined servers on stdio answer as one, and stop with the client',
+  options,
+  async (t) => {
+    const far = await remote(t)
+    const file = writeConfig(t, {
+      mcpServers: {
+        all: {
+          outputTransport: 'stdio',
+          toolPrefix: 'x_',
+          mcpServers: {
+            near: mock,
+            pages: paged,
+            far: { ...far, tools: ['ask'] },
+          },
+        },
+      },
+    })
+    const { client, transport, errors } = await stdioClient(t, file)
+    assert.deepEqual(await toolNames(client), [
+      'x_add',
+      'x_identity',
+      'x_wait',
+      'x_crash',
+      'x_reverse',
+      'x_echo',
+      'x_ask',
+    ])
+    assert.equal(
+      await text(client, 'x_add', { a: 2, b: 2 }),
+      'The sum of 2 and 2 is 4.',
+    )
+    // A request from a server to the client, and back.
+    assert.equal(await text(client, 'x_ask'), 'client said pong')
+    // The listing is on stderr; stdout carried only messages, or no client.
+    assert.match(errors(), /  - combines: near, pages, far\n/)
+    assert.match(errors(), /Stdio server listening/)
+    const pid = transport.pid!
+    await client.close()
+    assert.equal(
+      await gone(pid),
+      true,
+      'the gateway exits when its client leaves',
+    )
+  },
+)
+
+test(
+  'combined servers on stdio: when the last one stops, so does the gateway',
+  options,
+  async (t) => {
+    const file = writeConfig(t, {
+      mcpServers: {
+        all: { outputTransport: 'stdio', mcpServers: { pages: paged } },
+      },
+    })
+    const { client, transport, errors } = await stdioClient(t, file)
+    const closed = new Promise<void>(
+      (resolve) => (transport.onclose = () => resolve()),
+    )
+    await assert.rejects(
+      client.callTool({ name: 'crash', arguments: {} }),
+      /MCP server "pages" failed|Connection closed/,
+    )
+    await closed
+    assert.match(errors(), /Servers stopped: code=0, signal=null/)
+  },
+)
+
+test(
+  'combined servers on stdio: a line that is no message is said, and the session goes on',
+  options,
+  async (t) => {
+    const file = writeConfig(t, {
+      mcpServers: {
+        all: { outputTransport: 'stdio', mcpServers: { near: mock } },
+      },
+    })
+    const gateway = launchGateway(t, ['--config', file])
+    await gateway.ready()
+    gateway.child.stdin.write('not json\n\n5\n')
+    gateway.child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })}\n`,
+    )
+    await gateway.waitFor(
+      () => gateway.output().includes('"id":1'),
+      'answer the ping',
+    )
+    assert.equal(gateway.output(), '{"jsonrpc":"2.0","id":1,"result":{}}\n')
+    assert.deepEqual(logged(gateway, /Invalid message on stdin/), [
+      'Invalid message on stdin: not json',
+      'Invalid message on stdin: 5',
+    ])
+  },
+)
+
+test(
+  'combined servers on stdio beside a server on the port',
+  options,
+  async (t) => {
+    const port = await unusedPort()
+    const file = writeConfig(t, {
+      port,
+      mcpServers: {
+        web: { ...mock, outputTransport: 'streamableHttp' },
+        desk: {
+          outputTransport: 'stdio',
+          mcpServers: { pages: paged, near: mock },
+        },
+      },
+    })
+    const { client, transport, errors } = await stdioClient(t, file)
+    assert.equal((await toolNames(client)).length, 6)
+    const web = await http(t, `http://127.0.0.1:${port}`, '/web')
+    assert.deepEqual(await toolNames(web), ['add'])
+    assert.match(errors(), /\[desk\]   - outputTransport: stdio\n/)
+    assert.match(errors(), /\[desk\]   - combines: pages, near\n/)
+    // One of the stdio entry's servers stopping leaves the rest of it, and
+    // the server on the port.
+    await assert.rejects(
+      client.callTool({ name: 'crash', arguments: {} }),
+      /MCP server "pages" failed/,
+    )
+    assert.equal(
+      await text(client, 'add', { a: 1, b: 1 }),
+      'The sum of 1 and 1 is 2.',
+    )
+    assert.deepEqual(await toolNames(web), ['add'])
+    // The process is the stdio client's: it leaves, and every entry stops.
+    const pid = transport.pid!
+    await client.close()
+    assert.equal(await gone(pid), true)
   },
 )

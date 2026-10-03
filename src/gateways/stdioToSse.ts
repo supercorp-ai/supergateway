@@ -191,8 +191,12 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     const opened = await openSseTransport(res)
     if (!opened) return
     const { sseTransport, sessionServer } = opened
-    new SseSession(sessions, sseTransport, sessionServer, res, logger).start(
+    new SseSession(
+      sessions,
+      sseTransport,
+      sessionServer,
       req,
+      res,
       startServer(
         spawn,
         args,
@@ -201,6 +205,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
         `Session ${sseTransport.sessionId}`,
       ),
       handoff,
+      logger,
     )
   })
 
@@ -261,25 +266,24 @@ class SseSession {
   private readonly label: string
   // The client's calls the child has not answered yet.
   private readonly pending = new Set<string | number>()
-  private connection!: ConnectionChild
+  private readonly connection: ConnectionChild
 
+  /** Registers the session, links its child, and listens to the client. */
   constructor(
     private readonly sessions: SseSessions,
     private readonly transport: SSEServerTransport,
     server: Server,
+    req: express.Request,
     private readonly res: express.Response,
+    peer: StartPeer,
+    handoff: ChildHandoff,
     private readonly logger: Logger,
   ) {
-    this.sessionId = transport.sessionId
-    this.label = `Session ${this.sessionId}`
-    sessions[this.sessionId] = { server, transport, response: res }
-  }
-
-  /** Starts the session's child, and listens to the client and the stream. */
-  start(req: express.Request, server: StartPeer, handoff: ChildHandoff) {
-    const { logger, sessionId, transport } = this
+    const sessionId = (this.sessionId = transport.sessionId)
+    this.label = `Session ${sessionId}`
+    sessions[sessionId] = { server, transport, response: res }
     this.connection = new ConnectionChild(
-      server,
+      peer,
       this.owner(),
       handoff,
       logger,

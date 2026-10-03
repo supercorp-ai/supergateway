@@ -15,7 +15,7 @@ import { announceGateway } from '../lib/gatewayListing.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildLink } from '../lib/childHandoff.js'
+import { ChildLink, type StartPeer } from '../lib/childHandoff.js'
 import { StatelessInitialization } from '../lib/statelessInitialization.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 import { startServer, type ServerSource } from '../lib/serverSource.js'
@@ -112,14 +112,14 @@ export function stdioToStatelessStreamableHttpMount(
     // to ensure complete isolation. A single instance would cause request ID collisions
     // when multiple clients connect concurrently.
     try {
-      await new StatelessRequest(
+      await StatelessRequest.serve(
         args,
         children,
         logger,
         protocolVersion,
         req,
         res,
-      ).serve()
+      )
     } catch (error) {
       logger.error('Error handling MCP request:', error)
       if (!res.headersSent) {
@@ -172,15 +172,8 @@ export function stdioToStatelessStreamableHttpMount(
  * the response is over and the child owes it nothing.
  */
 class StatelessRequest {
-  private readonly server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-  private readonly transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  })
-  private link!: ChildLink
-  private initialization!: StatelessInitialization
+  private readonly link: ChildLink
+  private readonly initialization: StatelessInitialization
   private readonly pendingRequests = new Set<string | number>()
   private childFailed = false
   private released = false
@@ -195,25 +188,44 @@ class StatelessRequest {
     (resolve) => (this.dispatched = resolve),
   )
 
-  constructor(
-    private readonly source: ServerSource,
-    private readonly children: OwnedChildProcesses,
+  /** Serves one POST with a server, transport and child of its own. */
+  static async serve(
+    source: ServerSource,
+    children: OwnedChildProcesses,
+    logger: Logger,
+    protocolVersion: string,
+    req: express.Request,
+    res: express.Response,
+  ) {
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    })
+    await server.connect(transport)
+    const peer = startServer(spawn, source, children, logger, 'Request')
+    await new StatelessRequest(
+      server,
+      transport,
+      peer,
+      logger,
+      protocolVersion,
+      req,
+      res,
+    ).handle()
+  }
+
+  private constructor(
+    private readonly server: Server,
+    private readonly transport: StreamableHTTPServerTransport,
+    peer: StartPeer,
     private readonly logger: Logger,
     private readonly protocolVersion: string,
     private readonly req: express.Request,
     private readonly res: express.Response,
-  ) {}
-
-  async serve() {
-    const { transport, logger, req, res } = this
-    await this.server.connect(transport)
-    const peer = startServer(
-      spawn,
-      this.source,
-      this.children,
-      logger,
-      'Request',
-    )
+  ) {
     res.once('close', () => {
       this.responseClosed = true
       this.finish()
@@ -250,9 +262,11 @@ class StatelessRequest {
       logger.error(`StreamableHttp error:`, err)
       void this.stop()
     }
+  }
 
+  private async handle() {
     try {
-      await transport.handleRequest(req, res, req.body)
+      await this.transport.handleRequest(this.req, this.res, this.req.body)
     } catch (error) {
       this.release()
       throw error

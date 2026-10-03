@@ -248,16 +248,21 @@ class StatefulSessions {
   private async open(
     res: express.Response,
   ): Promise<StreamableHTTPServerTransport> {
-    const session = new StatefulSession(
+    const session = await StatefulSession.open(
       this,
       res,
       this.logger,
       this.sessionTimeout,
-    )
-    await session.server.connect(session.transport)
-    this.openResponses.set(session.transport, session.responses)
-    session.start(
-      startServer(spawn, this.source, this.children, this.logger, 'Session'),
+      (transport, responses) => {
+        this.openResponses.set(transport, responses)
+        return startServer(
+          spawn,
+          this.source,
+          this.children,
+          this.logger,
+          'Session',
+        )
+      },
     )
     return session.transport
   }
@@ -331,56 +336,81 @@ class StatefulSessions {
  * has not answered yet, and how the session ends when the child does.
  */
 class StatefulSession {
-  readonly server = new Server(
-    { name: 'supergateway', version: getVersion() },
-    { capabilities: {} },
-  )
-  readonly transport: StreamableHTTPServerTransport
-  readonly probe: SessionLivenessProbe | undefined
-  readonly responses = new Set<express.Response>()
   private initializedSessionId: string | undefined
   private readonly pendingRequests = new Set<string | number>()
-  private link!: ChildLink
+  private readonly link: ChildLink
   private childStopped = false
   private childFailed = false
 
-  constructor(
-    private readonly sessions: StatefulSessions,
-    private readonly res: express.Response,
-    private readonly logger: Logger,
+  /**
+   * Connects a new session's transport to its own SDK server, then starts its
+   * child with `begin`, which is given the transport and the session's open
+   * responses to register first.
+   */
+  static async open(
+    sessions: StatefulSessions,
+    res: express.Response,
+    logger: Logger,
     sessionTimeout: number | null,
-  ) {
-    this.transport = new StreamableHTTPServerTransport({
+    begin: (
+      transport: StreamableHTTPServerTransport,
+      responses: Set<express.Response>,
+    ) => StartPeer,
+  ): Promise<StatefulSession> {
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
+    // Assigned below, before the SDK or the probe can call back.
+    let session!: StatefulSession
+    const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sessionId) => {
-        this.initializedSessionId = sessionId
-        sessions.register(sessionId, this.transport, this.probe)
-      },
+      onsessioninitialized: (sessionId) => session.initialized(sessionId),
     })
     // Bound probe traffic without adding a new option. sessionTimeout is
     // still the minimum inactivity period before a session can be reaped.
-    this.probe = sessionTimeout
+    const probe = sessionTimeout
       ? new SessionLivenessProbe(
           Math.max(5_000, Math.min(sessionTimeout, 300_000)),
           Math.max(5_000, Math.min(sessionTimeout, 30_000)),
           sessionTimeout,
           async (id) => {
-            await this.transport.send({ jsonrpc: '2.0', id, method: 'ping' })
+            await transport.send({ jsonrpc: '2.0', id, method: 'ping' })
           },
           () => {
-            this.transport.close().catch((error) => {
+            transport.close().catch((error) => {
               logger.error('Failed to close stale session:', error)
-              this.stopChild('stale transport close failed')
+              session.stopChild('stale transport close failed')
             })
           },
           logger,
         )
       : undefined
+    await server.connect(transport)
+    const responses = new Set<express.Response>()
+    const peer = begin(transport, responses)
+    session = new StatefulSession(
+      sessions,
+      res,
+      logger,
+      transport,
+      probe,
+      responses,
+      peer,
+    )
+    return session
   }
 
   /** Links the session to its server, and the client's messages to both. */
-  start(peer: StartPeer) {
-    const { logger, transport } = this
+  private constructor(
+    private readonly sessions: StatefulSessions,
+    private readonly res: express.Response,
+    private readonly logger: Logger,
+    readonly transport: StreamableHTTPServerTransport,
+    private readonly probe: SessionLivenessProbe | undefined,
+    private readonly responses: Set<express.Response>,
+    peer: StartPeer,
+  ) {
     this.link = new ChildLink(peer, {
       failure: (_kind, err) => this.fail(err),
       exit: (code, signal) => {
@@ -412,6 +442,11 @@ class StatefulSession {
       // A rejected HTTP request is recoverable; actual transport closure
       // and child failure have their own cleanup paths.
     }
+  }
+
+  private initialized(sessionId: string) {
+    this.initializedSessionId = sessionId
+    this.sessions.register(sessionId, this.transport, this.probe)
   }
 
   private fromChild(jsonMsg: any, line: string) {

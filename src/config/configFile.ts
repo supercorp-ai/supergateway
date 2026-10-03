@@ -220,33 +220,11 @@ function readConfig(
 ): Config {
   const raw = expand(getNodeValue(root), [], env, fail)
   checkKeys(raw, [], TOP_KEYS, fail, warnings)
-  const gateway: GatewaySettings = {}
-  if ('port' in raw) gateway.port = integer(raw.port, ['port'], fail, 0)
-  if ('host' in raw) gateway.host = text(raw.host, ['host'], fail)
-  if ('logLevel' in raw)
-    gateway.logLevel = oneOf(
-      raw.logLevel,
-      ['logLevel'],
-      ['debug', 'info', 'none'],
-      fail,
-    ) as GatewaySettings['logLevel']
-  if ('logFormat' in raw)
-    gateway.logFormat = oneOf(
-      raw.logFormat,
-      ['logFormat'],
-      ['text', 'json'],
-      fail,
-    ) as GatewaySettings['logFormat']
-  if ('exitWithProcess' in raw)
-    gateway.exitWithProcess = integer(
-      raw.exitWithProcess,
-      ['exitWithProcess'],
-      fail,
-      2,
-    )
-  if ('healthEndpoint' in raw)
-    gateway.healthEndpoint = paths(raw.healthEndpoint, ['healthEndpoint'], fail)
-  const defaults = endpointOptions(raw, [], fail, ['healthEndpoint'])
+  const gateway = readSettings(raw, [], GATEWAY_READERS, fail)
+  // At the top level, `healthEndpoint` is the gateway's own, read above.
+  const defaults = readSettings(raw, [], ENDPOINT_READERS, fail, [
+    'healthEndpoint',
+  ])
   if (!('mcpServers' in raw))
     fail([], 'Add "mcpServers" with at least one server')
   const servers = object(raw.mcpServers, ['mcpServers'], fail)
@@ -300,7 +278,7 @@ function readEntry(
   const raw = object(value, path, fail)
   checkKeys(raw, path, ENTRY_KEYS, fail, warnings)
   if (!isEnabled(raw, path, fail)) return undefined
-  const options = endpointOptions(raw, path, fail, [])
+  const options = readSettings(raw, path, ENDPOINT_READERS, fail)
   const urlPath =
     'path' in raw
       ? routePath(raw.path, [...path, 'path'], fail)
@@ -473,71 +451,69 @@ function readServer(
   return server
 }
 
-function endpointOptions(
+// How one setting's value is read and checked; undefined leaves it unset.
+type Reader<T> = (value: unknown, path: (string | number)[], fail: Fail) => T
+type Readers<T> = { [K in keyof T]-?: Reader<T[K]> }
+
+// Settings are read, and so checked and printed, in the order listed here.
+const GATEWAY_READERS: Readers<GatewaySettings> = {
+  port: (value, path, fail) => integer(value, path, fail, 0),
+  host: text,
+  logLevel: (value, path, fail) =>
+    oneOf(
+      value,
+      path,
+      ['debug', 'info', 'none'],
+      fail,
+    ) as GatewaySettings['logLevel'],
+  logFormat: (value, path, fail) =>
+    oneOf(value, path, ['text', 'json'], fail) as GatewaySettings['logFormat'],
+  exitWithProcess: (value, path, fail) => integer(value, path, fail, 2),
+  healthEndpoint: paths,
+}
+
+const ENDPOINT_READERS: Readers<EndpointOptions> = {
+  outputTransport: (value, path, fail) =>
+    oneOf(value, path, TRANSPORTS, fail) as Transport,
+  baseUrl: text,
+  ssePath: routePath,
+  messagePath: routePath,
+  streamableHttpPath: routePath,
+  // `false` is the default, so it sets nothing.
+  cors: (value, path, fail) => {
+    if (value === true) return true
+    if (value === false) return undefined
+    return strings(value, path, fail, 'true, false, or a list of origins')
+  },
+  healthEndpoint: paths,
+  apiKey: (value, path, fail) =>
+    typeof value === 'string'
+      ? [text(value, path, fail)]
+      : strings(value, path, fail, 'a key or a list of keys'),
+  apiKeyFile: text,
+  stateful: boolean,
+  sessionTimeout: (value, path, fail) => integer(value, path, fail, 1),
+  protocolVersion: text,
+  headers: stringMap,
+  oauth2Bearer: text,
+}
+
+// The settings `readers` knows that `raw` holds, less those in `skip`.
+function readSettings<T>(
   raw: Record<string, unknown>,
   path: (string | number)[],
+  readers: Readers<T>,
   fail: Fail,
-  skip: string[],
-): EndpointOptions {
-  const at = (key: string) => [...path, key]
-  const options: EndpointOptions = {}
-  const has = (key: string) => key in raw && !skip.includes(key)
-  if (has('outputTransport'))
-    options.outputTransport = oneOf(
-      raw.outputTransport,
-      at('outputTransport'),
-      TRANSPORTS,
-      fail,
-    ) as Transport
-  if (has('baseUrl')) options.baseUrl = text(raw.baseUrl, at('baseUrl'), fail)
-  ;(['ssePath', 'messagePath', 'streamableHttpPath'] as const).forEach(
-    (key) => {
-      if (has(key)) options[key] = routePath(raw[key], at(key), fail)
-    },
-  )
-  if (has('cors')) {
-    if (raw.cors === true) options.cors = true
-    else if (raw.cors !== false)
-      options.cors = strings(
-        raw.cors,
-        at('cors'),
-        fail,
-        'true, false, or a list of origins',
-      )
-  }
-  if (has('healthEndpoint'))
-    options.healthEndpoint = paths(
-      raw.healthEndpoint,
-      at('healthEndpoint'),
-      fail,
-    )
-  if (has('apiKey'))
-    options.apiKey =
-      typeof raw.apiKey === 'string'
-        ? [text(raw.apiKey, at('apiKey'), fail)]
-        : strings(raw.apiKey, at('apiKey'), fail, 'a key or a list of keys')
-  if (has('apiKeyFile'))
-    options.apiKeyFile = text(raw.apiKeyFile, at('apiKeyFile'), fail)
-  if (has('stateful'))
-    options.stateful = boolean(raw.stateful, at('stateful'), fail)
-  if (has('sessionTimeout'))
-    options.sessionTimeout = integer(
-      raw.sessionTimeout,
-      at('sessionTimeout'),
-      fail,
-      1,
-    )
-  if (has('protocolVersion'))
-    options.protocolVersion = text(
-      raw.protocolVersion,
-      at('protocolVersion'),
-      fail,
-    )
-  if (has('headers'))
-    options.headers = stringMap(raw.headers, at('headers'), fail)
-  if (has('oauth2Bearer'))
-    options.oauth2Bearer = text(raw.oauth2Bearer, at('oauth2Bearer'), fail)
-  return options
+  skip: string[] = [],
+): T {
+  const settings: Record<string, unknown> = {}
+  // Never empty, so not a `for` loop with a zero-iteration case.
+  Object.entries<Reader<unknown>>(readers).forEach(([key, read]) => {
+    if (!(key in raw) || skip.includes(key)) return
+    const value = read(raw[key], [...path, key], fail)
+    if (value !== undefined) settings[key] = value
+  })
+  return settings as T
 }
 
 /** The output transport an entry ends up with: its own, the file's, the CLI's. */
@@ -670,11 +646,12 @@ function routePath(value: unknown, path: (string | number)[], fail: Fail) {
   return trimmed
 }
 
-const paths = (value: unknown, path: (string | number)[], fail: Fail) =>
-  (typeof value === 'string' ? [value] : strings(value, path, fail)).map(
-    (item, i) =>
-      routePath(item, typeof value === 'string' ? path : [...path, i], fail),
+function paths(value: unknown, path: (string | number)[], fail: Fail) {
+  if (typeof value === 'string') return [routePath(value, path, fail)]
+  return strings(value, path, fail).map((item, i) =>
+    routePath(item, [...path, i], fail),
   )
+}
 
 function object(value: unknown, path: (string | number)[], fail: Fail) {
   if (value === null || typeof value !== 'object' || Array.isArray(value))

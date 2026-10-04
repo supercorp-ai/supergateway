@@ -2,6 +2,24 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from '../types.js'
 import type { ChildOwner, Peer, StartPeer } from './childHandoff.js'
 import { getVersion } from './getVersion.js'
+import {
+  BY_URI,
+  INTERNAL_ERROR,
+  INVALID_PARAMS,
+  INVALID_REQUEST,
+  LISTS,
+  LIST_CHANGED,
+  METHOD_NOT_FOUND,
+  NAMED,
+  RESOURCE_NOT_FOUND,
+  RpcError,
+  isList,
+  isObject,
+  templateMatches,
+  union,
+  type ListMethod,
+  type Params,
+} from './combinedRules.js'
 
 /** One of the servers combined on an entry's URL, started when a session is. */
 export interface CombinedMember {
@@ -10,97 +28,8 @@ export interface CombinedMember {
 }
 
 type Id = string | number
-type Params = Record<string, any>
 type Request = { jsonrpc: '2.0'; id: Id; method: string; params?: Params }
 type Notification = { jsonrpc: '2.0'; method: string; params?: Params }
-
-const INVALID_REQUEST = -32600
-const METHOD_NOT_FOUND = -32601
-const INVALID_PARAMS = -32602
-const INTERNAL_ERROR = -32603
-const RESOURCE_NOT_FOUND = -32002
-
-/** An error that answers a client's request as it is. */
-class RpcError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-    readonly data?: unknown,
-  ) {
-    super(message)
-  }
-}
-
-// The lists that are merged: the capability a server declares to have one,
-// the result's key, and what names an item, for calls and for clashes.
-const LISTS = {
-  'tools/list': { capability: 'tools', key: 'tools', id: 'name', what: 'tool' },
-  'prompts/list': {
-    capability: 'prompts',
-    key: 'prompts',
-    id: 'name',
-    what: 'prompt',
-  },
-  'resources/list': {
-    capability: 'resources',
-    key: 'resources',
-    id: 'uri',
-    what: 'resource',
-  },
-  'resources/templates/list': {
-    capability: 'resources',
-    key: 'resourceTemplates',
-    id: 'uriTemplate',
-    what: 'resource template',
-  },
-} as const
-type ListMethod = keyof typeof LISTS
-const isList = (method: string): method is ListMethod => method in LISTS
-
-// The requests that go to the one server that has what they name.
-const NAMED: Record<string, ListMethod> = {
-  'tools/call': 'tools/list',
-  'prompts/get': 'prompts/list',
-}
-const BY_URI = new Set([
-  'resources/read',
-  'resources/subscribe',
-  'resources/unsubscribe',
-])
-
-const LIST_CHANGED = /^notifications\/(tools|prompts|resources)\/list_changed$/
-
-// Whether a URI template (RFC 6570) could have produced `uri`. A simple
-// expression stays inside a path segment; the operators may span several.
-const templateMatches = (template: string, uri: string) =>
-  new RegExp(
-    `^${template
-      .split(/(\{[^}]*\})/)
-      .map((part, i) =>
-        i % 2 === 0
-          ? part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          : /^\{[+#/.;?&]/.test(part)
-            ? '.*'
-            : '[^/]*',
-      )
-      .join('')}$`,
-  ).test(uri)
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-
-// Capabilities together: what any server has, the combined server has.
-const union = (
-  into: Record<string, unknown>,
-  from: Record<string, unknown>,
-) => {
-  for (const [key, value] of Object.entries(from)) {
-    const present = into[key]
-    if (isObject(present) && isObject(value)) union(present, value)
-    else into[key] = present || (isObject(value) ? union({}, value) : value)
-  }
-  return into
-}
 
 /** One combined server within a session: its peer and what it declared. */
 class Backend {

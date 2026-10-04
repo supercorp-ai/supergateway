@@ -59,6 +59,9 @@ export interface InnerServer {
   cwd?: string
   headers?: Record<string, string>
   oauth2Bearer?: string
+  /** A combined server's own tool settings; an entry's are its options. */
+  toolPrefix?: string
+  tools?: string[]
 }
 
 export interface Entry extends EndpointOptions {
@@ -186,7 +189,15 @@ const ENTRY_KEYS = new Set<string>([
   'path',
   'mcpServers',
 ])
-const INNER_KEYS = new Set<string>([...SERVER_KEYS, 'headers', 'oauth2Bearer'])
+// A combined server has what is about the server itself: how to reach a
+// remote one, and which of its tools are seen, under which names.
+const INNER_KEYS = new Set<string>([
+  ...SERVER_KEYS,
+  'headers',
+  'oauth2Bearer',
+  'toolPrefix',
+  'tools',
+])
 // Settings for the URL an entry is served at, which a combined server, served
 // at its entry's URL, can't have.
 const URL_ONLY_KEYS = new Set<string>(
@@ -444,6 +455,14 @@ function readServer(
       [...path, 'oauth2Bearer'],
       fail,
     )
+  if (inner && 'toolPrefix' in raw)
+    server.toolPrefix = ENDPOINT_READERS.toolPrefix(
+      raw.toolPrefix,
+      [...path, 'toolPrefix'],
+      fail,
+    )
+  if (inner && 'tools' in raw)
+    server.tools = ENDPOINT_READERS.tools(raw.tools, [...path, 'tools'], fail)
   return server
 }
 

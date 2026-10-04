@@ -736,13 +736,106 @@ test('cliForEntry: an empty key from beside --config is still passed', () => {
   assert.equal(argv.apiKeyFile, '')
 })
 
-test('cliForEntry: a combined entry has no command line', () => {
+test('cliForEntry: a combined entry selects the mode, and its servers ride along', () => {
   const config = loaded({
-    mcpServers: { a: { mcpServers: { b: { command: 'x' } } } },
+    toolPrefix: 'all_',
+    mcpServers: {
+      a: {
+        stateful: true,
+        outputTransport: 'streamableHttp',
+        mcpServers: {
+          local: { command: 'node', args: ['srv.js'], env: { K: 'v' } },
+          shell: { stdio: 'sh-server --x', toolPrefix: 'sh_', tools: ['run'] },
+          far: {
+            url: 'http://h/mcp',
+            type: 'http',
+            headers: { 'x-team': 'core' },
+            oauth2Bearer: 'tok',
+          },
+          plain: { url: 'http://h/sse', type: 'sse' },
+        },
+      },
+    },
   })
-  assert.throws(() => cliForEntry(config, entryOf(config), [], []), {
-    message: 'A combined entry has no command line equivalent',
+  assert.deepEqual(cliForEntry(config, entryOf(config), [], []), {
+    args: [
+      // Only selects the mode: the servers are `members`.
+      '--stdio=a',
+      '--outputTransport=streamableHttp',
+      '--ssePath=/a/sse',
+      '--messagePath=/a/message',
+      '--streamableHttpPath=/a/mcp',
+      '--toolPrefix=all_',
+      '--stateful',
+    ],
+    members: [
+      {
+        name: 'local',
+        command: {
+          command: 'node',
+          args: ['srv.js'],
+          env: { K: 'v' },
+          cwd: undefined,
+        },
+        upstream: undefined,
+        toolPrefix: undefined,
+        tools: undefined,
+      },
+      {
+        name: 'shell',
+        command: 'sh-server --x',
+        upstream: undefined,
+        toolPrefix: 'sh_',
+        tools: ['run'],
+      },
+      {
+        name: 'far',
+        command: undefined,
+        upstream: {
+          url: 'http://h/mcp',
+          type: 'streamableHttp',
+          headers: { 'x-team': 'core', Authorization: 'Bearer tok' },
+        },
+        toolPrefix: undefined,
+        tools: undefined,
+      },
+      {
+        name: 'plain',
+        command: undefined,
+        upstream: { url: 'http://h/sse', type: 'sse', headers: {} },
+        toolPrefix: undefined,
+        tools: undefined,
+      },
+    ],
   })
+})
+
+test("cliForEntry: a combined entry's output is its default when unset", () => {
+  const output = (mcpServers: Record<string, unknown>) => {
+    const config = loaded({ mcpServers: { a: { mcpServers } } })
+    return cliForEntry(config, entryOf(config), [], []).args[1]
+  }
+  // Any local server: SSE, as one alone. Only remote ones: stdio.
+  assert.equal(output({ b: { command: 'x' } }), '--outputTransport=sse')
+  assert.equal(
+    output({ b: { url: 'http://h/mcp', type: 'http' } }),
+    '--outputTransport=stdio',
+  )
+})
+
+test("printableConfig: a combined server's tool settings are printed and read back", () => {
+  const config = loaded({
+    mcpServers: {
+      a: {
+        outputTransport: 'sse',
+        mcpServers: {
+          b: { command: 'x', toolPrefix: 'b_', tools: ['one'] },
+          c: { command: 'y' },
+        },
+      },
+    },
+  })
+  assert.deepEqual(loaded(printableConfig(config)), config)
 })
 
 // --- Starting a child ---

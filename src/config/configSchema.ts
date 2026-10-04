@@ -18,11 +18,6 @@ const text = (description: string): Schema => ({
   pattern: '\\S',
   description,
 })
-const texts = (description: string): Schema => ({
-  type: 'array',
-  items: { type: 'string', pattern: '\\S' },
-  description,
-})
 const whole = (minimum: number, description: string): Schema => ({
   type: 'integer',
   minimum,

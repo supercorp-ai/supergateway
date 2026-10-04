@@ -15,6 +15,18 @@ export const redactUrl = (url: URL): string => {
 }
 
 /**
+ * The URL as `--printConfig` shows it: the whole query replaced. That output
+ * gets pasted into issues, and a key goes by any name (`?k=`, `?access=`) or
+ * by none (`?<the key>`). A URL with no query is returned as it was written.
+ */
+export const redactQuery = (url: string): string => {
+  const parsed = new URL(url)
+  if (!parsed.search) return url
+  parsed.search = 'redacted'
+  return parsed.href
+}
+
+/**
  * The upstream URL, refused if it carries a user name or password.
  *
  * fetch refuses such a URL ("Request cannot be constructed from a URL that

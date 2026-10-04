@@ -2,75 +2,182 @@ import { spawn } from 'child_process'
 import express from 'express'
 import cors, { type CorsOptions } from 'cors'
 import { createServer } from 'http'
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
-import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
+import type { Mount } from '../lib/serve.js'
+import { announceGateway } from '../lib/gatewayListing.js'
+import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { ChildInitialization } from '../lib/childInitialization.js'
 import {
   ChildHandoff,
-  ChildLink,
   type ChildOwner,
+  type StartPeer,
 } from '../lib/childHandoff.js'
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { ConnectionChild } from '../lib/connectionChild.js'
+import { requireApiKey, verifyApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
+import {
+  healthHandler,
+  serverHealthOf,
+  type HealthCheck,
+} from '../lib/serverHealth.js'
 
-export interface StdioToWsArgs {
-  stdioCmd: string
+interface StdioToWsOptions {
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   messagePath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
+  // The keys a client must present; none, or left out, means no check.
+  apiKeys?: string[]
+}
+
+/**
+ * One WebSocket server among those a gateway serves. The port is the
+ * gateway's: given, it is announced with the server's settings, as it is
+ * when the server has the port to itself.
+ */
+/** A server and how it is served over WebSocket. */
+export type StdioToWsArgs = ServerSource & StdioToWsOptions
+
+export type StdioToWsMountArgs = ServerSource &
+  Omit<StdioToWsOptions, 'port'> & {
+    port?: number
+    /** The URL path the server's requests start with; `/` by default. */
+    path?: string
+  }
+
+/**
+ * The WebSocket clients and their children. Each connection has its own child,
+ * as each SSE connection does since #221. With one child shared by every
+ * client, notifications and the server's own requests could only be
+ * broadcast: one client received another's logs and progress, and could be
+ * asked to answer its sampling.
+ */
+class WsConnections {
+  private readonly connections = new Map<string, ConnectionChild>()
+  // Assigned as soon as the transport exists: it is built with this object's
+  // handlers, and calls none of them before it starts.
+  transport!: WebSocketServerTransport
+
+  constructor(
+    private readonly source: ServerSource,
+    private readonly children: OwnedChildProcesses,
+    private readonly handoff: ChildHandoff,
+    private readonly logger: Logger,
+  ) {}
+
+  /**
+   * A new connection's own child, spawned and recorded under its client; or,
+   * when the spawn throws, the client disconnected instead.
+   */
+  open(clientId: string) {
+    this.logger.info(`New WebSocket connection: ${clientId}`)
+    let server: StartPeer
+    try {
+      server = startServer(
+        spawn,
+        this.source,
+        this.children,
+        this.logger,
+        `Client ${clientId}`,
+      )
+    } catch (err) {
+      // Thrown inside the socket's connection event it would take down the
+      // gateway and every other client with it.
+      this.logger.error(
+        `Failed to start the MCP server (client ${clientId}):`,
+        err,
+      )
+      this.transport.disconnect(clientId, 'MCP server process failed')
+      return
+    }
+    // A client that reconnects and carries on without initializing gets its
+    // new child initialized by the gateway (GW-034).
+    const connection = new ConnectionChild(
+      server,
+      this.owner(clientId),
+      this.handoff,
+      this.logger,
+      `Client ${clientId}`,
+    )
+    this.connections.set(clientId, connection)
+  }
+
+  /** Where a connection's child delivers what it says, and how it ends. */
+  private owner(clientId: string): ChildOwner {
+    const logger = this.logger
+    // What this connection has sent the client since its stdout was last
+    // read, for the child to wait on.
+    let sent: Promise<void> | undefined
+    return {
+      message: (message, line) => {
+        logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
+        sent = this.transport.send(message, clientId)
+      },
+      nonJson: (line) =>
+        logger.error(`Child non-JSON (client ${clientId}): ${line}`),
+      stderr: (text) =>
+        logger.info(`Child stderr (client ${clientId}): ${text}`),
+      failure: (kind, err) => {
+        logger.error(
+          `${kind === 'stdin' ? 'Child stdin failure' : 'Child failure'} (client ${clientId}):`,
+          err,
+        )
+        this.end(clientId, 'MCP server process failed')
+      },
+      exit: (code, signal) => {
+        logger.info(
+          `Child exited (client ${clientId}): code=${code}, signal=${signal}`,
+        )
+        this.end(clientId, 'MCP server process exited')
+      },
+      output: () => {
+        const pending = sent
+        sent = undefined
+        return pending
+      },
+    }
+  }
+
+  /** A message from a client, for its child. */
+  fromClient(message: JSONRPCMessage, clientId: string) {
+    const line = JSON.stringify(message)
+    const connection = this.connections.get(clientId)
+    // A frame can still arrive after the child ended, while the socket `end`
+    // closed is finishing its close handshake.
+    if (!connection) {
+      this.logger.info(`Dropped a message for ended client ${clientId}`)
+      return
+    }
+    this.logger.info(`WebSocket → Child (client ${clientId}): ${line}`)
+    connection.fromClient(message)
+  }
+
+  /**
+   * A connection's child is stopped once, whichever ending comes first: the
+   * client leaving, the child exiting, or its stdio failing. Only the client
+   * leaving can hand the child on instead.
+   */
+  end(clientId: string, reason: string, clientLeft = false) {
+    const connection = this.connections.get(clientId)
+    if (!connection) return
+    this.connections.delete(clientId)
+    connection.end(clientLeft)
+    this.transport.disconnect(clientId, reason)
+  }
 }
 
 export async function stdioToWs(args: StdioToWsArgs) {
-  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
-    args
-  logger.info(`  - port: ${port}`)
-  logger.info(`  - stdio: ${stdioCmd}`)
-  logger.info(`  - messagePath: ${messagePath}`)
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
-
-  const children = new OwnedChildProcesses(logger)
-  // Each connection has its own child, as each SSE connection does since
-  // #221. With one child shared by every client, notifications and the
-  // server's own requests could only be broadcast: one client received
-  // another's logs and progress, and could be asked to answer its sampling.
-  const connections = new Map<
-    string,
-    {
-      link: ChildLink
-      owner: ChildOwner
-      initialization: ChildInitialization
-      // Whether all the client has sent is its initialize request, which is
-      // when a child it abandons can be handed to an identical retry (GW-035).
-      received: number
-      onlyInitialize: boolean
-    }
-  >()
-  const handoff = new ChildHandoff(logger)
-
-  const app = express()
-
-  if (corsOrigin) {
-    app.use(cors({ origin: corsOrigin }))
-  }
-
-  // With no process-wide child there is nothing to report but that the
-  // gateway is up, as in SSE mode.
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      res.send('ok')
-    })
-  }
-
+  const { port, host, logger } = args
+  const mount = stdioToWsMount(args)
   // @types/express declares RequestHandler as returning `void | Promise<void>`,
   // and Application extends it, so the rule sees a possibly-async handler.
   // Express 4's app is not one: it is `function (req, res, next) {
@@ -78,144 +185,101 @@ export async function stdioToWs(args: StdioToWsArgs) {
   // http.createServer is the documented pattern, so this is a declaration
   // artifact rather than a floating promise.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  const httpServer = keepConnectionsAlive(createServer(app))
+  const httpServer = keepConnectionsAlive(createServer(mount.app))
+  httpServer.on('upgrade', mount.upgrade.handle)
+  onSignals({ logger, cleanup: mount.close, drainStdin: true })
+  listenOn(httpServer, port, host, () => {
+    logger.info(`Listening on port ${port}`)
+    mount.listening(host, port)
+  })
+}
 
-  // A connection's child is stopped once, whichever ending comes first: the
-  // client leaving, the child exiting, or its stdio failing. Only the client
-  // leaving can hand the child on instead.
-  const end = (clientId: string, reason: string, clientLeft = false) => {
-    const connection = connections.get(clientId)
-    if (!connection) return
-    connections.delete(clientId)
-    if (clientLeft)
-      handoff.release(
-        connection.link,
-        connection.onlyInitialize,
-        `Client ${clientId}`,
-      )
-    else void connection.link.stop()
-    wsTransport.disconnect(clientId, reason)
+export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
+  const {
+    port,
+    host,
+    messagePath,
+    logger,
+    healthEndpoints,
+    healthCheck,
+    corsOrigin,
+    apiKeys = [],
+    path = '/',
+  } = args
+  announceGateway(logger, {
+    port,
+    host,
+    source: args,
+    settings: [`messagePath: ${messagePath}`],
+    corsOrigin,
+    healthEndpoints,
+    healthCheck,
+    apiKeys,
+  })
+
+  const children = new OwnedChildProcesses(logger)
+  const connections = new WsConnections(
+    args,
+    children,
+    new ChildHandoff(logger),
+    logger,
+  )
+
+  const app = express()
+
+  if (corsOrigin) {
+    app.use(cors({ origin: corsOrigin }))
   }
 
-  const wsTransport: WebSocketServerTransport = new WebSocketServerTransport(
-    { path: messagePath, server: httpServer },
+  // With no process-wide child, the gateway alone is up, or, with
+  // --healthCheck server, a server started for the check answers.
+  const health = serverHealthOf(
+    healthCheck,
+    children,
+    (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+    logger,
+  )
+  for (const ep of healthEndpoints) app.get(ep, healthHandler(health))
+
+  // Plain HTTP requests; the upgrade itself is checked by `verifyClient`.
+  app.use(requireApiKey(apiKeys, logger))
+
+  const wsTransport = new WebSocketServerTransport(
     {
-      onconnection: (clientId) => {
-        logger.info(`New WebSocket connection: ${clientId}`)
-        let child
-        try {
-          child = spawn(stdioCmd, children.spawnOptions)
-        } catch (err) {
-          // Thrown inside the socket's connection event it would take down
-          // the gateway and every other client with it.
-          logger.error(
-            `Failed to start the MCP server (client ${clientId}):`,
-            err,
-          )
-          wsTransport.disconnect(clientId, 'MCP server process failed')
-          return
-        }
-        // What this connection has sent the client since its stdout was
-        // last read, for the child to wait on.
-        let sent: Promise<void> | undefined
-        const owner: ChildOwner = {
-          message: (message, line) => {
-            if (initialization.fromChild(message)) return
-            logger.info(`Child → WebSocket (client ${clientId}): ${line}`)
-            sent = wsTransport.send(message, clientId)
-          },
-          nonJson: (line) =>
-            logger.error(`Child non-JSON (client ${clientId}): ${line}`),
-          stderr: (text) =>
-            logger.info(`Child stderr (client ${clientId}): ${text}`),
-          failure: (kind, err) => {
-            logger.error(
-              `${kind === 'stdin' ? 'Child stdin failure' : 'Child failure'} (client ${clientId}):`,
-              err,
-            )
-            end(clientId, 'MCP server process failed')
-          },
-          exit: (code, signal) => {
-            logger.info(
-              `Child exited (client ${clientId}): code=${code}, signal=${signal}`,
-            )
-            end(clientId, 'MCP server process exited')
-          },
-          output: () => {
-            const pending = sent
-            sent = undefined
-            return pending
-          },
-        }
-        const connection = {
-          link: new ChildLink(child, children.own(child), owner),
-          owner,
-          // A client that reconnects and carries on without initializing gets
-          // its new child initialized by the gateway (GW-034).
-          initialization: new ChildInitialization(
-            (message) => connection.link.write(message),
-            logger,
-            `Client ${clientId}`,
-          ),
-          received: 0,
-          onlyInitialize: false,
-        }
-        const { initialization } = connection
-        connections.set(clientId, connection)
-      },
-      onmessage: (message, clientId) => {
-        const line = JSON.stringify(message)
-        const connection = connections.get(clientId)
-        // A frame can still arrive after the child ended, while the socket
-        // `end` closed is finishing its close handshake.
-        if (!connection) {
-          logger.info(`Dropped a message for ended client ${clientId}`)
-          return
-        }
-        logger.info(`WebSocket → Child (client ${clientId}): ${line}`)
-        connection.received++
-        connection.onlyInitialize =
-          connection.received === 1 &&
-          isInitializeRequest(message) &&
-          'id' in message
-        if (connection.onlyInitialize) {
-          const adopted = handoff.adopt(
-            message,
-            connection.owner,
-            `Client ${clientId}`,
-          )
-          if (adopted) {
-            // This connection's own child has been sent nothing.
-            handoff.discard(connection.link, `Client ${clientId}`)
-            connection.link = adopted
-            connection.initialization.adopted()
-            return
-          }
-        }
-        connection.initialization.fromClient(message)
-      },
+      path: messagePath,
+      verifyClient: verifyApiKey(apiKeys, logger),
+    },
+    {
+      onconnection: (clientId) => connections.open(clientId),
+      onmessage: (message, clientId) =>
+        connections.fromClient(message, clientId),
       ondisconnection: (clientId) => {
         logger.info(`WebSocket connection closed: ${clientId}`)
-        end(clientId, 'Client disconnected', true)
+        connections.end(clientId, 'Client disconnected', true)
       },
       onerror: (err) => {
         logger.error(`WebSocket error: ${err.message}`)
       },
     },
   )
-
-  onSignals({
-    logger,
-    cleanup: async () => {
-      await Promise.all([wsTransport.close(), children.close()])
-    },
-    drainStdin: true,
-  })
+  connections.transport = wsTransport
 
   wsTransport.start()
 
-  httpServer.listen(port, () => {
-    logger.info(`Listening on port ${port}`)
-    logger.info(`WebSocket endpoint: ws://localhost:${port}${messagePath}`)
-  })
+  return {
+    app,
+    path,
+    upgrade: {
+      path: messagePath,
+      handle: (req, socket, head) =>
+        wsTransport.handleUpgrade(req, socket, head),
+    },
+    listening: (listenHost, listenPort) =>
+      logger.info(
+        `WebSocket endpoint: ws://${endpointHost(listenHost)}:${listenPort}${messagePath}`,
+      ),
+    close: async () => {
+      await Promise.all([wsTransport.close(), children.close()])
+    },
+  }
 }

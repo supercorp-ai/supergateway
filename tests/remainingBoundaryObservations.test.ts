@@ -29,14 +29,12 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       const { stdioToSse } = await import('../src/gateways/stdioToSse.js')
       await stdioToSse(args)
     } else if (mode === 'stateful') {
-      const { stdioToStatefulStreamableHttp } = await import(
-        '../src/gateways/stdioToStatefulStreamableHttp.js'
-      )
+      const { stdioToStatefulStreamableHttp } =
+        await import('../src/gateways/stdioToStatefulStreamableHttp.js')
       await stdioToStatefulStreamableHttp(args)
     } else if (mode === 'stateless') {
-      const { stdioToStatelessStreamableHttp } = await import(
-        '../src/gateways/stdioToStatelessStreamableHttp.js'
-      )
+      const { stdioToStatelessStreamableHttp } =
+        await import('../src/gateways/stdioToStatelessStreamableHttp.js')
       await stdioToStatelessStreamableHttp(args)
     } else {
       t.mock.module(
@@ -59,6 +57,8 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
       t.mock.module('http', {
         namedExports: {
           createServer: () => ({
+            // Where the gateway hands WebSocket upgrades on.
+            on() {},
             listen(_port: number, callback: () => void) {
               callback()
             },

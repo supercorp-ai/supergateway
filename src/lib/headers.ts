@@ -1,3 +1,4 @@
+import type { ServerResponse } from 'node:http'
 import { Logger } from '../types.js'
 
 /**
@@ -73,8 +74,12 @@ const parseHeaders = ({
       // Only the first token, never the whole argument. `--header
       // "Authorization Bearer abc"` is a plausible typo, and echoing it back
       // would put the credential in the log by a second route. The first token
-      // is the part that identifies which argument was wrong.
-      logger.error(`Invalid header format: ${header.split(/\s/)[0]}, ignoring`)
+      // is the part that identifies which argument was wrong. Alone, it may be
+      // the credential itself (`--header "$TOKEN"`), so then nothing is shown.
+      const [first, ...rest] = header.trim().split(/\s+/)
+      logger.error(
+        `Invalid header format: ${rest.length ? first : '(no colon)'}, ignoring`,
+      )
       return acc
     }
 
@@ -119,3 +124,12 @@ export const headers = ({
 
   return headers
 }
+
+/** Puts --header's headers on one of the gateway's own responses. */
+export const setResponseHeaders = (
+  res: Pick<ServerResponse, 'setHeader'>,
+  headers: Record<string, string>,
+) =>
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value)
+  })

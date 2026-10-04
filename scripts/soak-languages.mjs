@@ -54,6 +54,7 @@ const commands = createSoakCommandGroup({
   root,
   events,
   env: { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry },
+  keepGoing: true,
 })
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.once(signal, () => commands.cancel(signal, true))
@@ -68,26 +69,35 @@ events({
 })
 let cycle = 0
 let error
+// A failed driver is recorded and the cycle goes on (keepGoing); only
+// cancellation stops it.
+const failures = []
 try {
   // Always complete one full cycle, even in a short harness canary.
   do {
     for (const [driver, binary] of drivers)
-      await commands.run(
-        `cycle-${cycle}-${driver}`,
-        ['tests/clients/run-battery.mjs', driver, binary],
-        6 * 60000,
-        { BATTERY_REPORT: resolve(root, `cycle-${cycle}-${driver}.json`) },
-      )
+      await commands
+        .run(
+          `cycle-${cycle}-${driver}`,
+          ['tests/clients/run-battery.mjs', driver, binary],
+          6 * 60000,
+          { BATTERY_REPORT: resolve(root, `cycle-${cycle}-${driver}.json`) },
+        )
+        .catch((caught) => {
+          if (commands.stopped) throw caught
+          failures.push(String(caught))
+        })
     events({ phase: 'cycle-complete', cycle: cycle++ })
     await delay(
       Math.min(10000, Math.max(0, deadline - Date.now())),
       undefined,
       { signal: commands.signal },
     ).catch(() => {})
-  } while (Date.now() < deadline && !commands.failed)
+  } while (Date.now() < deadline && !commands.stopped)
 } catch (caught) {
   error = String(caught)
 }
+if (failures.length) error = [error, ...failures].filter(Boolean).join('\n')
 // As in overnight-release.mjs: a runner stopped because another job failed is
 // not a passing lane, but it is not evidence against the release either.
 const status = commands.cancelledExternally

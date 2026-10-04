@@ -4,81 +4,116 @@ import bodyParser from 'body-parser'
 import cors, { type CorsOptions } from 'cors'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import {
-  JSONRPCMessage,
-  isInitializeRequest,
-} from '@modelcontextprotocol/sdk/types.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
-import { onSignals } from '../lib/onSignals.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
-import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
-import { describeHeaders } from '../lib/headers.js'
 import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
+import { endpointHost, listenOn } from '../lib/listenHost.js'
+import type { Mount } from '../lib/serve.js'
+import { setResponseHeaders } from '../lib/headers.js'
+import { announceGateway } from '../lib/gatewayListing.js'
+import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
 import { drained } from '../lib/outputBackpressure.js'
-import { ChildInitialization } from '../lib/childInitialization.js'
 import {
   ChildHandoff,
-  ChildLink,
   type ChildOwner,
+  type StartPeer,
 } from '../lib/childHandoff.js'
+import { ConnectionChild } from '../lib/connectionChild.js'
+import { requireApiKey } from '../lib/apiKey.js'
+import { startServer, type ServerSource } from '../lib/serverSource.js'
+import {
+  healthHandler,
+  serverHealthOf,
+  type HealthCheck,
+} from '../lib/serverHealth.js'
 
-export interface StdioToSseArgs {
-  stdioCmd: string
+interface StdioToSseOptions {
   port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
   baseUrl: string
   ssePath: string
   messagePath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
   healthEndpoints: string[]
+  /** What the health endpoints check; the gateway alone by default. */
+  healthCheck?: HealthCheck
   headers: Record<string, string>
+  // The keys a client must present; none, or left out, means no check.
+  apiKeys?: string[]
 }
 
-const setResponseHeaders = ({
-  res,
-  headers,
-}: {
-  res: express.Response
-  headers: Record<string, string>
-}) =>
-  Object.entries(headers).forEach(([key, value]) => {
-    res.setHeader(key, value)
-  })
+/**
+ * One SSE server among those a gateway serves. The port is the gateway's:
+ * given, it is announced with the server's settings, as it is when the
+ * server has the port to itself.
+ */
+/** A server and how it is served over SSE. */
+export type StdioToSseArgs = ServerSource & StdioToSseOptions
+
+export type StdioToSseMountArgs = ServerSource &
+  Omit<StdioToSseOptions, 'port'> & {
+    port?: number
+    /** The URL path the server's requests start with; `/` by default. */
+    path?: string
+  }
 
 export async function stdioToSse(args: StdioToSseArgs) {
+  const { port, host, logger } = args
+  const mount = stdioToSseMount(args)
+  onSignals({ logger, cleanup: mount.close, drainStdin: true })
+  keepConnectionsAlive(
+    listenOn(mount.app, port, host, () => {
+      logger.info(`Listening on port ${port}`)
+      mount.listening(host, port)
+    }),
+  )
+}
+
+export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   const {
-    stdioCmd,
     port,
+    host,
     baseUrl,
     ssePath,
     messagePath,
     logger,
     corsOrigin,
     healthEndpoints,
+    healthCheck,
     headers,
+    apiKeys = [],
+    path = '/',
   } = args
 
-  logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  logger.info(`  - port: ${port}`)
-  logger.info(`  - stdio: ${stdioCmd}`)
-  if (baseUrl) {
-    logger.info(`  - baseUrl: ${baseUrl}`)
-  }
-  logger.info(`  - ssePath: ${ssePath}`)
-  logger.info(`  - messagePath: ${messagePath}`)
-
-  logger.info(
-    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
-  )
-  logger.info(
-    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
-  )
+  announceGateway(logger, {
+    headers,
+    port,
+    host,
+    source: args,
+    settings: [
+      ...(baseUrl ? [`baseUrl: ${baseUrl}`] : []),
+      `ssePath: ${ssePath}`,
+      `messagePath: ${messagePath}`,
+    ],
+    corsOrigin,
+    healthEndpoints,
+    healthCheck,
+    apiKeys,
+  })
 
   const children = new OwnedChildProcesses(logger)
   const handoff = new ChildHandoff(logger)
-  onSignals({ logger, cleanup: () => children.close(), drainStdin: true })
+  const health = serverHealthOf(
+    healthCheck,
+    children,
+    (quiet) => startServer(spawn, args, children, quiet, 'Health check'),
+    logger,
+  )
 
   // One `Server` per session, not one per process.
   //
@@ -92,14 +127,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
   // made this the most reported crash in the tracker (#112, #138, #153).
   //
   // The shape is taken from @sfasching's #113.
-  const sessions: Record<
-    string,
-    {
-      server: Server
-      transport: SSEServerTransport
-      response: express.Response
-    }
-  > = {}
+  const sessions: SseSessions = {}
 
   const app = express()
   app.use((_req, res, next) => {
@@ -116,28 +144,19 @@ export async function stdioToSse(args: StdioToSseArgs) {
     return bodyParser.json()(req, res, next)
   })
 
-  for (const ep of healthEndpoints) {
-    app.get(ep, (_req, res) => {
-      setResponseHeaders({
-        res,
-        headers,
-      })
-      res.send('ok')
-    })
-  }
+  for (const ep of healthEndpoints)
+    app.get(
+      ep,
+      healthHandler(health, (res) => setResponseHeaders(res, headers)),
+    )
 
-  app.get(ssePath, async (req, res) => {
-    logger.info(`New SSE connection from ${req.ip}`)
+  // After CORS and the health endpoints, which stay open; before the stream
+  // and the message endpoint.
+  app.use(requireApiKey(apiKeys, logger))
 
-    setResponseHeaders({
-      res,
-      headers,
-    })
-    if (children.closing) {
-      res.status(503).send('Gateway is shutting down')
-      return
-    }
-
+  // A new connection's transport and the session's own `Server`, connected; or
+  // nothing, when either failed or the client was gone before it finished.
+  const openSseTransport = async (res: express.Response) => {
     // Without its trailing slash, `https://host/` would give `//message`,
     // which a client reads as a URL on a host named "message".
     const sseTransport = new SSEServerTransport(
@@ -159,7 +178,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
         )
       if (!res.headersSent) res.status(500).end()
       else res.destroy()
-      return
+      return undefined
     }
     // A client can disappear while the SDK is starting the transport. Never
     // launch a child for a response that has already gone away.
@@ -169,82 +188,209 @@ export async function stdioToSse(args: StdioToSseArgs) {
         .catch((err) =>
           logger.error('Failed to close abandoned SSE session:', err),
         )
+      return undefined
+    }
+    return { sseTransport, sessionServer }
+  }
+
+  app.get(ssePath, async (req, res) => {
+    logger.info(`New SSE connection from ${req.ip}`)
+
+    setResponseHeaders(res, headers)
+    if (children.closing) {
+      res.status(503).send('Gateway is shutting down')
       return
     }
 
-    // `SSEServerTransport.sessionId` is declared `string`, not `string |
-    // undefined`: the SDK assigns it in the constructor. The guard that used to
-    // wrap this could not be false, so it was an obligation no test could ever
-    // discharge rather than a defence against anything.
-    const sessionId = sseTransport.sessionId
-    const label = `Session ${sessionId}`
-    sessions[sessionId] = {
-      server: sessionServer,
-      transport: sseTransport,
-      response: res,
+    const opened = await openSseTransport(res)
+    if (!opened) return
+    const { sseTransport, sessionServer } = opened
+    new SseSession(
+      sessions,
+      sseTransport,
+      sessionServer,
+      req,
+      res,
+      startServer(
+        spawn,
+        args,
+        children,
+        logger,
+        `Session ${sseTransport.sessionId}`,
+      ),
+      handoff,
+      logger,
+    )
+  })
+
+  // @ts-ignore
+  app.post(messagePath, async (req, res) => {
+    const sessionId = req.query.sessionId as string
+
+    setResponseHeaders(res, headers)
+
+    if (!sessionId) {
+      return res.status(400).send('Missing sessionId parameter')
     }
 
-    // The client's calls the child has not answered yet.
-    const pending = new Set<string | number>()
-    // Whether all the client has sent is its initialize request, which is when
-    // a child it abandons can be handed to an identical retry (GW-035).
-    let received = 0
-    let onlyInitialize = false
-
-    // Closing the session's own `Server` is what releases its transport. Without
-    // it the object stays connected and the next `connect` on it would throw
-    // again — the same failure one indirection further along.
-    //
-    // The order matters. `server.close()` closes its transport, and closing an
-    // `SSEServerTransport` fires `onclose`, which arrives back here. Removing
-    // the session *before* closing is what stops that round trip becoming
-    // unbounded recursion — the hazard @RussellZager identified on #113 — and
-    // it is also why the ending that started it is the only one logged.
-    //
-    // Only a client leaving can hand its child on; a session that ends because
-    // its child failed stops it.
-    const endSession = (report: () => void, clientLeft = false) => {
-      if (!sessions[sessionId]) return
-      report()
-      const { server } = sessions[sessionId]
-      delete sessions[sessionId]
-      if (clientLeft) handoff.release(link, onlyInitialize, label)
-      else void link.stop()
-      server.close().catch((err) => {
-        logger.error(`Failed to close session ${sessionId}:`, err)
-      })
+    const session = sessions[sessionId]
+    // A session is stored with its transport, and kept only while it is open.
+    if (session) {
+      logger.info(`POST to SSE transport (session ${sessionId})`)
+      await session.transport.handlePostMessage(req, res)
+    } else {
+      res.status(503).send(`No active SSE connection for session ${sessionId}`)
     }
+  })
 
-    // A child that fails with calls in flight used to end the session
-    // silently, and the SSE client waited out its own timeout on each one (60
-    // seconds by default). Answer them first, as stateful HTTP does, then end.
-    const fail = () => {
-      // `send` writes to the stream before it returns, so the replies are
-      // queued ahead of the close. One that cannot be sent is a stream already
-      // gone; the session ends regardless, and at once, so no new message is
-      // accepted for a server that is not there.
-      void Promise.allSettled(
-        [...pending].map((id) =>
-          sseTransport.send({
-            jsonrpc: '2.0',
-            id,
-            error: { code: -32603, message: 'MCP server process failed' },
-          }),
-        ),
+  return {
+    app,
+    path,
+    listening: (listenHost, listenPort) => {
+      logger.info(
+        `SSE endpoint: http://${endpointHost(listenHost)}:${listenPort}${ssePath}`,
       )
-      pending.clear()
-      endSession(() => {})
+      logger.info(
+        `POST messages: http://${endpointHost(listenHost)}:${listenPort}${messagePath}`,
+      )
+    },
+    close: () => children.close(),
+  }
+}
+
+type SseSessions = Record<
+  string,
+  {
+    server: Server
+    transport: SSEServerTransport
+    response: express.Response
+  }
+>
+
+/**
+ * One SSE connection: its own `Server` and child, the client's calls the
+ * child has not answered yet, and how the connection ends.
+ */
+class SseSession {
+  // `SSEServerTransport.sessionId` is declared `string`, not `string |
+  // undefined`: the SDK assigns it in the constructor. The guard that used to
+  // wrap this could not be false, so it was an obligation no test could ever
+  // discharge rather than a defence against anything.
+  private readonly sessionId: string
+  private readonly label: string
+  // The client's calls the child has not answered yet.
+  private readonly pending = new Set<string | number>()
+  private readonly connection: ConnectionChild
+
+  /** Registers the session, links its child, and listens to the client. */
+  constructor(
+    private readonly sessions: SseSessions,
+    private readonly transport: SSEServerTransport,
+    server: Server,
+    req: express.Request,
+    private readonly res: express.Response,
+    peer: StartPeer,
+    handoff: ChildHandoff,
+    private readonly logger: Logger,
+  ) {
+    const sessionId = (this.sessionId = transport.sessionId)
+    this.label = `Session ${sessionId}`
+    sessions[sessionId] = { server, transport, response: res }
+    this.connection = new ConnectionChild(
+      peer,
+      this.owner(),
+      handoff,
+      logger,
+      this.label,
+    )
+
+    transport.onmessage = (msg: JSONRPCMessage, extra) => {
+      if ('id' in msg && 'method' in msg) this.pending.add(msg.id!)
+      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
+      // The SDK's handlePostMessage passes `requestInfo` with every message;
+      // only `extra` itself is optional in its type.
+      const version = extra?.requestInfo!.headers['mcp-protocol-version']
+      this.connection.fromClient(
+        msg,
+        typeof version === 'string' ? version : undefined,
+      )
     }
 
-    const owner: ChildOwner = {
+    transport.onclose = () =>
+      this.end(
+        () => logger.info(`SSE connection closed (session ${sessionId})`),
+        true,
+      )
+
+    // The SDK also calls `onerror` for a single rejected POST (bad content
+    // type, oversized body, invalid JSON-RPC). The SSE stream is still alive;
+    // `onclose` and the client socket close handle actual session teardown.
+    transport.onerror = (err) =>
+      logger.error(`SSE error (session ${sessionId}):`, err)
+
+    req.on('close', () =>
+      this.end(
+        () => logger.info(`Client disconnected (session ${sessionId})`),
+        true,
+      ),
+    )
+  }
+
+  // Closing the session's own `Server` is what releases its transport. Without
+  // it the object stays connected and the next `connect` on it would throw
+  // again — the same failure one indirection further along.
+  //
+  // The order matters. `server.close()` closes its transport, and closing an
+  // `SSEServerTransport` fires `onclose`, which arrives back here. Removing
+  // the session *before* closing is what stops that round trip becoming
+  // unbounded recursion — the hazard @RussellZager identified on #113 — and
+  // it is also why the ending that started it is the only one logged.
+  //
+  // Only a client leaving can hand its child on; a session that ends because
+  // its child failed stops it.
+  private end(report: () => void, clientLeft = false) {
+    const { sessions, sessionId } = this
+    if (!sessions[sessionId]) return
+    report()
+    const { server } = sessions[sessionId]
+    delete sessions[sessionId]
+    this.connection.end(clientLeft)
+    server.close().catch((err) => {
+      this.logger.error(`Failed to close session ${sessionId}:`, err)
+    })
+  }
+
+  // A child that fails with calls in flight used to end the session
+  // silently, and the SSE client waited out its own timeout on each one (60
+  // seconds by default). Answer them first, as stateful HTTP does, then end.
+  private fail() {
+    // `send` writes to the stream before it returns, so the replies are
+    // queued ahead of the close. One that cannot be sent is a stream already
+    // gone; the session ends regardless, and at once, so no new message is
+    // accepted for a server that is not there.
+    void Promise.allSettled(
+      [...this.pending].map((id) =>
+        this.transport.send({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32603, message: 'MCP server process failed' },
+        }),
+      ),
+    )
+    this.pending.clear()
+    this.end(() => {})
+  }
+
+  private owner(): ChildOwner {
+    const { logger, sessionId, sessions } = this
+    return {
       message: (jsonMsg) => {
-        if (initialization.fromChild(jsonMsg)) return
         if ('id' in jsonMsg && !('method' in jsonMsg))
-          pending.delete(jsonMsg.id)
+          this.pending.delete(jsonMsg.id)
         logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
         if (!sessions[sessionId]) return
-        sseTransport.send(jsonMsg).catch((err) => {
-          endSession(() =>
+        this.transport.send(jsonMsg).catch((err) => {
+          this.end(() =>
             logger.error(`Failed to send to session ${sessionId}:`, err),
           )
         })
@@ -258,7 +404,7 @@ export async function stdioToSse(args: StdioToSseArgs) {
           `${kind === 'stdin' ? 'Child stdin failure' : 'Child failure'} (session ${sessionId}):`,
           err,
         )
-        fail()
+        this.fail()
       },
       exit: (code, signal) => {
         const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
@@ -267,90 +413,9 @@ export async function stdioToSse(args: StdioToSseArgs) {
           return
         }
         logger.error(detail)
-        fail()
+        this.fail()
       },
-      output: () => drained([res]),
+      output: () => drained([this.res]),
     }
-
-    const child = spawn(stdioCmd, children.spawnOptions)
-    let link = new ChildLink(child, children.own(child), owner)
-
-    // A reconnected client carries on without initializing its new child.
-    const initialization = new ChildInitialization(
-      (msg) => link.write(msg),
-      logger,
-      label,
-    )
-
-    sseTransport.onmessage = (msg: JSONRPCMessage, extra) => {
-      if ('id' in msg && 'method' in msg) pending.add(msg.id!)
-      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
-      received++
-      onlyInitialize = received === 1 && isInitializeRequest(msg) && 'id' in msg
-      if (onlyInitialize) {
-        const adopted = handoff.adopt(msg, owner, label)
-        if (adopted) {
-          // This session's own child has been sent nothing.
-          handoff.discard(link, label)
-          link = adopted
-          initialization.adopted()
-          return
-        }
-      }
-      const version = extra?.requestInfo?.headers['mcp-protocol-version']
-      initialization.fromClient(
-        msg,
-        typeof version === 'string' ? version : undefined,
-      )
-    }
-
-    sseTransport.onclose = () =>
-      endSession(
-        () => logger.info(`SSE connection closed (session ${sessionId})`),
-        true,
-      )
-
-    // The SDK also calls `onerror` for a single rejected POST (bad content
-    // type, oversized body, invalid JSON-RPC). The SSE stream is still alive;
-    // `onclose` and the client socket close handle actual session teardown.
-    sseTransport.onerror = (err) =>
-      logger.error(`SSE error (session ${sessionId}):`, err)
-
-    req.on('close', () =>
-      endSession(
-        () => logger.info(`Client disconnected (session ${sessionId})`),
-        true,
-      ),
-    )
-  })
-
-  // @ts-ignore
-  app.post(messagePath, async (req, res) => {
-    const sessionId = req.query.sessionId as string
-
-    setResponseHeaders({
-      res,
-      headers,
-    })
-
-    if (!sessionId) {
-      return res.status(400).send('Missing sessionId parameter')
-    }
-
-    const session = sessions[sessionId]
-    if (session?.transport?.handlePostMessage) {
-      logger.info(`POST to SSE transport (session ${sessionId})`)
-      await session.transport.handlePostMessage(req, res)
-    } else {
-      res.status(503).send(`No active SSE connection for session ${sessionId}`)
-    }
-  })
-
-  keepConnectionsAlive(
-    app.listen(port, () => {
-      logger.info(`Listening on port ${port}`)
-      logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
-      logger.info(`POST messages: http://localhost:${port}${messagePath}`)
-    }),
-  )
+  }
 }

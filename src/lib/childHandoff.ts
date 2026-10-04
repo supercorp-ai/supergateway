@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { StringDecoder } from 'node:string_decoder'
 import {
+  InitializeRequest,
   JSONRPCMessage,
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js'
@@ -17,61 +18,124 @@ export interface ChildOwner {
   message(message: any, line: string): void
   nonJson(line: string): void
   stderr(text: string): void
-  failure(kind: 'process' | 'stdin', err: Error): void
+  failure(kind: 'process' | 'stdin' | 'upstream', err: Error): void
   exit(code: number | null, signal: NodeJS.Signals | null): void
   /** What the child's stdout waits for before it is read again, if anything. */
   output(): Promise<void> | undefined
 }
 
 /**
- * One child process and its stdio, delivered to whichever owner holds it.
- *
- * It also remembers the initialize request the child received and whether the
- * child has answered it, which is what decides whether a child abandoned by
- * its client can be handed to the next one (GW-035).
+ * A session's MCP server, as a link drives it. A child process is one (see
+ * processPeer); what the link needs from it is only this.
  */
-export class ChildLink {
-  initialize?: { id: string | number; params: unknown }
-  answered = false
+export interface Peer {
+  write(message: JSONRPCMessage): void
+  /** No more input: a process finishes what it has, and exits. */
+  end(): void
+  /** Stops it, and resolves once it is gone. */
+  stop(): Promise<void>
+  /** Whether it has already ended by itself. */
+  readonly gone: boolean
+}
 
-  constructor(
-    readonly child: ChildProcessWithoutNullStreams,
-    readonly stop: () => Promise<void>,
-    public owner: ChildOwner,
-  ) {
-    child.on('error', (err) => this.owner.failure('process', err))
-    child.stdin.on('error', (err) => this.owner.failure('stdin', err))
-    child.on('exit', (code, signal) => this.owner.exit(code, signal))
+/** Starts a peer that delivers everything it says to `owner`. */
+export type StartPeer = (owner: ChildOwner) => Peer
+
+/**
+ * A child process as a peer: its stdout read as JSON lines, its stderr,
+ * failures and exit reported, and its stdout not read while `owner.output()`
+ * says to wait.
+ */
+export const processPeer =
+  (
+    child: ChildProcessWithoutNullStreams,
+    stop: () => Promise<void>,
+  ): StartPeer =>
+  (owner) => {
+    child.on('error', (err) => owner.failure('process', err))
+    child.stdin.on('error', (err) => owner.failure('stdin', err))
+    child.on('exit', (code, signal) => owner.exit(code, signal))
     const decoder = new StringDecoder('utf8')
     const lines = new LineSplitter()
     child.stdout.on('data', (chunk: Buffer) => {
       lines.push(decoder.write(chunk)).forEach((line) => {
         if (!line.trim()) return
         try {
-          const message = JSON.parse(line)
-          if (
-            !('method' in message) &&
-            'id' in message &&
-            message.id === this.initialize?.id
-          )
-            this.answered = true
-          this.owner.message(message, line)
+          owner.message(JSON.parse(line), line)
         } catch {
-          this.owner.nonJson(line)
+          owner.nonJson(line)
         }
       })
-      holdOutput(child.stdout, this.owner.output())
+      holdOutput(child.stdout, owner.output())
     })
     child.stderr.on('data', (chunk: Buffer) =>
-      this.owner.stderr(chunk.toString('utf8')),
+      owner.stderr(chunk.toString('utf8')),
     )
+    return {
+      write: (message) => child.stdin.write(JSON.stringify(message) + '\n'),
+      end: () => child.stdin.end(),
+      stop,
+      get gone() {
+        return child.exitCode !== null || child.signalCode !== null
+      },
+    }
+  }
+
+/**
+ * Whether a client's message is an initialize request with an id, the
+ * handshake a child answers; `isInitializeRequest` also accepts one without.
+ */
+export const isHandshake = (
+  message: JSONRPCMessage,
+): message is JSONRPCMessage & InitializeRequest & { id: string | number } =>
+  isInitializeRequest(message) && 'id' in message
+
+// Whether a message from the child is its response to the request with this
+// id.
+const isResponseTo = (message: any, id: string | number | undefined) =>
+  !('method' in message) && 'id' in message && message.id === id
+
+/**
+ * One server, delivered to whichever owner holds it.
+ *
+ * It also remembers the initialize request the server received and whether
+ * the server has answered it, which is what decides whether a server abandoned
+ * by its client can be handed to the next one (GW-035).
+ */
+export class ChildLink {
+  initialize?: { id: string | number; params: unknown }
+  answered = false
+  readonly peer: Peer
+  readonly stop: () => Promise<void>
+
+  constructor(
+    start: StartPeer,
+    public owner: ChildOwner,
+  ) {
+    this.peer = start({
+      message: (message, line) => {
+        if (isResponseTo(message, this.initialize?.id)) this.answered = true
+        this.owner.message(message, line)
+      },
+      nonJson: (line) => this.owner.nonJson(line),
+      stderr: (text) => this.owner.stderr(text),
+      failure: (kind, err) => this.owner.failure(kind, err),
+      exit: (code, signal) => this.owner.exit(code, signal),
+      output: () => this.owner.output(),
+    })
+    this.stop = () => this.peer.stop()
+  }
+
+  /** Whether the server is still running and has not answered its initialize. */
+  get initializing(): boolean {
+    return this.initialize !== undefined && !this.answered && !this.peer.gone
   }
 
   write(message: JSONRPCMessage) {
     // Only the first initialize is the handshake the child is answering.
-    if (!this.initialize && isInitializeRequest(message) && 'id' in message)
-      this.initialize = { id: message.id!, params: message.params }
-    this.child.stdin.write(JSON.stringify(message) + '\n')
+    if (!this.initialize && isHandshake(message))
+      this.initialize = { id: message.id, params: message.params }
+    this.peer.write(message)
   }
 }
 
@@ -85,14 +149,124 @@ const canonical = (value: unknown): string =>
       : inner,
   )
 
-type Parked = {
-  link: ChildLink
-  held: [any, string][]
-  ended: boolean
-  timer: NodeJS.Timeout
-  // Reading the child's stdout again, once someone takes it or it is stopped.
-  resume: () => void
+/**
+ * A child parked for a retry, as its owner: it keeps what the child says until
+ * someone takes the child over, and stops the child if nobody does in time.
+ */
+class WaitingChild implements ChildOwner {
+  private readonly held: [any, string][] = []
+  private settled = false
+  // With nobody to deliver to, the child is not read past what it has
+  // already sent: the rest waits in its pipe, as it does for a client that
+  // is behind, so waiting costs no memory however much it writes.
+  private resume!: () => void
+  private readonly unread = new Promise<void>(
+    (resolve) => (this.resume = resolve),
+  )
+  private readonly timer: NodeJS.Timeout
+
+  constructor(
+    readonly link: ChildLink,
+    private readonly label: string,
+    private readonly logger: Logger,
+    windowMs: number,
+    // Takes it off the handoff's list of waiting children.
+    private readonly leave: () => void,
+  ) {
+    this.timer = setTimeout(
+      () => this.end('no client took it over'),
+      windowMs,
+    ).unref()
+  }
+
+  message(message: any, line: string) {
+    this.held.push([message, line])
+  }
+
+  nonJson(line: string) {
+    this.logger.error(`${this.label}: waiting server wrote non-JSON: ${line}`)
+  }
+
+  stderr(text: string) {
+    this.logger.error(`${this.label}: waiting server stderr: ${text}`)
+  }
+
+  failure(kind: 'process' | 'stdin' | 'upstream', err: Error) {
+    this.end(`${kind} failure: ${err.message}`)
+  }
+
+  exit(code: number | null, signal: NodeJS.Signals | null) {
+    this.end(`it exited, code=${code}, signal=${signal}`)
+  }
+
+  output() {
+    return this.unread
+  }
+
+  /** Stops it waiting, unless it already has; false then. */
+  settle(): boolean {
+    if (this.settled) return false
+    this.settled = true
+    clearTimeout(this.timer)
+    this.leave()
+    return true
+  }
+
+  /**
+   * Replays everything the child said while waiting to its new owner, and
+   * reads it again.
+   */
+  replay() {
+    this.held.forEach(([message, line]) =>
+      this.link.owner.message(message, line),
+    )
+    this.resume()
+  }
+
+  // Every way a waiting child ends goes through here, once: the window
+  // running out, or the child exiting (as it does when that stops it) or
+  // failing.
+  private end(reason: string) {
+    if (!this.settle()) return
+    this.logger.info(`${this.label}: stopping the waiting server: ${reason}`)
+    this.resume()
+    void this.link.stop()
+  }
 }
+
+// The owner of a child taken over by another client: the child's answer to the
+// initialize it received carries the new client's request id.
+const renumbered = (
+  owner: ChildOwner,
+  from: string | number,
+  to: string | number,
+): ChildOwner => {
+  let answered = false
+  return {
+    ...owner,
+    message: (message, line) => {
+      if (!answered && isResponseTo(message, from)) {
+        answered = true
+        message = { ...message, id: to }
+        line = JSON.stringify(message)
+      }
+      owner.message(message, line)
+    },
+  }
+}
+
+// The owner of a child nobody will use: only its exit is worth a line.
+const unusedOwner = (logger: Logger, label: string): ChildOwner => ({
+  message: () => {},
+  nonJson: () => {},
+  stderr: () => {},
+  failure: () => {},
+  exit: (code, signal) =>
+    logger.info(
+      `${label}: unused server stopped, code=${code}, signal=${signal}`,
+    ),
+  output: () => undefined,
+})
 
 /**
  * Children whose clients gave up while they were still starting (GW-035).
@@ -114,7 +288,7 @@ type Parked = {
  * longer. One that nobody takes is stopped as before.
  */
 export class ChildHandoff {
-  private readonly parked = new Map<string, Parked[]>()
+  private readonly parked = new Map<string, WaitingChild[]>()
 
   constructor(
     private readonly logger: Logger,
@@ -126,55 +300,20 @@ export class ChildHandoff {
    * otherwise. `onlyInitialize` says the client sent nothing but initialize.
    */
   release(link: ChildLink, onlyInitialize: boolean, label: string) {
-    if (
-      !onlyInitialize ||
-      !link.initialize ||
-      link.answered ||
-      link.child.exitCode !== null ||
-      link.child.signalCode !== null
-    ) {
+    if (!onlyInitialize || !link.initializing) {
       void link.stop()
       return
     }
-    const key = canonical(link.initialize.params)
-    // Every way a waiting child ends goes through here, once: the window
-    // running out, or the child exiting (as it does when that stops it) or
-    // failing.
-    const end = (reason: string) => {
-      if (entry.ended) return
-      entry.ended = true
-      clearTimeout(entry.timer)
-      this.remove(key, entry)
-      this.logger.info(`${label}: stopping the waiting server: ${reason}`)
-      entry.resume()
-      void link.stop()
-    }
-    // With nobody to deliver to, the child is not read past what it has
-    // already sent: the rest waits in its pipe, as it does for a client that
-    // is behind, so waiting costs no memory however much it writes.
-    let resume!: () => void
-    const unread = new Promise<void>((resolve) => (resume = resolve))
-    const entry: Parked = {
+    const key = canonical(link.initialize!.params)
+    const waiting: WaitingChild = new WaitingChild(
       link,
-      held: [],
-      ended: false,
-      timer: setTimeout(
-        () => end('no client took it over'),
-        this.windowMs,
-      ).unref(),
-      resume,
-    }
-    link.owner = {
-      message: (message, line) => entry.held.push([message, line]),
-      nonJson: (line) =>
-        this.logger.error(`${label}: waiting server wrote non-JSON: ${line}`),
-      stderr: (text) =>
-        this.logger.error(`${label}: waiting server stderr: ${text}`),
-      failure: (kind, err) => end(`${kind} failure: ${err.message}`),
-      exit: (code, signal) => end(`it exited, code=${code}, signal=${signal}`),
-      output: () => unread,
-    }
-    this.parked.set(key, [...(this.parked.get(key) ?? []), entry])
+      label,
+      this.logger,
+      this.windowMs,
+      () => this.remove(key, waiting),
+    )
+    link.owner = waiting
+    this.parked.set(key, [...(this.parked.get(key) ?? []), waiting])
     this.logger.info(
       `${label}: client left before its initialize was answered; keeping the server ${this.windowMs} ms for a retry`,
     )
@@ -190,58 +329,27 @@ export class ChildHandoff {
     owner: ChildOwner,
     label: string,
   ): ChildLink | undefined {
-    if (!isInitializeRequest(message) || !('id' in message)) return
-    const key = canonical(message.params)
-    const entry = this.parked.get(key)?.[0]
-    if (!entry) return
-    entry.ended = true
-    clearTimeout(entry.timer)
-    this.remove(key, entry)
-    const { link } = entry
-    const originalId = link.initialize!.id
-    let answered = false
-    link.owner = {
-      ...owner,
-      message: (child, line) => {
-        if (
-          !answered &&
-          !('method' in child) &&
-          'id' in child &&
-          child.id === originalId
-        ) {
-          answered = true
-          child = { ...child, id: message.id }
-          line = JSON.stringify(child)
-        }
-        owner.message(child, line)
-      },
-    }
+    if (!isHandshake(message)) return
+    const waiting = this.parked.get(canonical(message.params))?.[0]
+    if (!waiting) return
+    waiting.settle()
+    const { link } = waiting
+    link.owner = renumbered(owner, link.initialize!.id, message.id)
     this.logger.info(
       `${label}: took over a server whose previous client left during an identical initialize`,
     )
-    entry.held.forEach(([held, line]) => link.owner.message(held, line))
-    entry.resume()
+    waiting.replay()
     return link
   }
 
   /** Stop a child nobody will use, without its ending reaching a session. */
   discard(link: ChildLink, label: string) {
-    link.owner = {
-      message: () => {},
-      nonJson: () => {},
-      stderr: () => {},
-      failure: () => {},
-      exit: (code, signal) =>
-        this.logger.info(
-          `${label}: unused server stopped, code=${code}, signal=${signal}`,
-        ),
-      output: () => undefined,
-    }
+    link.owner = unusedOwner(this.logger, label)
     void link.stop()
   }
 
-  private remove(key: string, entry: Parked) {
-    const rest = this.parked.get(key)!.filter((other) => other !== entry)
+  private remove(key: string, waiting: WaitingChild) {
+    const rest = this.parked.get(key)!.filter((other) => other !== waiting)
     if (rest.length) this.parked.set(key, rest)
     else this.parked.delete(key)
   }

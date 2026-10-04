@@ -31,7 +31,9 @@ const events = (event) => {
   console.log(JSON.stringify(row))
 }
 const env = { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry }
-const commands = createSoakCommandGroup({ root, events, env })
+// A failure is recorded and the phase runs on to its deadline (keepGoing):
+// one flaky command no longer throws away the rest of the phase's hours.
+const commands = createSoakCommandGroup({ root, events, env, keepGoing: true })
 const { run } = commands
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.once(signal, () => commands.cancel(signal, true))
@@ -98,14 +100,25 @@ events({
     process.platform !== 'win32' && process.env.SOAK_SKIP_SCENARIOS !== '1',
 })
 writeFileSync(resolve(root, 'pid'), String(process.pid))
+// What failed inside the battery loop. A failure is recorded and the cycle
+// goes on; only cancellation stops it.
+const batteryErrors = []
+async function attempt(...args) {
+  try {
+    await run(...args)
+  } catch (error) {
+    if (commands.stopped) throw error
+    batteryErrors.push(String(error))
+  }
+}
 async function batteries() {
   let cycle = 0
   do {
     for (let index = 0; index < groups.length; index++) {
-      if (commands.failed) return
+      if (commands.stopped) return
       // Always complete one scenario pass, even in a short harness canary.
       if (cycle > 0 && Date.now() >= deadline) return
-      await run(
+      await attempt(
         `cycle-${cycle}-group-${index}`,
         [
           '--import',
@@ -121,8 +134,8 @@ async function batteries() {
     }
     if (process.platform !== 'win32') {
       for (const old of [false, true]) {
-        if (commands.failed) return
-        await run(
+        if (commands.stopped) return
+        await attempt(
           `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}`,
           ['tests/clients/run-battery.mjs', 'node'],
           6 * 60000,
@@ -142,8 +155,8 @@ async function batteries() {
       }
     }
     // Real servers once per cycle, where the lane has them (see the workflow).
-    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.failed)
-      await run(
+    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.stopped)
+      await attempt(
         `cycle-${cycle}-real-servers`,
         [
           '--import',
@@ -157,8 +170,8 @@ async function batteries() {
         25 * 60000,
       )
     // The Inspector CLI through every path it speaks, on the same switch.
-    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.failed)
-      await run(
+    if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.stopped)
+      await attempt(
         `cycle-${cycle}-inspector`,
         [
           '--import',
@@ -176,7 +189,7 @@ async function batteries() {
       undefined,
       { signal: commands.signal },
     )
-  } while (Date.now() < deadline && !commands.failed)
+  } while (Date.now() < deadline && !commands.stopped)
 }
 // One finite default-lifetime check per lane/phase, against the installed CLI.
 let preflightError
@@ -197,9 +210,9 @@ try {
   preflightError = String(error)
 }
 deadline = Date.now() + seconds * 1000
-const jobs = commands.failed ? [] : [batteries()]
+const jobs = commands.stopped ? [] : [batteries()]
 if (
-  !commands.failed &&
+  !commands.stopped &&
   process.platform !== 'win32' &&
   process.env.SOAK_SKIP_RESOURCE !== '1'
 )
@@ -216,7 +229,7 @@ if (
 // soak runs this on runners of its own (SOAK_SKIP_SCENARIOS there): beside the
 // test groups for whole phases it slowed them 2.5x on average and up to 11x.
 if (
-  !commands.failed &&
+  !commands.stopped &&
   process.platform !== 'win32' &&
   process.env.SOAK_SKIP_SCENARIOS !== '1'
 )
@@ -232,6 +245,7 @@ const results = await Promise.allSettled(jobs)
 const errors = results
   .filter((result) => result.status === 'rejected')
   .map((result) => String(result.reason))
+errors.push(...batteryErrors)
 if (preflightError) errors.unshift(preflightError)
 // A cancelled lane is not a passing lane, but it is not evidence against the
 // release either: the workflow stopped this runner because a *different* job

@@ -2,31 +2,33 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import type {
-  JSONRPCMessage,
-  JSONRPCRequest,
-  ClientCapabilities,
-  Implementation,
-} from '@modelcontextprotocol/sdk/types.js'
+import type { JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getVersion } from '../lib/getVersion.js'
 import { Logger } from '../types.js'
 import { onSignals } from '../lib/onSignals.js'
 import { describeHeaders } from '../lib/headers.js'
 import { parseUpstreamUrl, redactUrl } from '../lib/urlCredentials.js'
-import { relayClientMessage } from '../lib/relayClientMessage.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
-import { CancellableRequests } from '../lib/cancellableRequests.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
+import {
+  bridgeStdioMessages,
+  type BridgeLifecycle,
+  interceptRequests,
+  upstreamClientIdentity,
+} from '../lib/stdioBridge.js'
+import type { ToolNames } from '../lib/toolNames.js'
 
 export interface SseToStdioArgs {
   sseUrl: string
   logger: Logger
   headers: Record<string, string>
+  /** Alone by default: the bridge registers the signals and exits itself. */
+  lifecycle?: BridgeLifecycle
+  /** The tools the stdio client sees of the server, if not all as they are. */
+  toolNames?: ToolNames
 }
-
-let sseClient: Client | undefined
 
 // A compliant MCP SSE server sends `event: endpoint` — the URL to POST
 // messages to — as the first thing on a new stream, and the SDK's handshake
@@ -39,54 +41,24 @@ const SSE_HANDSHAKE_TIMEOUT_MS = 30_000
 
 class SseHandshakeTimeout extends Error {}
 
-const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
-  const clientInfo = message.params?.clientInfo as Implementation | undefined
-  const clientCapabilities = message.params?.capabilities as
-    ClientCapabilities | undefined
-
-  return new Client(
-    {
-      name: clientInfo?.name ?? 'supergateway',
-      version: clientInfo?.version ?? getVersion(),
-    },
-    {
-      capabilities: clientCapabilities ?? {},
-    },
-  )
+/** Whether the upstream's event stream ever opened. */
+interface EventStream {
+  opened: boolean
 }
 
-const newFallbackSseClient = async ({
-  connect,
-}: {
-  connect: (client: Client) => Promise<void>
-}) => {
-  const fallbackSseClient = new Client(
-    {
-      name: 'supergateway',
-      version: getVersion(),
-    },
-    {
-      capabilities: {},
-    },
-  )
-
-  await connect(fallbackSseClient)
-  return fallbackSseClient
-}
-
-export async function sseToStdio(args: SseToStdioArgs) {
-  const { sseUrl, logger, headers } = args
-
-  const upstreamUrl = parseUpstreamUrl(sseUrl)
-
-  logger.info(`  - sse: ${redactUrl(upstreamUrl)}`)
-  logger.info(`  - Headers: ${describeHeaders(headers)}`)
-  logger.info('Connecting to SSE...')
-
-  onSignals({ logger })
-
-  let streamOpened = false
-  const sseTransport = new SSEClientTransport(upstreamUrl, {
+/**
+ * The transport to the upstream SSE server, relaying what the server sends to
+ * stdout. The SDK can start it once, so a bridge has exactly one, and the
+ * bridge exits when it closes.
+ */
+const openSseTransport = (
+  upstreamUrl: URL,
+  headers: Record<string, string>,
+  logger: Logger,
+  exit: BridgeLifecycle['exit'],
+) => {
+  const stream: EventStream = { opened: false }
+  const transport = new SSEClientTransport(upstreamUrl, {
     eventSourceInit: {
       fetch: async (...props: Parameters<typeof fetch>) => {
         const [url, init = {}] = props
@@ -97,7 +69,7 @@ export async function sseToStdio(args: SseToStdioArgs) {
         for (const [name, value] of Object.entries(headers))
           merged.set(name, value)
         const response = await fetch(url, { ...init, headers: merged })
-        if (response.ok) streamOpened = true
+        if (response.ok) stream.opened = true
         // Read the event stream only as fast as the stdio client reads.
         return readAsDrained(response, process.stdout)
       },
@@ -107,41 +79,158 @@ export async function sseToStdio(args: SseToStdioArgs) {
     },
   })
 
-  sseTransport.onerror = (err) => {
+  transport.onerror = (err) => {
     logger.error('SSE error:', err)
   }
 
-  const connectUpstream = async (client: Client) => {
-    let timer: NodeJS.Timeout | undefined
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        const seconds = SSE_HANDSHAKE_TIMEOUT_MS / 1000
-        reject(
-          new SseHandshakeTimeout(
-            streamOpened
-              ? `SSE server at ${redactUrl(upstreamUrl)} opened an event stream but sent no \`endpoint\` event within ${seconds}s. An MCP SSE server must first send \`event: endpoint\` with the URL to POST messages to. If this server uses Streamable HTTP, connect with --streamableHttp instead.`
-              : `SSE server at ${redactUrl(upstreamUrl)} did not open an event stream within ${seconds}s.`,
-          ),
-        )
-      }, SSE_HANDSHAKE_TIMEOUT_MS)
-    })
-    try {
-      // A late settlement of the losing `connect` is absorbed by `race`.
-      await Promise.race([client.connect(sseTransport), deadline])
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-
-  relayServerMessages(sseTransport, (message) => {
+  relayServerMessages(transport, (message) => {
     logger.info('SSE → Stdio:', message)
     process.stdout.write(JSON.stringify(message) + '\n')
   })
 
-  sseTransport.onclose = () => {
+  transport.onclose = () => {
     logger.error('SSE connection closed')
-    process.exit(1)
+    exit(1)
   }
+  return { transport, stream }
+}
+
+/**
+ * Connect `client` over `transport`, or give up at the handshake deadline,
+ * saying which half of the handshake never came.
+ */
+const connectWithin = async (
+  client: Client,
+  transport: SSEClientTransport,
+  // Read when the deadline passes: the stream can open after the connect began.
+  stream: EventStream,
+  upstreamUrl: URL,
+) => {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const seconds = SSE_HANDSHAKE_TIMEOUT_MS / 1000
+      reject(
+        new SseHandshakeTimeout(
+          stream.opened
+            ? `SSE server at ${redactUrl(upstreamUrl)} opened an event stream but sent no \`endpoint\` event within ${seconds}s. An MCP SSE server must first send \`event: endpoint\` with the URL to POST messages to. If this server uses Streamable HTTP, connect with --streamableHttp instead.`
+            : `SSE server at ${redactUrl(upstreamUrl)} did not open an event stream within ${seconds}s.`,
+        ),
+      )
+    }, SSE_HANDSHAKE_TIMEOUT_MS)
+  })
+  try {
+    // A late settlement of the losing `connect` is absorbed by `race`.
+    await Promise.race([client.connect(transport), deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * The bridge's client to the upstream SSE server, connected over the bridge's
+ * one transport by the stdio client's first request.
+ */
+class Upstream {
+  client: Client | undefined
+
+  constructor(
+    private readonly transport: SSEClientTransport,
+    private readonly stream: EventStream,
+    private readonly url: URL,
+    private readonly logger: Logger,
+  ) {}
+
+  private connect(client: Client) {
+    return connectWithin(client, this.transport, this.stream, this.url)
+  }
+
+  /** A stdio request, answered by the upstream server. */
+  request(req: JSONRPCRequest, signal: AbortSignal) {
+    if (!this.client) return this.connectFor(req, signal)
+    return this.client.request(req, z.any(), {
+      signal,
+      timeout: MAX_TIMEOUT_MS,
+    })
+  }
+
+  /**
+   * The stdio client's first request, which connects the bridge's client: an
+   * initialize as the stdio client's own handshake, anything else through a
+   * fallback client.
+   */
+  private async connectFor(req: JSONRPCRequest, signal: AbortSignal) {
+    let result
+    if (req.method === 'initialize') {
+      this.client = new Client(...upstreamClientIdentity(req))
+
+      const intercepted = interceptRequests(this.client, (requestMessage) => {
+        // pass protocol version from original client
+        if (
+          requestMessage.method === 'initialize' &&
+          req.params?.protocolVersion &&
+          requestMessage.params?.protocolVersion
+        ) {
+          requestMessage.params.protocolVersion = req.params.protocolVersion
+        }
+      })
+
+      await this.connect(this.client)
+      intercepted.restore()
+      result = intercepted.result()
+    } else {
+      this.logger.info('SSE client not initialized, creating fallback client')
+      this.client = await this.connectedFallbackClient()
+      // The request that triggered the fallback still has to be
+      // answered. Creating the client was never the point of it.
+      result = await this.client.request(req, z.any(), {
+        signal,
+        timeout: MAX_TIMEOUT_MS,
+      })
+    }
+
+    this.logger.info('SSE connected')
+    return result
+  }
+
+  /** A client in the gateway's own name, once it has connected. */
+  private async connectedFallbackClient() {
+    const fallbackSseClient = new Client(...upstreamClientIdentity())
+
+    await this.connect(fallbackSseClient)
+    return fallbackSseClient
+  }
+}
+
+export async function sseToStdio(args: SseToStdioArgs) {
+  const {
+    sseUrl,
+    logger,
+    headers,
+    toolNames,
+    // It has nothing of its own to clean up at a signal.
+    lifecycle = {
+      register: () => onSignals({ logger }),
+      exit: (code) => process.exit(code),
+    },
+  } = args
+
+  const upstreamUrl = parseUpstreamUrl(sseUrl)
+
+  logger.info(`  - sse: ${redactUrl(upstreamUrl)}`)
+  logger.info(`  - Headers: ${describeHeaders(headers)}`)
+  toolNames?.describe().forEach((setting) => logger.info(`  - ${setting}`))
+  logger.info('Connecting to SSE...')
+
+  lifecycle.register()
+
+  const { transport: sseTransport, stream } = openSseTransport(
+    upstreamUrl,
+    headers,
+    logger,
+    lifecycle.exit,
+  )
+  const upstream = new Upstream(sseTransport, stream, upstreamUrl, logger)
 
   const stdioServer = new Server(
     {
@@ -156,175 +245,21 @@ export async function sseToStdio(args: SseToStdioArgs) {
   const stdioTransport = new StdioServerTransport()
   await stdioServer.connect(stdioTransport)
 
-  const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
-    jsonrpc: '2.0',
-    id: req.id,
-    ...payload,
+  bridgeStdioMessages(stdioServer.transport!, {
+    toolNames,
+    label: 'SSE',
+    logger,
+    request: (req, signal) => upstream.request(req, signal),
+    // The SDK's transport cannot be started a second time, so after a
+    // handshake that timed out there is nothing left to serve. Closing it
+    // exits through `onclose`, once the client has been told why.
+    failed: (err) =>
+      err instanceof SseHandshakeTimeout
+        ? () => void sseTransport.close()
+        : undefined,
+    send: () =>
+      upstream.client ? (relayed) => sseTransport.send(relayed) : undefined,
   })
-
-  const inFlight = new CancellableRequests(logger)
-
-  const handleStdioMessage = async (message: JSONRPCMessage) => {
-    const isRequest = 'method' in message && 'id' in message
-    if (isRequest) {
-      logger.info('Stdio → SSE:', message)
-      const req = message as JSONRPCRequest
-      let result
-      const signal = inFlight.begin(req.id)
-
-      try {
-        if (!sseClient) {
-          if (message.method === 'initialize') {
-            sseClient = newInitializeSseClient({
-              message,
-            })
-
-            const originalRequest = sseClient.request
-
-            sseClient.request = async function (requestMessage, ...restArgs) {
-              // pass protocol version from original client
-              if (
-                requestMessage.method === 'initialize' &&
-                message.params?.protocolVersion &&
-                requestMessage.params?.protocolVersion
-              ) {
-                requestMessage.params.protocolVersion =
-                  message.params.protocolVersion
-              }
-
-              result = await originalRequest.apply(this, [
-                requestMessage,
-                ...restArgs,
-              ])
-
-              return result
-            }
-
-            await connectUpstream(sseClient)
-            sseClient.request = originalRequest
-          } else {
-            logger.info('SSE client not initialized, creating fallback client')
-            sseClient = await newFallbackSseClient({
-              connect: connectUpstream,
-            })
-            // The request that triggered the fallback still has to be
-            // answered. Creating the client was never the point of it.
-            result = await sseClient.request(req, z.any(), {
-              signal,
-              timeout: MAX_TIMEOUT_MS,
-            })
-          }
-
-          logger.info('SSE connected')
-        } else {
-          result = await sseClient.request(req, z.any(), {
-            signal,
-            timeout: MAX_TIMEOUT_MS,
-          })
-        }
-      } catch (err) {
-        inFlight.end(req.id)
-        // The client cancelled it, and expects no reply.
-        if (signal.aborted) return
-        logger.error('Request error:', err)
-        const rawCode =
-          err && typeof err === 'object' && 'code' in err
-            ? (err as any).code
-            : undefined
-        // JSON-RPC reserves -32768..-32000 for protocol errors, and every code
-        // the SDK's McpError uses falls inside it. A transport error carries
-        // something else entirely: from SDK 1.24 a failed POST throws
-        // StreamableHTTPError whose `code` is the HTTP status, and forwarding
-        // that verbatim put `code: 503` on the wire, which no JSON-RPC client
-        // can interpret. Such a status belongs in the message, where it is
-        // diagnostic rather than protocol.
-        const isProtocolCode =
-          typeof rawCode === 'number' &&
-          Number.isInteger(rawCode) &&
-          rawCode >= -32768 &&
-          rawCode <= -32000
-        const errorCode = isProtocolCode ? rawCode : -32000
-        let errorMsg =
-          err && typeof err === 'object' && 'message' in err
-            ? (err as any).message
-            : 'Internal error'
-        const prefix = `MCP error ${errorCode}:`
-        if (errorMsg.startsWith(prefix)) {
-          errorMsg = errorMsg.slice(prefix.length).trim()
-        }
-        // Older SDKs spelled the status into the message themselves; newer ones
-        // only carry it in the code we just discarded, so keep it either way.
-        if (
-          !isProtocolCode &&
-          typeof rawCode === 'number' &&
-          !errorMsg.includes(`HTTP ${rawCode}`)
-        ) {
-          errorMsg = `HTTP ${rawCode}: ${errorMsg}`
-        }
-        // Keep whatever structured detail the upstream error carried: it is
-        // the part a client can act on, and rebuilding the error without it
-        // discarded the most useful half.
-        const errorData =
-          err && typeof err === 'object' && 'data' in err
-            ? (err as { data?: unknown }).data
-            : undefined
-        const errorResp = wrapResponse(req, {
-          error: {
-            code: errorCode,
-            message: errorMsg,
-            ...(errorData === undefined ? {} : { data: errorData }),
-          },
-        })
-        const line = JSON.stringify(errorResp) + '\n'
-        if (err instanceof SseHandshakeTimeout) {
-          // The SDK's transport cannot be started a second time, so there is
-          // nothing left to serve. Closing it exits through `onclose`, once the
-          // client has been told why.
-          process.stdout.write(line, () => void sseTransport.close())
-          return
-        }
-        process.stdout.write(line)
-        return
-      }
-      // `request` throws on a protocol error, so anything it returns is a
-      // successful result — including one that happens to carry a field named
-      // `error`, which is application data and not a JSON-RPC error. The old
-      // ternary both misread that data and called `hasOwnProperty` off the
-      // result itself, which a result carrying that key as a string turned
-      // into a crash.
-      inFlight.end(req.id)
-      const response = wrapResponse(req, { result: { ...result } })
-      logger.info('Response:', response)
-      process.stdout.write(JSON.stringify(response) + '\n')
-    } else if (!inFlight.cancel(message)) {
-      await relayClientMessage({
-        message,
-        send: sseClient ? (relayed) => sseTransport.send(relayed) : undefined,
-        label: 'SSE',
-        logger,
-      })
-    }
-  }
-
-  // The SDK calls `onmessage` synchronously and drops whatever it returns, so
-  // an async handler assigned straight to it had nothing holding its promise:
-  // any throw became an unhandled rejection, which Node turns into an immediate
-  // exit. The tail of the handler is outside its own try/catch and dereferences
-  // `result`, which is never assigned on the fallback path — so this was
-  // reachable by a client whose first request is not `initialize`.
-  //
-  // This stops that being fatal. It does not make the request succeed: the
-  // client still gets no reply, which is GW-001's separate defect.
-  // The promise is deliberately returned rather than dropped: tests drive this
-  // handler directly and await it, and the SDK ignoring the value costs
-  // nothing. `no-misused-promises` exists to stop a rejection escaping a void
-  // slot, and the `.catch` below is exactly that guarantee — it handles every
-  // rejection and cannot itself throw — so the rule's concern does not apply.
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  stdioServer.transport!.onmessage = (message: JSONRPCMessage) =>
-    handleStdioMessage(message).catch((err) => {
-      logger.error('Unhandled error while handling a stdio message:', err)
-    })
 
   logger.info('Stdio server listening')
 }

@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import {
   JSONRPCMessage,
-  isInitializeRequest,
   isInitializedNotification,
 } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from './getVersion.js'
+import { isHandshake } from './childHandoff.js'
 
 // The version the SSE transport was defined in. A client that negotiated a
 // later one names it on every request after initialize (from 2025-06-18 on).
@@ -86,9 +86,9 @@ export class ChildInitialization {
       this.held.push(message)
       return
     }
-    // `isInitializeRequest` also accepts an initialize without an id, which is
-    // a notification and gets no answer, so it cannot stand for the handshake.
-    if (isInitializeRequest(message) && 'id' in message) {
+    // An initialize without an id is a notification and gets no answer, so
+    // it cannot stand for the handshake.
+    if (isHandshake(message)) {
       this.state = 'ready'
       this.write(message)
       return

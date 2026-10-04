@@ -1,7 +1,8 @@
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { v4 as uuidv4 } from 'uuid'
-import { WebSocket, WebSocketServer } from 'ws'
-import { Server } from 'http'
+import { WebSocket, WebSocketServer, type VerifyClientCallbackAsync } from 'ws'
+import type { IncomingMessage } from 'http'
+import type { Duplex } from 'node:stream'
 
 // Node's default for a writable stream, and the point where an HTTP response
 // reports that it needs to drain.
@@ -23,7 +24,15 @@ export class WebSocketServerTransport {
   private readonly clients = new Map<string, WebSocket>()
 
   constructor(
-    { path, server }: { path: string; server: Server },
+    {
+      path,
+      verifyClient,
+    }: {
+      path: string
+      // Refuses an upgrade before it is a connection: a refused client never
+      // reaches `onconnection`, and no child is spawned for it.
+      verifyClient?: VerifyClientCallbackAsync
+    },
     private readonly handlers: {
       onconnection: (clientId: string) => void
       onmessage: (message: JSONRPCMessage, clientId: string) => void
@@ -31,7 +40,25 @@ export class WebSocketServerTransport {
       onerror: (err: Error) => void
     },
   ) {
-    this.wss = new WebSocketServer({ path, server })
+    // Not bound to an HTTP server: several WebSocket paths can share one
+    // port, and `ws` refuses, with 400, every upgrade for a path that isn't
+    // its own, so each server's upgrades are handed to it (handleUpgrade).
+    // Only when given, so a server without a check is built as it always was.
+    this.wss = new WebSocketServer({
+      path,
+      noServer: true,
+      ...(verifyClient ? { verifyClient } : {}),
+    })
+  }
+
+  /**
+   * Takes an HTTP upgrade request: checks it as `ws` always has (the path
+   * included, and `verifyClient`), then opens the connection or refuses it.
+   */
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    this.wss.handleUpgrade(req, socket, head, (ws) =>
+      this.wss.emit('connection', ws, req),
+    )
   }
 
   start(): void {

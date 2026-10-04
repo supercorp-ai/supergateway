@@ -197,8 +197,10 @@ test(
       '--outputTransport',
       'streamableHttp',
       '--stateful',
+      // Long enough that the child's exit comes first on a loaded machine:
+      // at 300 ms the idle cleanup sometimes won, and stopped the child.
       '--sessionTimeout',
-      '300',
+      '1500',
       '--port',
       String(port),
     ])
@@ -218,7 +220,7 @@ test(
       () => gateway.errors().includes('Child exited: code=17'),
       'observe child exit before idle cleanup',
     )
-    await delay(600)
+    await delay(1800)
     assert.doesNotMatch(
       gateway.output(),
       new RegExp(`Session ${session} timed out`),

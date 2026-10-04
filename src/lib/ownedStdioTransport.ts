@@ -8,6 +8,14 @@ import type { Logger } from '../types.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { LineSplitter } from './lineSplitter.js'
 import { holdOutput } from './outputBackpressure.js'
+import { spawnCommand, type ChildCommand } from './childCommand.js'
+
+// How long a child sent a notification has, once its input ends, to exit by
+// itself before the process owner's shutdown takes over.
+const FINISH_GRACE_MS = 5000
+
+const exited = (child: ChildProcessWithoutNullStreams) =>
+  child.exitCode !== null || child.signalCode !== null
 
 /** A request-owned pipe whose shutdown also reaps the child's descendants. */
 export class OwnedStdioTransport implements Transport {
@@ -19,15 +27,29 @@ export class OwnedStdioTransport implements Transport {
   private closed = false
 
   constructor(
-    private readonly command: string,
+    private readonly command: ChildCommand,
     private readonly owner: OwnedChildProcesses,
     private readonly logger: Logger,
   ) {}
 
   async start(): Promise<void> {
-    const child = spawn(this.command, this.owner.spawnOptions)
+    const child = spawnCommand(spawn, this.command, this.owner.spawnOptions)
     this.child = child
     this.stop = this.owner.own(child)
+    this.watch(child)
+    child.stderr.on('data', (chunk: Buffer) => {
+      this.logger.error('Child stderr:', chunk.toString('utf8'))
+    })
+    const lines = new LineSplitter()
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      lines.push(chunk).forEach((line) => this.deliver(line))
+    })
+  }
+
+  // Every way the child stops serving ends the transport, the first one
+  // reported as its error.
+  private watch(child: ChildProcessWithoutNullStreams) {
     const fail = (error: Error) => {
       if (this.closed) return
       this.logger.error('MCP child failed:', error)
@@ -41,24 +63,19 @@ export class OwnedStdioTransport implements Transport {
     child.on('exit', (code, signal) => {
       fail(new Error(`Child exited: code=${code}, signal=${signal}`))
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      this.logger.error('Child stderr:', chunk.toString('utf8'))
-    })
-    const lines = new LineSplitter()
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      for (const line of lines.push(chunk)) {
-        if (!line.trim()) continue
-        let message: JSONRPCMessage
-        try {
-          message = parseJSONRPCMessage(JSON.parse(line))
-        } catch {
-          this.logger.error('Child non-JSON message:', line)
-          continue
-        }
-        this.onmessage?.(message)
-      }
-    })
+  }
+
+  // One line of the child's stdout, passed on if it is a JSON-RPC message.
+  private deliver(line: string) {
+    if (!line.trim()) return
+    let message: JSONRPCMessage
+    try {
+      message = parseJSONRPCMessage(JSON.parse(line))
+    } catch {
+      this.logger.error('Child non-JSON message:', line)
+      return
+    }
+    this.onmessage?.(message)
   }
 
   /** Stop reading the child's output until `drained` settles. */
@@ -78,13 +95,7 @@ export class OwnedStdioTransport implements Transport {
 
   async finish(): Promise<void> {
     const child = this.child
-    if (
-      !child ||
-      this.closed ||
-      child.exitCode !== null ||
-      child.signalCode !== null
-    )
-      return
+    if (!child || this.closed || exited(child)) return
     // A notification has no reply. Deliver EOF and allow the peer to consume
     // the pipe before the normal bounded process-owner shutdown takes over.
     this.closed = true
@@ -96,7 +107,7 @@ export class OwnedStdioTransport implements Transport {
           reject(new Error(`Child exited: code=${code}`))
         else resolve()
       }
-      const timer = setTimeout(done, 5000)
+      const timer = setTimeout(done, FINISH_GRACE_MS)
       child.once('exit', done)
       child.stdin.end()
     })

@@ -21,8 +21,9 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
 - **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
 - **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
-- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
+- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`). A remote server given with `--sse` or `--streamableHttp` can be served over `sse`, `ws` or `streamableHttp` too; see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)
 - **`--port 8000`**: Port to listen on (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: `8000`)
+- **`--host 127.0.0.1`**: Address to listen on, e.g. `127.0.0.1` or `::1` (`[::1]` also works) (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode, default: every interface). `--baseUrl` does not control binding: only `--host` limits which addresses accept connections. Refused in SSE→stdio and Streamable HTTP→stdio mode, which listen on nothing
 - **`--baseUrl "http://localhost:8000"`**: Base URL for SSE clients (stdio→SSE mode; optional)
 - **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
 - **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
@@ -30,11 +31,21 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
 - **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
 - **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself and the client's request doesn't name one (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
-- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, stdio→Streamable HTTP, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
+- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, stdio→Streamable HTTP, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times). With a local server they go on the gateway's responses; with a remote one (`--sse`, `--streamableHttp`) they are sent to the remote server
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
+- **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
-- **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+- **`--healthEndpoint /healthz`**: Register one or more endpoints (every mode but stdio output; can be used multiple times) that respond with `"ok"`
+- **`--healthCheck gateway | server`**: What the health endpoints check (default: `gateway`). `gateway` answers `"ok"` while the gateway is up. `server` also checks the MCP server: it starts one (or, for `--sse`/`--streamableHttp`, opens a session with the remote server), initializes and pings it, and stops it. It answers `"ok"` if the server responded within 10 seconds, and `503` with the reason otherwise (e.g. `unhealthy: the server exited (code=1, signal=null)`). The answer is reused for 10 seconds, so polling every second starts at most one server per 10 seconds. The startup log says when health turns bad and when it recovers
+- **`--toolPrefix "github_"`**: Put this before every tool name the server lists, so `search` becomes `github_search` (all modes). Clients call the tool by that name, and the server still gets its own. It is used as given, so include a separator. Tool names may be letters, digits, `_`, `-` and `.`, at most 128 characters; the gateway warns about a prefix or name outside that
+- **`--tools search --tools get_issue`**: Expose only these tools, by the server's own names (all modes). The others are left out of `tools/list`, and a call to one is refused with `-32602 Unknown tool`, as a server refuses a tool it doesn't have, without reaching the server. A bare `--tools` exposes none
+- **`--apiKey "some-key"`**: Require clients to present this key, as `Authorization: Bearer <key>` or `X-API-Key: <key>` (stdio→SSE, stdio→WS or stdio→Streamable HTTP mode; can be used multiple times). Also `SUPERGATEWAY_API_KEY=some-key`. See [Requiring an API key](#requiring-an-api-key)
+- **`--apiKeyFile /run/secrets/keys`**: Accept the keys in this file, one per line (blank lines are skipped). Also `SUPERGATEWAY_API_KEY_FILE=/run/secrets/keys`
+- **`--exitWithProcess <pid>`**: Shut down, stopping the MCP server, when process `<pid>` exits (all modes). Pass the launcher's PID (e.g. `$$`); it need not be the direct parent, so it works through `npx`. Checked about once a second. A launcher that spawns Supergateway with a stdin pipe doesn't need this: since 4.0 Supergateway exits when its stdin closes.
+- **`--config servers.json`**: Read servers and settings from a config file instead of the server flags. See [Several servers from a config file](#several-servers-from-a-config-file)
+- **`--checkConfig`**: With `--config`, check the file, list each server's path and output, and exit
+- **`--printConfig`**: Print the resolved config, secrets redacted, and exit. Without `--config` it prints the file equivalent to the command line given
 
 ## stdio → SSE
 
@@ -129,6 +140,119 @@ npx -y supergateway \
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 - Each WebSocket connection gets its own server process.
+
+## Remote server → SSE, WS or Streamable HTTP
+
+Serve a remote MCP server to clients that need another transport, or behind your own API key:
+
+```bash
+npx -y supergateway \
+    --streamableHttp "https://mcp.example.com/mcp" \
+    --oauth2Bearer "$UPSTREAM_TOKEN" \
+    --outputTransport streamableHttp --stateful --apiKey "$MCP_API_KEY"
+```
+
+- Each client session gets its own session with the remote server, ended when the client's ends, and at shutdown.
+- `--header` and `--oauth2Bearer` go to the remote server. The client's own `Authorization` and API key never do.
+- Requests from the remote server to the client (sampling, roots, elicitation) are passed through.
+- A remote server that is down, refuses the client or goes away fails that session only.
+- The 2026-07-28 protocol's stateless requests are served only for local servers so far.
+
+## Requiring an API key
+
+By default anyone who can reach the port can use the server. With `--apiKey`, every request to stdio→SSE, stdio→WS or stdio→Streamable HTTP must carry a key:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --outputTransport streamableHttp --apiKey "$MCP_API_KEY"
+
+curl -H "Authorization: Bearer $MCP_API_KEY" ...   # or: -H "X-API-Key: $MCP_API_KEY"
+```
+
+- A request without a valid key gets `401 Unauthorized`. The `--healthEndpoint` paths and, with `--cors`, browser preflight requests stay open.
+- Keys from `--apiKey`, `--apiKeyFile`, `SUPERGATEWAY_API_KEY` and `SUPERGATEWAY_API_KEY_FILE` are all accepted together, so a key can be rotated by adding the new one before removing the old.
+- An empty key, an unreadable key file or one with no keys stops the gateway at startup rather than running it without authentication.
+- Keys are never logged. Use HTTPS (e.g. behind a reverse proxy) so they are not sent in clear text.
+- To send a key to a remote server from SSE→stdio or Streamable HTTP→stdio, use `--header` or `--oauth2Bearer`; `--apiKey` is refused there.
+
+## Several servers from a config file
+
+`--config` reads the `mcpServers` file that Claude Desktop and other MCP clients use, so a client's file works as-is. Each server is served at `/<name>` on one port:
+
+```jsonc
+{
+  "port": 8000,
+  "mcpServers": {
+    "git": { "command": "uvx", "args": ["mcp-server-git"] },
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./my-folder"],
+      "outputTransport": "streamableHttp",
+      "apiKey": "${FILES_KEY}",
+    },
+  },
+}
+```
+
+```bash
+npx -y supergateway --config servers.json
+```
+
+- `git` is served over SSE at `http://localhost:8000/git/sse` and `/git/message`; `files` over Streamable HTTP at `http://localhost:8000/files/mcp`.
+- **A server** is `command` + `args` (run without a shell, as clients run them), `stdio` (a shell command line, as `--stdio`), or `url` + `type` (`sse` or `http`). `env` and `cwd` set its environment and directory.
+- **Any option** from the list above can be set on a server, by its flag name (`outputTransport`, `stateful`, `cors`, `headers`, `apiKey`, `healthEndpoint`, `toolPrefix`, `tools`, ...). Set at the top level, it is the default for every server. Defaults are the command line's: a local server is served over SSE, a `url` one on stdio.
+- **`path`** serves a server somewhere other than `/<name>`. A name that can't be part of a URL needs one. The gateway refuses to start if a server's URL would be answered by another server or by the gateway's own `healthEndpoint`.
+- **`port`, `host`, `logLevel`, `logFormat`, `exitWithProcess`** and the top-level `healthEndpoint` are the gateway's own. A top-level `healthEndpoint` answers for the whole gateway; one on a server is under that server's path. With `"healthCheck": "server"`, a server's own health endpoints check that server; the gateway's stay `"ok"` while the gateway is up, so one failing server doesn't fail the whole gateway.
+- **`apiKey`** on a server locks that server only. Keys from `--apiKey`, `--apiKeyFile` or `SUPERGATEWAY_API_KEY` lock every server.
+- **`"disabled": true`** skips a server. Keys only clients use (`autoApprove`, `timeout`, `disabledTools`, ...) are warned about and ignored. Any other unknown key is an error that suggests the closest known one.
+- **`${VAR}`**, `${VAR:-default}` and `${env:VAR}` are replaced from the environment in every value except a `stdio` command line, which the shell expands itself. A variable that isn't set is an error. `$$` is a literal `$`.
+- **Flags beside `--config`** may be the gateway's own (`--port`, `--host`, `--logLevel`, `--logFormat`, `--exitWithProcess`, `--healthEndpoint`, `--apiKey`, `--apiKeyFile`). They override the file, and the startup log says so. A server flag such as `--stateful` is refused, because it would be unclear which server it means.
+- With more than one server, each log line about a server starts with its name (`[git]`), and JSON logs give it a `server` field.
+- On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
+- Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
+
+A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example.
+
+One `url` server may use stdio output beside servers on the port. This is for a client that launches Supergateway with a config file, such as Claude Desktop: it talks to that server over stdin and stdout, and other clients reach the rest over HTTP. All logs then go to stderr. The process belongs to the client that started it. When stdin closes, a signal arrives, or the stdio server stops (its remote server refused the first connection, for example), every server stops, and the exit code is the stdio server's.
+
+### Combining servers on one URL
+
+An entry with its own `mcpServers` serves them as one MCP server, at the entry's URL:
+
+```jsonc
+{
+  "port": 8000,
+  "outputTransport": "streamableHttp",
+  "mcpServers": {
+    "dev": {
+      "mcpServers": {
+        "git": { "command": "uvx", "args": ["mcp-server-git"] },
+        "files": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        },
+        "docs": {
+          "url": "https://docs.example.com/mcp",
+          "type": "http",
+          "toolPrefix": "docs_",
+        },
+      },
+    },
+  },
+}
+```
+
+A client of `http://localhost:8000/dev/mcp` sees the tools, prompts and resources of all three.
+
+- **Names are not changed.** A request goes to the server that has the tool, prompt or resource it names. When two servers offer the same name, the first one listed wins and the other's is hidden; the log says so once. Set `toolPrefix` on a server to keep both, and `tools` to choose which of a server's tools are shown. Many tools behind one URL make a model's choice harder, so combine what belongs together.
+- **Each session has its own servers,** started when the client initializes. A server that can't start is left out, with a line in the log; the session fails only if none starts. A server that stops later fails the calls it had, the client is told the lists changed, and the rest go on.
+- **Requests from a server to the client** (sampling, roots, elicitation) work as they do for one server, on outputs that carry them (SSE, WebSocket, stateful Streamable HTTP).
+- **The protocol version** is the lowest any of the servers answers; the capabilities are everything any of them has; their `instructions` are joined, each under its server's name.
+- **Lists come as one page,** every server's in the order listed.
+- **Settings for the URL** (`outputTransport`, `apiKey`, `cors`, `healthEndpoint`, ...) go on the entry. A combined server has `command`/`args`/`env`/`cwd`, `stdio`, or `url`/`type`/`headers`/`oauth2Bearer`, and `toolPrefix`/`tools`. Combining goes one level deep.
+- **On stdio** (`"outputTransport": "stdio"`), a combined entry is what a desktop client launches to reach several servers through one entry of its own config. It can run beside servers on the port, as a single remote server can.
+- **Not yet:** the 2026-07-28 protocol version (a combined entry answers the earlier ones), and tasks. Combined servers share one model context, so combine only servers you trust with each other's results.
 
 ## Without Node: standalone executables
 
@@ -356,6 +480,15 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributors
 
+- [@jakajancar](https://github.com/jakajancar)
+- [@thedadams](https://github.com/thedadams)
+- [@iutx](https://github.com/iutx)
+- [@hxy91819](https://github.com/hxy91819)
+- [@gamedevsam](https://github.com/gamedevsam)
+- [@davidferlay](https://github.com/davidferlay)
+- [@bossanyit](https://github.com/bossanyit)
+- [@bbracha-evinced](https://github.com/bbracha-evinced)
+- [@homer6](https://github.com/homer6)
 - [@aleleba](https://github.com/aleleba)
 - [@bimax](https://github.com/bimax)
 - [@essentialols](https://github.com/essentialols)
@@ -470,6 +603,9 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 - [@Areo-Joe](https://github.com/Areo-Joe)
 - [@Joffref](https://github.com/Joffref)
 - [@michaeljguarino](https://github.com/michaeljguarino)
+- [@qdrddr](https://github.com/qdrddr)
+- [@Shellishack](https://github.com/Shellishack)
+- [@anyuan95](https://github.com/anyuan95)
 
 ## Contributing
 

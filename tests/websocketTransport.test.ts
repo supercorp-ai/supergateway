@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events'
 // gives each connection its own child, so nothing here rewrites ids.
 test('WebSocket transport passes messages through per client and reports each ending', async (t) => {
   let server: FakeServer
+  let upgraded: unknown
   class FakeServer extends EventEmitter {
     closed = false
     constructor(public options: unknown) {
@@ -16,6 +17,17 @@ test('WebSocket transport passes messages through per client and reports each en
     close(callback: () => void) {
       this.closed = true
       callback()
+    }
+    upgrades: unknown[][] = []
+    // `ws` checks the request, then hands over the socket it upgraded.
+    handleUpgrade(
+      req: unknown,
+      socket: unknown,
+      head: unknown,
+      done: (ws: unknown) => void,
+    ) {
+      this.upgrades.push([req, socket, head])
+      done(upgraded)
     }
   }
   class FakeSocket extends EventEmitter {
@@ -33,13 +45,11 @@ test('WebSocket transport passes messages through per client and reports each en
   t.mock.module('ws', {
     namedExports: { WebSocket: FakeSocket, WebSocketServer: FakeServer },
   })
-  const { WebSocketServerTransport } = await import(
-    '../src/server/websocket.js'
-  )
-  const httpServer = new EventEmitter()
+  const { WebSocketServerTransport } =
+    await import('../src/server/websocket.js')
   const events: unknown[][] = []
   const transport = new WebSocketServerTransport(
-    { path: '/wire', server: httpServer as any },
+    { path: '/wire' },
     {
       onconnection: (id) => events.push(['connect', id]),
       onmessage: (message, id) => events.push(['message', message, id]),
@@ -47,12 +57,20 @@ test('WebSocket transport passes messages through per client and reports each en
       onerror: (error) => events.push(['error', error.message]),
     },
   )
-  assert.deepEqual(server!.options, { path: '/wire', server: httpServer })
+  // Not bound to an HTTP server: the gateway hands it its upgrades, so
+  // several can share one port.
+  assert.deepEqual(server!.options, { path: '/wire', noServer: true })
   transport.start()
 
   const first = new FakeSocket(),
     second = new FakeSocket()
-  server!.emit('connection', first)
+  // map: an upgrade handed over becomes a connection
+  const upgrade = [{ url: '/wire' }, { socket: 1 }, Buffer.from('head')]
+  upgraded = first
+  transport.handleUpgrade(
+    ...(upgrade as Parameters<typeof transport.handleUpgrade>),
+  )
+  assert.deepEqual(server!.upgrades, [upgrade])
   server!.emit('connection', second)
   const [a, b] = events.map((event) => event[1] as string)
   // map: connections

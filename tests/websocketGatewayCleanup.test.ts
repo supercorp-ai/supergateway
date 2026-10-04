@@ -90,7 +90,7 @@ test('WebSocket gateway stops every connection’s child on shutdown, and a fail
     namedExports: { WebSocketServerTransport: Transport },
   })
   t.mock.module('http', {
-    namedExports: { createServer: () => ({ listen() {} }) },
+    namedExports: { createServer: () => ({ listen() {}, on() {} }) },
   })
   t.mock.module('express', { defaultExport: () => ({ use() {}, get() {} }) })
   const { stdioToWs } = await import('../src/gateways/stdioToWs.js')

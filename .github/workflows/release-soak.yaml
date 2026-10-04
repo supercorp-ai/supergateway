@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       duration:
-        description: Run canaries only, the six-hour campaign, or the 25-hour one
+        description: Run canaries only, one five-hour phase, or the 25-hour campaign
         type: choice
-        options: [canary, six-hours, twenty-five-hours]
+        options: [canary, five-hours, twenty-five-hours]
         default: canary
 
 permissions:
@@ -24,86 +24,73 @@ jobs:
       label: canary
       sha256: ${{ inputs.sha256 }}
 
+  # Five-hour phases. A hosted job runs at most six hours
+  # (https://docs.github.com/en/actions/reference/limits) and nothing outlives
+  # its job, so a phase is as long as one gateway process can live here. The
+  # longest three-hour phase of the 4.1.0 campaign took 195 minutes in all, so
+  # five hours of load finishes near 315 minutes, inside the 360 the lane
+  # allows.
   first:
     needs: canary
     if: inputs.duration != 'canary'
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
-      seconds: 10800
-      label: first-three-hours
+      seconds: 18000
+      label: hours-0-to-5
       sha256: ${{ inputs.sha256 }}
 
+  # The 25-hour campaign continues from the first phase, one phase after
+  # another. A phase runs whether or not the one before it passed: one flaky
+  # test used to stop every later phase and throw away the rest of the
+  # campaign. Each failure still fails the campaign (see verdict), and
+  # `gh run rerun --failed` reruns only the lanes that failed.
   second:
-    needs: first
-    if: ${{ !cancelled() && needs.first.result == 'success' }}
+    needs: [canary, first]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
-      seconds: 10800
-      label: second-three-hours
+      seconds: 18000
+      label: hours-5-to-10
       sha256: ${{ inputs.sha256 }}
 
-  # The 25-hour campaign continues from the six-hour one, one phase after
-  # another: a hosted job runs at most six hours, and each phase starts only
-  # if the one before it passed.
   third:
-    needs: second
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.second.result == 'success' }}
+    needs: [canary, second]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
-      seconds: 10800
-      label: hours-6-to-9
+      seconds: 18000
+      label: hours-10-to-15
       sha256: ${{ inputs.sha256 }}
 
   fourth:
-    needs: third
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.third.result == 'success' }}
+    needs: [canary, third]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
-      seconds: 10800
-      label: hours-9-to-12
+      seconds: 18000
+      label: hours-15-to-20
       sha256: ${{ inputs.sha256 }}
 
   fifth:
-    needs: fourth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fourth.result == 'success' }}
+    needs: [canary, fourth]
+    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
-      seconds: 10800
-      label: hours-12-to-15
+      seconds: 18000
+      label: hours-20-to-25
       sha256: ${{ inputs.sha256 }}
 
-  sixth:
-    needs: fifth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.fifth.result == 'success' }}
-    uses: ./.github/workflows/release-soak-lane.yaml
-    with:
-      seconds: 10800
-      label: hours-15-to-18
-      sha256: ${{ inputs.sha256 }}
-
-  seventh:
-    needs: sixth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.sixth.result == 'success' }}
-    uses: ./.github/workflows/release-soak-lane.yaml
-    with:
-      seconds: 10800
-      label: hours-18-to-21
-      sha256: ${{ inputs.sha256 }}
-
-  eighth:
-    needs: seventh
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.seventh.result == 'success' }}
-    uses: ./.github/workflows/release-soak-lane.yaml
-    with:
-      seconds: 10800
-      label: hours-21-to-24
-      sha256: ${{ inputs.sha256 }}
-
-  ninth:
-    needs: eighth
-    if: ${{ !cancelled() && inputs.duration == 'twenty-five-hours' && needs.eighth.result == 'success' }}
-    uses: ./.github/workflows/release-soak-lane.yaml
-    with:
-      seconds: 3600
-      label: hour-24-to-25
-      sha256: ${{ inputs.sha256 }}
+  # Phases do not depend on each other's success, so the campaign's result
+  # is here: it fails if any phase failed or was cancelled, and lists them.
+  verdict:
+    needs: [canary, first, second, third, fourth, fifth]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Every phase that ran passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/soak-verdict.mjs

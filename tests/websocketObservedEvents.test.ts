@@ -26,6 +26,8 @@ test('WebSocket gateway gives each connection its own child and routes to that c
   t.mock.module('http', {
     namedExports: {
       createServer: () => ({
+        // Where the gateway hands WebSocket upgrades on.
+        on() {},
         listen(port: number, callback: () => void) {
           b.listens.push(port)
           callback()

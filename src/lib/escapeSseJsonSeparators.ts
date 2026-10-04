@@ -12,7 +12,7 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
   const originalWrite = res.write.bind(res)
   const originalEnd = res.end.bind(res)
   let sse = false
-  let pending: Buffer = Buffer.alloc(0)
+  const escaper = new SeparatorEscaper()
 
   const isSse = (headers?: OutgoingHttpHeaders) => {
     const contentType =
@@ -32,43 +32,6 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
     if (!res.headersSent) res.removeHeader('content-length')
   }
 
-  const encode = (chunk: Buffer): Buffer => {
-    const input = pending.length ? Buffer.concat([pending, chunk]) : chunk
-    pending = Buffer.alloc(0)
-    let end = input.length
-    if (end && input[end - 1] === 0xe2) end--
-    else if (end > 1 && input[end - 2] === 0xe2 && input[end - 1] === 0x80)
-      end -= 2
-
-    const separators: number[] = []
-    for (
-      let i = input.indexOf(0xe2);
-      i >= 0 && i < end;
-      i = input.indexOf(0xe2, i + 1)
-    ) {
-      // indexOf guarantees the leading byte. A candidate must still have
-      // both continuation bytes within this write's complete prefix.
-      if (i + 2 >= end || input[i + 1] !== 0x80) continue
-      if (input[i + 2] !== 0xa8 && input[i + 2] !== 0xa9) continue
-      separators.push(i)
-      i += 2
-    }
-    pending = input.subarray(end)
-    if (!separators.length) return input.subarray(0, end)
-    const output = Buffer.allocUnsafe(end + separators.length * 3)
-    let copiedFrom = 0
-    let written = 0
-    separators.forEach((i) => {
-      written += input.copy(output, written, copiedFrom, i)
-      const replacement =
-        input[i + 2] === 0xa8 ? LINE_SEPARATOR : PARAGRAPH_SEPARATOR
-      written += replacement.copy(output, written)
-      copiedFrom = i + 3
-    })
-    input.copy(output, written, copiedFrom, end)
-    return output
-  }
-
   res.writeHead = ((
     status: number,
     reasonOrHeaders?: string | OutgoingHttpHeaders,
@@ -83,13 +46,7 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
         : originalWriteHead(status, reasonOrHeaders)
     }
     activate()
-    const withoutLength = headerObject
-      ? (Object.fromEntries(
-          Object.entries(headerObject).filter(
-            ([name]) => name.toLowerCase() !== 'content-length',
-          ),
-        ) as OutgoingHttpHeaders)
-      : undefined
+    const withoutLength = headerObject && withoutContentLength(headerObject)
     if (typeof reasonOrHeaders === 'string') {
       return originalWriteHead(status, reasonOrHeaders, withoutLength)
     }
@@ -108,7 +65,7 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
       typeof chunk === 'string'
         ? Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8')
         : Buffer.from(chunk)
-    return originalWrite(encode(bytes), done)
+    return originalWrite(escaper.encode(bytes), done)
   }) as typeof res.write
 
   res.end = ((
@@ -131,9 +88,71 @@ export function escapeSseJsonSeparators(res: ServerResponse): void {
         : chunk && typeof chunk !== 'function'
           ? Buffer.from(chunk)
           : Buffer.alloc(0)
-    const tail = encode(bytes)
-    const final = pending.length ? Buffer.concat([tail, pending]) : tail
-    pending = Buffer.alloc(0)
-    return originalEnd(final, done)
+    return originalEnd(escaper.end(bytes), done)
   }) as typeof res.end
+}
+
+const withoutContentLength = (headers: OutgoingHttpHeaders) =>
+  Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => name.toLowerCase() !== 'content-length',
+    ),
+  ) as OutgoingHttpHeaders
+
+/**
+ * Rewrites U+2028 and U+2029 in a stream of UTF-8 bytes as their JSON escapes.
+ * A separator split across writes is held until its last byte arrives.
+ */
+export class SeparatorEscaper {
+  private pending: Buffer = Buffer.alloc(0)
+
+  /** The escaped bytes of `chunk`, less any separator still incomplete. */
+  encode(chunk: Buffer): Buffer {
+    const input = this.pending.length
+      ? Buffer.concat([this.pending, chunk])
+      : chunk
+    this.pending = Buffer.alloc(0)
+    let end = input.length
+    if (end && input[end - 1] === 0xe2) end--
+    else if (end > 1 && input[end - 2] === 0xe2 && input[end - 1] === 0x80)
+      end -= 2
+
+    const separators: number[] = []
+    for (
+      let i = input.indexOf(0xe2);
+      i >= 0 && i < end;
+      i = input.indexOf(0xe2, i + 1)
+    ) {
+      // indexOf guarantees the leading byte. A candidate must still have
+      // both continuation bytes within this write's complete prefix.
+      if (i + 2 >= end || input[i + 1] !== 0x80) continue
+      if (input[i + 2] !== 0xa8 && input[i + 2] !== 0xa9) continue
+      separators.push(i)
+      i += 2
+    }
+    this.pending = input.subarray(end)
+    if (!separators.length) return input.subarray(0, end)
+    const output = Buffer.allocUnsafe(end + separators.length * 3)
+    let copiedFrom = 0
+    let written = 0
+    separators.forEach((i) => {
+      written += input.copy(output, written, copiedFrom, i)
+      const replacement =
+        input[i + 2] === 0xa8 ? LINE_SEPARATOR : PARAGRAPH_SEPARATOR
+      written += replacement.copy(output, written)
+      copiedFrom = i + 3
+    })
+    input.copy(output, written, copiedFrom, end)
+    return output
+  }
+
+  /** The last bytes: `chunk` escaped, and whatever was still held. */
+  end(chunk: Buffer): Buffer {
+    const tail = this.encode(chunk)
+    const final = this.pending.length
+      ? Buffer.concat([tail, this.pending])
+      : tail
+    this.pending = Buffer.alloc(0)
+    return final
+  }
 }

@@ -160,12 +160,12 @@ test(
       mcpServers: {
         tools: {
           ...mock,
-          // Every env value and every URL query value, whatever its name.
+          // Every env value and every URL's query, whatever is in it.
           env: { API_TOKEN: '<redacted>', LEVEL: '<redacted>' },
         },
         remote: {
           type: 'streamableHttp',
-          url: 'http://127.0.0.1:1/mcp?k=redacted',
+          url: 'http://127.0.0.1:1/mcp?redacted',
         },
       },
     })

@@ -46,11 +46,13 @@ test('parseUpstreamUrl refuses a user or password, and names neither', () => {
   )
 })
 
-test('redactQuery hides every query value, whatever its name', () => {
-  assert.equal(
-    redactQuery('https://example.com/mcp?k=abc&profile=dev&k=def#top'),
-    'https://example.com/mcp?k=redacted&profile=redacted#top',
-  )
+test('redactQuery hides the whole query: values, and names that may be keys', () => {
+  for (const query of ['k=abc&profile=dev&k=def', 'abc123', '&'])
+    assert.equal(
+      redactQuery(`https://example.com/mcp?${query}#top`),
+      'https://example.com/mcp?redacted#top',
+      query,
+    )
 })
 
 test('redactQuery leaves a URL with no query as it was written', () => {

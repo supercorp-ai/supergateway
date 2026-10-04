@@ -15,15 +15,14 @@ export const redactUrl = (url: URL): string => {
 }
 
 /**
- * The URL as `--printConfig` shows it: every query value replaced, whatever
- * its name. That output gets pasted into issues, and a key goes by any name
- * (`?k=`, `?access=`). A URL with no query is returned as it was written.
+ * The URL as `--printConfig` shows it: the whole query replaced. That output
+ * gets pasted into issues, and a key goes by any name (`?k=`, `?access=`) or
+ * by none (`?<the key>`). A URL with no query is returned as it was written.
  */
 export const redactQuery = (url: string): string => {
   const parsed = new URL(url)
   if (!parsed.search) return url
-  for (const key of new Set(parsed.searchParams.keys()))
-    parsed.searchParams.set(key, 'redacted')
+  parsed.search = 'redacted'
   return parsed.href
 }
 

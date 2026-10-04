@@ -428,8 +428,8 @@ test('printableConfig: as a file would write it, with secrets redacted', () => {
       },
       remote: {
         type: 'streamableHttp',
-        // Every query value, whatever its name, and each name once.
-        url: 'http://h/mcp?k=redacted&profile=redacted',
+        // The whole query, whatever is in it.
+        url: 'http://h/mcp?redacted',
         outputTransport: 'sse',
         headers: { 'x-api-key': '<redacted>', 'x-trace': 'on' },
         oauth2Bearer: '<redacted>',

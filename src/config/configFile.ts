@@ -213,6 +213,21 @@ const URL_TYPES: Record<string, 'sse' | 'streamableHttp'> = {
   streamable_http: 'streamableHttp',
 }
 
+/**
+ * The keys a file may have at each level, and the values of its
+ * enumerations: what `config.schema.json` is generated from, so the schema an
+ * editor checks a file against and the loader agree.
+ */
+export const CONFIG_KEYS = {
+  top: [...TOP_KEYS],
+  entry: [...ENTRY_KEYS],
+  inner: [...INNER_KEYS],
+  /** Other clients' keys: allowed anywhere, warned about, and ignored. */
+  clientOnly: [...CLIENT_ONLY_KEYS],
+  transports: [...TRANSPORTS],
+  urlTypes: Object.keys(URL_TYPES),
+}
+
 class ConfigError extends Error {}
 
 /**

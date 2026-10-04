@@ -1,0 +1,497 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/supercorp-ai/supergateway/main/config.schema.json",
+  "title": "Supergateway config",
+  "description": "A --config file: servers under \"mcpServers\", as MCP clients write them, and any option of the command line.",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string", "description": "This schema, for editors." },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The port to listen on. Default: 8000."
+    },
+    "host": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "The address to listen on. Default: every interface."
+    },
+    "logLevel": {
+      "enum": ["debug", "info", "none"],
+      "description": "Default: info."
+    },
+    "logFormat": {
+      "enum": ["text", "json"],
+      "description": "Log lines as text (default) or one JSON object per line."
+    },
+    "exitWithProcess": {
+      "type": "integer",
+      "minimum": 2,
+      "description": "Shut down when the process with this PID exits."
+    },
+    "healthEndpoint": {
+      "oneOf": [
+        { "type": "string", "pattern": "\\S" },
+        { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+      ],
+      "description": "Paths that answer \"ok\". At the top level they are the gateway's own; on a server they are under its path."
+    },
+    "outputTransport": {
+      "enum": ["stdio", "sse", "ws", "streamableHttp"],
+      "description": "How the server is served. Default: sse for a local server, stdio for a url one."
+    },
+    "baseUrl": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "The public base URL clients reach an SSE server at."
+    },
+    "ssePath": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Path of the SSE stream. Default: /sse."
+    },
+    "messagePath": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Path for SSE and WebSocket messages. Default: /message."
+    },
+    "streamableHttpPath": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Path for Streamable HTTP. Default: /mcp."
+    },
+    "cors": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+      ],
+      "description": "true allows every origin; a list allows those origins (\"/regex/\" for a pattern)."
+    },
+    "healthCheck": {
+      "enum": ["gateway", "server"],
+      "description": "What the health endpoints check: the gateway alone (default), or the MCP server too."
+    },
+    "toolPrefix": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Put before every tool name the server lists, e.g. \"github_\"."
+    },
+    "tools": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "\\S" },
+      "description": "Expose only these tools, by the server's own names. An empty list exposes none."
+    },
+    "apiKey": {
+      "oneOf": [
+        { "type": "string", "pattern": "\\S" },
+        { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+      ],
+      "description": "Keys a client must present, as Authorization: Bearer <key> or X-API-Key."
+    },
+    "apiKeyFile": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "A file of accepted keys, one per line."
+    },
+    "stateful": {
+      "type": "boolean",
+      "description": "Serve Streamable HTTP with sessions."
+    },
+    "sessionTimeout": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Milliseconds an idle stateful session is kept."
+    },
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "The protocol version the gateway initializes a server with, in stateless Streamable HTTP, when the client names none."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "For a local server, headers on the gateway's responses; for a url server, headers sent to it."
+    },
+    "oauth2Bearer": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Sent as Authorization: Bearer <token>."
+    },
+    "mcpServers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/server" },
+      "description": "The servers, by name. Each is served at /<name>."
+    },
+    "autoApprove": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "alwaysAllow": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "timeout": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "trust": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "alwaysLoad": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "disabledTools": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "includeTools": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "excludeTools": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "envFile": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "headersHelper": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "oauth": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "description": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    },
+    "globalShortcut": {
+      "description": "Used by other MCP clients. Supergateway ignores it."
+    }
+  },
+  "additionalProperties": false,
+  "required": ["mcpServers"],
+  "definitions": {
+    "server": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The program to run, without a shell. Goes with \"args\"."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments of \"command\"."
+        },
+        "stdio": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "A shell command line that runs the server, as --stdio."
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "A remote server. Goes with \"type\"."
+        },
+        "type": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http",
+            "streamable-http",
+            "streamableHttp",
+            "streamable_http"
+          ],
+          "description": "How to reach a url server: \"sse\" or \"http\" (Streamable HTTP). \"stdio\" for a local one, or nothing."
+        },
+        "transportType": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http",
+            "streamable-http",
+            "streamableHttp",
+            "streamable_http"
+          ],
+          "description": "The same as \"type\", as some clients write it."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Added to the server's environment."
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The server's working directory."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "true skips this server."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "false skips this server."
+        },
+        "outputTransport": {
+          "enum": ["stdio", "sse", "ws", "streamableHttp"],
+          "description": "How the server is served. Default: sse for a local server, stdio for a url one."
+        },
+        "baseUrl": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The public base URL clients reach an SSE server at."
+        },
+        "ssePath": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Path of the SSE stream. Default: /sse."
+        },
+        "messagePath": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Path for SSE and WebSocket messages. Default: /message."
+        },
+        "streamableHttpPath": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Path for Streamable HTTP. Default: /mcp."
+        },
+        "cors": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+          ],
+          "description": "true allows every origin; a list allows those origins (\"/regex/\" for a pattern)."
+        },
+        "healthEndpoint": {
+          "oneOf": [
+            { "type": "string", "pattern": "\\S" },
+            { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+          ],
+          "description": "Paths that answer \"ok\". At the top level they are the gateway's own; on a server they are under its path."
+        },
+        "healthCheck": {
+          "enum": ["gateway", "server"],
+          "description": "What the health endpoints check: the gateway alone (default), or the MCP server too."
+        },
+        "toolPrefix": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Put before every tool name the server lists, e.g. \"github_\"."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "\\S" },
+          "description": "Expose only these tools, by the server's own names. An empty list exposes none."
+        },
+        "apiKey": {
+          "oneOf": [
+            { "type": "string", "pattern": "\\S" },
+            { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+          ],
+          "description": "Keys a client must present, as Authorization: Bearer <key> or X-API-Key."
+        },
+        "apiKeyFile": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "A file of accepted keys, one per line."
+        },
+        "stateful": {
+          "type": "boolean",
+          "description": "Serve Streamable HTTP with sessions."
+        },
+        "sessionTimeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Milliseconds an idle stateful session is kept."
+        },
+        "protocolVersion": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The protocol version the gateway initializes a server with, in stateless Streamable HTTP, when the client names none."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "For a local server, headers on the gateway's responses; for a url server, headers sent to it."
+        },
+        "oauth2Bearer": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Sent as Authorization: Bearer <token>."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Where the server is served. Default: /<name>."
+        },
+        "mcpServers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/combinedServer" },
+          "description": "Servers combined as one on this URL. Combining goes one level deep."
+        },
+        "autoApprove": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "alwaysAllow": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "timeout": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "trust": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "alwaysLoad": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "disabledTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "includeTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "excludeTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "envFile": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "headersHelper": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "oauth": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "description": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "globalShortcut": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "combinedServer": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The program to run, without a shell. Goes with \"args\"."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments of \"command\"."
+        },
+        "stdio": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "A shell command line that runs the server, as --stdio."
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "A remote server. Goes with \"type\"."
+        },
+        "type": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http",
+            "streamable-http",
+            "streamableHttp",
+            "streamable_http"
+          ],
+          "description": "How to reach a url server: \"sse\" or \"http\" (Streamable HTTP). \"stdio\" for a local one, or nothing."
+        },
+        "transportType": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http",
+            "streamable-http",
+            "streamableHttp",
+            "streamable_http"
+          ],
+          "description": "The same as \"type\", as some clients write it."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Added to the server's environment."
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The server's working directory."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "true skips this server."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "false skips this server."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "For a local server, headers on the gateway's responses; for a url server, headers sent to it."
+        },
+        "oauth2Bearer": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Sent as Authorization: Bearer <token>."
+        },
+        "toolPrefix": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Put before every tool name the server lists, e.g. \"github_\"."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "\\S" },
+          "description": "Expose only these tools, by the server's own names. An empty list exposes none."
+        },
+        "autoApprove": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "alwaysAllow": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "timeout": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "trust": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "alwaysLoad": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "disabledTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "includeTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "excludeTools": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "envFile": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "headersHelper": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "oauth": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "description": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        },
+        "globalShortcut": {
+          "description": "Used by other MCP clients. Supergateway ignores it."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

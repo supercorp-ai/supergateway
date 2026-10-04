@@ -211,6 +211,7 @@ npx -y supergateway --config servers.json
 - With more than one server, each log line about a server starts with its name (`[git]`), and JSON logs give it a `server` field.
 - On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
 - Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
+- **For completion and checking in an editor,** point `$schema` at the JSON Schema that ships with the package: `"$schema": "https://raw.githubusercontent.com/supercorp-ai/supergateway/main/config.schema.json"`, or `./node_modules/supergateway/config.schema.json` for the version installed. It knows every key, and other clients' keys too. The gateway itself checks what a schema can't, such as two servers on one path.
 
 A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example.
 

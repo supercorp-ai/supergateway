@@ -34,6 +34,7 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "test:package": "node scripts/test-package.mjs",
     "pack:release": "node scripts/pack-release.mjs",
+    "schema": "npm run build && node scripts/write-config-schema.mjs",
     "publish:next": "npm publish --tag next"
   },
   "lint-staged": {
@@ -82,7 +83,8 @@
     "node": ">=20"
   },
   "files": [
-    "dist"
+    "dist",
+    "config.schema.json"
   ],
   "overrides": {
     "@hono/node-server": "1.19.17"

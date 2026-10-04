@@ -2,7 +2,7 @@
 
 ## 4.2.0-rc.1
 
-- `--printConfig` replaces every `env` value and every URL query value, not only those with a sensitive name. Command lines (`args`, `stdio`) are still printed as written.
+- `--printConfig` replaces every `env` value and the whole query of every URL, not only the values with a sensitive name. Command lines (`args`, `stdio`) are still printed as written.
 
 ## 4.2.0-rc.0
 

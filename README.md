@@ -156,7 +156,7 @@ npx -y supergateway \
 - `--header` and `--oauth2Bearer` go to the remote server. The client's own `Authorization` and API key never do.
 - Requests from the remote server to the client (sampling, roots, elicitation) are passed through.
 - A remote server that is down, refuses the client or goes away fails that session only.
-- The 2026-07-28 protocol's stateless requests are served only for local servers so far.
+- The 2026-07-28 protocol's stateless requests are passed on to a remote Streamable HTTP server that speaks that version. The gateway asks it once a minute (`server/discover`). One that doesn't, and any remote SSE server, is served as before: its clients are told the version isn't supported, and those that negotiate fall back to an earlier one.
 
 ## Requiring an API key
 
@@ -252,7 +252,8 @@ A client of `http://localhost:8000/dev/mcp` sees the tools, prompts and resource
 - **Lists come as one page,** every server's in the order listed.
 - **Settings for the URL** (`outputTransport`, `apiKey`, `cors`, `healthEndpoint`, ...) go on the entry. A combined server has `command`/`args`/`env`/`cwd`, `stdio`, or `url`/`type`/`headers`/`oauth2Bearer`, and `toolPrefix`/`tools`. Combining goes one level deep.
 - **On stdio** (`"outputTransport": "stdio"`), a combined entry is what a desktop client launches to reach several servers through one entry of its own config. It can run beside servers on the port, as a single remote server can.
-- **Not yet:** the 2026-07-28 protocol version (a combined entry answers the earlier ones), and tasks. Combined servers share one model context, so combine only servers you trust with each other's results.
+- **2026-07-28** is answered when every combined server speaks it (the gateway asks them once a minute). Each request then starts only the server it is for; `server/discover` and the lists go to every server. If one server doesn't speak it, the entry answers the earlier versions, and clients that negotiate fall back.
+- **Not yet:** tasks. Combined servers share one model context, so combine only servers you trust with each other's results.
 
 ## Without Node: standalone executables
 

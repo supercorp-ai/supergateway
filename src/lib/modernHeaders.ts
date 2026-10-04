@@ -33,6 +33,15 @@ export function decodedHeader(value: string | undefined): string | undefined {
   }
 }
 
+/**
+ * A value as a header can carry it: as it is when it is plain visible ASCII
+ * with nothing to trim, base64-wrapped otherwise.
+ */
+export const encodedHeader = (value: string) =>
+  /^[\x21-\x7e]([\x20-\x7e]*[\x21-\x7e])?$/.test(value) && !isEncoded(value)
+    ? value
+    : `${ENCODED_PREFIX}${Buffer.from(value, 'utf8').toString('base64')}${ENCODED_SUFFIX}`
+
 export type ReadHeader = (name: string) => string | undefined
 
 // The request field each method's mcp-name header mirrors.
@@ -41,6 +50,16 @@ const NAME_FIELDS = new Map([
   ['prompts/get', 'name'],
   ['resources/read', 'uri'],
 ])
+
+/** The headers that mirror a message's method, and the name it is for. */
+export function mirroredHeaders(message: JSONRPCMessage) {
+  const headers: Record<string, string> = {}
+  if (!('method' in message)) return headers
+  headers['mcp-method'] = encodedHeader(message.method)
+  const name = message.params?.[NAME_FIELDS.get(message.method)!]
+  if (typeof name === 'string') headers['mcp-name'] = encodedHeader(name)
+  return headers
+}
 
 export function validateModernHeaders(
   message: JSONRPCMessage,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Logger } from '../types.js'
-import type { OwnedStdioTransport } from './ownedStdioTransport.js'
+import type { ModernChild } from './upstreamModernChild.js'
 
 export const CONTINUATION_TIMEOUT = 300_000
 /** Bound saved states as well as the processes they keep alive. */
@@ -9,7 +9,7 @@ export const isContinuationHandle = (state: unknown): state is string =>
   typeof state === 'string' && state.startsWith('sgw:')
 
 type Flow = {
-  child: OwnedStdioTransport
+  child: ModernChild
   handles: Set<string>
   waiters: Set<() => void>
   busy: boolean
@@ -18,7 +18,7 @@ type Flow = {
 type Binding = { flow: Flow; state: string | undefined }
 
 // Nothing the child does reaches its previous holder any more.
-const detach = (child: OwnedStdioTransport) => {
+const detach = (child: ModernChild) => {
   child.onmessage = undefined
   child.onerror = undefined
   child.onclose = undefined
@@ -27,7 +27,7 @@ const detach = (child: OwnedStdioTransport) => {
 /** Request state stays opaque; gateway handles identify its owning process. */
 export class RetainedChildren {
   private readonly entries = new Map<string, Binding>()
-  private readonly flows = new WeakMap<OwnedStdioTransport, Flow>()
+  private readonly flows = new WeakMap<ModernChild, Flow>()
   private readonly closing = new Set<Promise<void>>()
   private closed = false
 
@@ -39,7 +39,7 @@ export class RetainedChildren {
     return this.entries.size
   }
 
-  retain(state: string | undefined, child: OwnedStdioTransport): string {
+  retain(state: string | undefined, child: ModernChild): string {
     let flow = this.flows.get(child)
     if (!flow) {
       flow = { child, handles: new Set(), waiters: new Set(), busy: true }
@@ -63,9 +63,7 @@ export class RetainedChildren {
   async take(
     handle: string,
     signal?: AbortSignal,
-  ): Promise<
-    { child: OwnedStdioTransport; state: string | undefined } | undefined
-  > {
+  ): Promise<{ child: ModernChild; state: string | undefined } | undefined> {
     for (;;) {
       const binding = this.entries.get(handle)
       if (!binding || this.closed || signal?.aborted) return undefined
@@ -91,7 +89,7 @@ export class RetainedChildren {
     }
   }
 
-  async release(child: OwnedStdioTransport): Promise<void> {
+  async release(child: ModernChild): Promise<void> {
     const flow = this.flows.get(child)
     if (this.closed || !flow || flow.handles.size === 0) {
       await this.discard(child)
@@ -110,7 +108,7 @@ export class RetainedChildren {
     this.wake(flow)
   }
 
-  async discard(child: OwnedStdioTransport): Promise<void> {
+  async discard(child: ModernChild): Promise<void> {
     const flow = this.flows.get(child)
     if (flow) {
       clearTimeout(flow.timer)

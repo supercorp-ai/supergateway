@@ -29,6 +29,7 @@ No breaking changes. Everything new is behind a new flag or a config file: a 4.1
 - A call's progress on a stateful session rides that call's own response stream when several calls are in flight.
 - A stateful session whose server fails at startup no longer logs a counting error.
 - A `--header` given as one word with no colon is no longer written to the log.
+- On macOS, stopping a server no longer logs `Failed to signal child ... kill EPERM` with a stack trace when the server has exited but is not reaped yet.
 
 ## 4.1.0
 

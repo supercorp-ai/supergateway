@@ -379,7 +379,7 @@ test('printableConfig: as a file would write it, with secrets redacted', () => {
         outputTransport: 'ws',
       },
       remote: {
-        url: 'http://h/mcp',
+        url: 'http://h/mcp?k=abc&profile=dev&k=def',
         type: 'http',
         oauth2Bearer: 'entry-token',
         headers: { 'x-api-key': 'a', 'x-trace': 'on' },
@@ -413,8 +413,9 @@ test('printableConfig: as a file would write it, with secrets redacted', () => {
           API_TOKEN: '<redacted>',
           GITHUB_PERSONAL_ACCESS_TOKEN: '<redacted>',
           DB_PASSWORD: '<redacted>',
-          DEBUG: '1',
-          MONKEY: 'see',
+          // Whatever the name: DATABASE_URL and PGPASS hold secrets too.
+          DEBUG: '<redacted>',
+          MONKEY: '<redacted>',
         },
         cwd: '/srv',
         apiKeyFile: '/run/keys',
@@ -427,7 +428,8 @@ test('printableConfig: as a file would write it, with secrets redacted', () => {
       },
       remote: {
         type: 'streamableHttp',
-        url: 'http://h/mcp',
+        // The whole query, whatever is in it.
+        url: 'http://h/mcp?redacted',
         outputTransport: 'sse',
         headers: { 'x-api-key': '<redacted>', 'x-trace': 'on' },
         oauth2Bearer: '<redacted>',
@@ -443,7 +445,7 @@ test('printableConfig: as a file would write it, with secrets redacted', () => {
           files: {
             command: 'fs',
             args: [],
-            env: { SESSION_ID: '<redacted>', ROOT: '/' },
+            env: { SESSION_ID: '<redacted>', ROOT: '<redacted>' },
           },
         },
         outputTransport: 'sse',
@@ -477,6 +479,8 @@ test('printableConfig: a config without secrets reads back as itself', () => {
       'http://a.example',
     ],
     ['--sse', 'http://h/sse', '--header', 'x-trace: on', '--logLevel', 'none'],
+    // A URL with no query is printed as it was written, not normalized.
+    ['--streamableHttp', 'http://h', '--outputTransport', 'sse'],
     ['--stdio', 'srv', '--toolPrefix', 'gh_', '--tools', 'search', 'get'],
     ['--stdio', 'srv', '--tools'],
   ]) {

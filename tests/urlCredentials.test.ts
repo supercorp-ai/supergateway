@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseUpstreamUrl, redactUrl } from '../src/lib/urlCredentials.js'
+import {
+  parseUpstreamUrl,
+  redactQuery,
+  redactUrl,
+} from '../src/lib/urlCredentials.js'
 
 test('redactUrl hides the user, the password and sensitive query values', () => {
   const url = new URL(
@@ -40,4 +44,19 @@ test('parseUpstreamUrl refuses a user or password, and names neither', () => {
     'https://example.com/mcp?token=abc',
     'a URL without credentials is used as given, query included',
   )
+})
+
+test('redactQuery hides the whole query: values, and names that may be keys', () => {
+  for (const query of ['k=abc&profile=dev&k=def', 'abc123', '&'])
+    assert.equal(
+      redactQuery(`https://example.com/mcp?${query}#top`),
+      'https://example.com/mcp?redacted#top',
+      query,
+    )
+})
+
+test('redactQuery leaves a URL with no query as it was written', () => {
+  // Not `new URL(...).href`, which would add the slash and lower the case.
+  for (const url of ['https://Example.com', 'http://h/sse', 'http://h/mcp#x'])
+    assert.equal(redactQuery(url), url)
 })

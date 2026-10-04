@@ -1,6 +1,7 @@
 import type { Cli } from '../cli.js'
 import type { ChildCommand } from '../lib/childCommand.js'
 import { isSensitiveHeader } from '../lib/headers.js'
+import { redactQuery } from '../lib/urlCredentials.js'
 import type {
   Config,
   EndpointOptions,
@@ -183,7 +184,11 @@ export function printableConfig(config: Config): unknown {
   }
   const server = (s: Omit<InnerServer, 'name'>) => {
     const out = sourceFields(s.source)
-    if (s.env) out.env = redactMap(s.env)
+    // Every value: a secret goes by any name here (DATABASE_URL, PGPASS).
+    if (s.env)
+      out.env = Object.fromEntries(
+        Object.keys(s.env).map((name) => [name, '<redacted>']),
+      )
     if (s.cwd) out.cwd = s.cwd
     if (s.headers) out.headers = redactMap(s.headers)
     if (s.oauth2Bearer) out.oauth2Bearer = '<redacted>'
@@ -215,7 +220,7 @@ function sourceFields(source: InnerServer['source']): Record<string, unknown> {
   if (source.kind === 'command')
     return { command: source.command, args: source.args }
   if (source.kind === 'stdio') return { stdio: source.stdio }
-  return { type: source.type, url: source.url }
+  return { type: source.type, url: redactQuery(source.url) }
 }
 
 const redactMap = (map: Record<string, string>) =>

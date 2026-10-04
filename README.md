@@ -45,7 +45,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--exitWithProcess <pid>`**: Shut down, stopping the MCP server, when process `<pid>` exits (all modes). Pass the launcher's PID (e.g. `$$`); it need not be the direct parent, so it works through `npx`. Checked about once a second. A launcher that spawns Supergateway with a stdin pipe doesn't need this: since 4.0 Supergateway exits when its stdin closes.
 - **`--config servers.json`**: Read servers and settings from a config file instead of the server flags. See [Several servers from a config file](#several-servers-from-a-config-file)
 - **`--checkConfig`**: With `--config`, check the file, list each server's path and output, and exit
-- **`--printConfig`**: Print the resolved config, secrets redacted, and exit. Without `--config` it prints the file equivalent to the command line given
+- **`--printConfig`**: Print the resolved config and exit. Keys, bearer tokens, every `env` value, the query of every URL and headers with sensitive names are replaced; command lines (`args`, `stdio`) are printed as written, so read it over before sharing it. Without `--config` it prints the file equivalent to the command line given
 
 ## stdio → SSE
 

@@ -121,7 +121,7 @@ for (const stage of ['SIGTERM', 0, 'SIGKILL'] as const) {
     enableFakeTimers(t)
     let now = 0
     t.mock.method(Date, 'now', () => now)
-    const failure = Object.assign(new Error('denied'), { code: 'EPERM' })
+    const failure = Object.assign(new Error('invalid'), { code: 'EINVAL' })
     const errors: unknown[] = []
     t.mock.method(process, 'kill', (_pid, signal) => {
       if (signal === stage) throw failure
@@ -143,6 +143,82 @@ for (const stage of ['SIGTERM', 0, 'SIGKILL'] as const) {
     await owner.close()
   })
 }
+
+// macOS answers EPERM, not ESRCH, for a group whose processes have all exited
+// but are not reaped yet: the moment after a child is stopped, or after it
+// exits by itself.
+const refused = () => Object.assign(new Error('denied'), { code: 'EPERM' })
+
+for (const from of ['SIGTERM', 0] as const) {
+  test(`a group not reaped yet, refusing from ${from}, is waited for and not reported`, async (t) => {
+    enableFakeTimers(t)
+    let now = 0
+    t.mock.method(Date, 'now', () => now)
+    const signals: unknown[] = [],
+      errors: unknown[] = []
+    let reaped = false
+    t.mock.method(process, 'kill', (pid, signal) => {
+      signals.push([pid, signal])
+      if (reaped) throw gone()
+      if (signal === 'SIGTERM' && from === 0) return true
+      throw refused()
+    })
+    const owner = new OwnedChildProcesses({
+      info() {},
+      error: (...args) => errors.push(args),
+    })
+    let stopped = false
+    const pending = owner
+      .own(child(2000004326))()
+      .then(() => {
+        stopped = true
+      })
+    await Promise.resolve()
+    assert.equal(stopped, false, 'a refusal is not the group being gone')
+    now = 25
+    reaped = true
+    t.mock.timers.tick(25)
+    await pending
+    assert.deepEqual(signals, [
+      [-2000004326, 'SIGTERM'],
+      [-2000004326, 0],
+      [-2000004326, 0],
+    ])
+    assert.deepEqual(errors, [])
+    await owner.close()
+  })
+}
+
+test('a group that keeps refusing is reported once, after a second', async (t) => {
+  enableFakeTimers(t)
+  let now = 0
+  t.mock.method(Date, 'now', () => now)
+  const failure = refused()
+  const signals: unknown[] = [],
+    errors: unknown[] = []
+  t.mock.method(process, 'kill', (_pid, signal) => {
+    signals.push(signal)
+    throw failure
+  })
+  const owner = new OwnedChildProcesses({
+    info() {},
+    error: (...args) => errors.push(args),
+  })
+  const pending = owner.own(child(2000004327))()
+  now = 999
+  t.mock.timers.tick(25)
+  await Promise.resolve()
+  assert.deepEqual(errors, [], 'within the second it may only be unreaped')
+  now = 1000
+  t.mock.timers.tick(25)
+  await Promise.resolve()
+  assert.deepEqual(errors, [
+    ['Failed to signal child 2000004327 with 0:', failure],
+  ])
+  await pending
+  assert.deepEqual(signals, ['SIGTERM', 0, 0, 0], 'and is not signalled again')
+  await owner.close()
+})
 
 for (const result of [false, true]) {
   test(`Windows uses only the direct-child signal fallback (kill result ${result})`, async (t) => {

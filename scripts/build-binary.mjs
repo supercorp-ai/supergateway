@@ -86,6 +86,10 @@ const { metafile } = await esbuild.build({
   outfile: bundle,
   metafile: true,
   logLevel: 'warning',
+  // jsonc-parser's default build is UMD, whose own requires a bundler can't
+  // follow: the executable started with "No such built-in module:
+  // ./impl/format". Its ES module build bundles whole.
+  alias: { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js' },
   plugins: [
     {
       name: 'version',

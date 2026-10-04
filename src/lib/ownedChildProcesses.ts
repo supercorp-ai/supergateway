@@ -3,6 +3,14 @@ import type { Logger } from '../types.js'
 
 // A wrapper's exit does not imply its descendants exited. Keep ownership until
 // the process group disappears, or until the bounded escalation has run.
+//
+// macOS refuses (EPERM) to signal a group whose processes have all exited but
+// are not reaped yet, which is the moment after a child is stopped. Such a
+// group is gone once Node reaps it, so a refusal counts as "still there" and
+// is reported only when it has lasted UNREAPED_GRACE_MS: then it is a group
+// the gateway may not signal, a child that changed user for one.
+const UNREAPED_GRACE_MS = 1000
+
 export class OwnedChildProcesses {
   private readonly children = new Set<() => Promise<void>>()
   closing = false
@@ -17,6 +25,7 @@ export class OwnedChildProcesses {
     const grouped = this.spawnOptions.detached
     const pid = child.pid
     let stopped: Promise<void> | undefined
+    let refusedSince: number | undefined
     const signal = (name: NodeJS.Signals | 0): boolean => {
       // An asynchronous spawn failure has no PID and owns no process group.
       if (pid === undefined) return false
@@ -25,12 +34,13 @@ export class OwnedChildProcesses {
         else if (!child.kill(name)) return false
         return true
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-          this.logger.error(
-            `Failed to signal child ${pid} with ${name}:`,
-            error,
-          )
+        const { code } = error as NodeJS.ErrnoException
+        if (code === 'ESRCH') return false
+        if (code === 'EPERM') {
+          refusedSince ??= Date.now()
+          if (Date.now() - refusedSince < UNREAPED_GRACE_MS) return true
         }
+        this.logger.error(`Failed to signal child ${pid} with ${name}:`, error)
         return false
       }
     }

@@ -138,3 +138,39 @@ test(
     ])
   },
 )
+
+test(
+  'progress that names no token rides the call in flight',
+  { timeout: gatewayTimeout(20000) },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      'node tests/helpers/bare-progress-peer.mjs',
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+      '--port',
+      String(port),
+    ])
+    await gateway.ready()
+    const url = `http://127.0.0.1:${port}/mcp`
+    const session = (await rpc(url, initialize())).response.headers.get(
+      'mcp-session-id',
+    )!
+    const called = await rpc(
+      url,
+      {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: { name: 'any', arguments: {} },
+      },
+      session,
+    )
+    assert.deepEqual(called.messages, [
+      { jsonrpc: '2.0', method: 'notifications/progress' },
+      { jsonrpc: '2.0', id: 5, result: { content: [] } },
+    ])
+  },
+)

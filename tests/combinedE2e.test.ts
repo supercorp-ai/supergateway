@@ -287,7 +287,9 @@ test(
     assert.equal(left.length, 3, left.join('\n'))
     assert.match(
       left.join('\n'),
-      /server "broken" is left out of this session: it exited, code=3, signal=null/,
+      // Its exit, or the gateway's first write to it failing, whichever the
+      // operating system reports first.
+      /server "broken" is left out of this session: (it exited, code=3, signal=null|stdin failure: write EPIPE)/,
     )
     assert.match(
       left.join('\n'),

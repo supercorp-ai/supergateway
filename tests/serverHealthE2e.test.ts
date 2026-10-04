@@ -34,11 +34,21 @@ const options = { timeout: gatewayTimeout(30000) }
 
 type Gateway = ReturnType<typeof launchGateway>
 
+// A server that exits at once shows as its exit, or, when the gateway's
+// first write to it fails before the exit is seen, as that write failing.
+// Which comes first is the operating system's to decide; the tests take the
+// second as the first.
+const asExit = (text: string) =>
+  text.replace(
+    'the server failed: write EPIPE',
+    'the server exited (code=3, signal=null)',
+  )
+
 const health = async (url: string, headers?: Record<string, string>) => {
   const response = await fetch(url, { headers })
   return {
     status: response.status,
-    body: await response.text(),
+    body: asExit(await response.text()),
     response,
   }
 }
@@ -179,7 +189,7 @@ test(
         [503, 'unhealthy: the server exited (code=3, signal=null)'],
       )
     }
-    const logged = (gateway.output() + gateway.errors())
+    const logged = asExit(gateway.output() + gateway.errors())
       .split('\n')
       .filter((line) => line.includes('Health check:'))
     assert.deepEqual(logged, [

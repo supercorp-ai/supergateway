@@ -147,6 +147,7 @@ test(
       apiKey: 'file-key',
       mcpServers: {
         tools: { ...mock, env: { API_TOKEN: 't', LEVEL: '2' } },
+        remote: { url: 'http://127.0.0.1:1/mcp?k=abc', type: 'http' },
       },
     })
     const result = await outcome(
@@ -159,7 +160,12 @@ test(
       mcpServers: {
         tools: {
           ...mock,
-          env: { API_TOKEN: '<redacted>', LEVEL: '2' },
+          // Every env value and every URL query value, whatever its name.
+          env: { API_TOKEN: '<redacted>', LEVEL: '<redacted>' },
+        },
+        remote: {
+          type: 'streamableHttp',
+          url: 'http://127.0.0.1:1/mcp?k=redacted',
         },
       },
     })

@@ -3,6 +3,8 @@
 // remote server), raw requests and the SDK's own client.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -333,6 +335,50 @@ test(
     )
     assert.deepEqual(logged(gateway, /speak/), [
       'all: "old" do not speak 2026-07-28, so the entry answers the earlier versions',
+    ])
+  },
+)
+
+test(
+  'a remote SSE server combined has no such requests, so the entry answers the earlier versions',
+  options,
+  async (t) => {
+    const remotePort = await unusedPort()
+    const remote = spawn(
+      node,
+      [resolve('tests/helpers/remote-mcp-server.mjs')],
+      {
+        env: { ...process.env, PORT: String(remotePort) },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      },
+    )
+    t.after(() => {
+      remote.kill()
+    })
+    await once(remote.stdout, 'data')
+    const { gateway, base } = await serve(t, {
+      all: {
+        mcpServers: {
+          pages: paged,
+          events: { url: `http://127.0.0.1:${remotePort}/sse`, type: 'sse' },
+        },
+      },
+    })
+    const url = `${base}/all/mcp`
+    const refused = await post(url, 'server/discover')
+    assert.equal(refused.status, 400)
+    assert.match(
+      refused.message.error.message,
+      /^Bad Request: Unsupported protocol version: 2026-07-28 /,
+    )
+    const client = await pinned(t, url, 'auto')
+    const tools = (await client.listTools()).tools.map((tool) => tool.name)
+    assert.ok(
+      tools.includes('whoami') && tools.includes('identity'),
+      tools.join(','),
+    )
+    assert.deepEqual(logged(gateway, /speak/), [
+      'all: "events" do not speak 2026-07-28, so the entry answers the earlier versions',
     ])
   },
 )

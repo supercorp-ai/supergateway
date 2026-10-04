@@ -19,7 +19,10 @@ import { getVersion } from '../src/lib/getVersion.js'
 // each instance stands for one process started for one request.
 
 type Message = Record<string, any>
-type Answers = Record<string, (request: Message) => Message | 'hold' | 'die'>
+type Answers = Record<
+  string,
+  (request: Message) => Message | 'hold' | 'die' | 'close'
+>
 
 interface Spec {
   versions?: string[]
@@ -35,6 +38,10 @@ interface Spec {
   toolNames?: ToolNames
   /** No such requests at all, as for a remote SSE server. */
   none?: boolean
+  /** Said before every answer: what is no answer to the gateway's request. */
+  noise?: Message[]
+  /** A send that settles only when the server is closed, by failing. */
+  hangSend?: boolean
   answers?: Answers
 }
 
@@ -132,6 +139,7 @@ function fakeMember(name: string, spec: Spec) {
               held: [] as unknown[],
               child: undefined as unknown as ModernChild,
             }
+            let aborted: (() => void) | undefined
             const child: ModernChild = {
               start: async () => {
                 instance.started = true
@@ -139,6 +147,10 @@ function fakeMember(name: string, spec: Spec) {
               send: async (message) => {
                 const request = message as Message
                 instance.sent.push(request)
+                if (spec.hangSend && request.method === 'tools/call')
+                  return new Promise<void>((_resolve, reject) => {
+                    aborted = () => reject(Error('aborted'))
+                  })
                 if (request.id === undefined) return
                 queueMicrotask(() => {
                   if (instance.closed) return
@@ -150,6 +162,12 @@ function fakeMember(name: string, spec: Spec) {
                     }))
                   )(request)
                   if (answer === 'hold') return
+                  for (const message of spec.noise ?? [])
+                    child.onmessage?.(message as never)
+                  if (answer === 'close') {
+                    child.onclose?.()
+                    return
+                  }
                   if (answer === 'die') {
                     child.onerror?.(Error(`${name} died`))
                     return
@@ -166,6 +184,7 @@ function fakeMember(name: string, spec: Spec) {
               },
               close: async () => {
                 instance.closed = true
+                aborted?.()
               },
               hold: (drained) => {
                 instance.held.push(drained)
@@ -774,4 +793,128 @@ test('the answer stands for a minute', async () => {
   now += 1
   await speaks()
   assert.equal(servers.a.instances.length, 2)
+})
+
+// --- Edges ---
+
+test("what a server says besides the answer to the gateway's own request is not taken for it", async () => {
+  const { request } = combine({
+    a: {
+      tools: ['x'],
+      noise: [
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/message',
+          params: { data: 'hi' },
+        },
+        { jsonrpc: '2.0', id: 'supergateway-1', method: 'roots/list' },
+        {
+          jsonrpc: '2.0',
+          id: 'someone-else',
+          result: { tools: [{ name: 'wrong' }] },
+        },
+      ],
+    },
+  })
+  assert.deepEqual(names((await request('tools/list'))!.result.tools), ['x'])
+})
+
+test('a server that stops while it is asked for a list is left out of it', async () => {
+  const { request, errors } = combine({
+    stops: { answers: { 'tools/list': () => 'close' } },
+    fine: { tools: ['ok'] },
+  })
+  assert.deepEqual(names((await request('tools/list'))!.result.tools), ['ok'])
+  assert.deepEqual(errors, [
+    ['tools: tools/list of server "stops" failed: The server stopped'],
+  ])
+})
+
+test('requests with no params at all are placed, or refused, like any other', async () => {
+  const { open } = combine({ a: { tools: ['x'], prompts: ['p'] } })
+  const raw = async (method: string) => {
+    const { child, said } = open()
+    await child.send({ jsonrpc: '2.0', id: 1, method } as never)
+    await child.finish()
+    return said[0]
+  }
+  assert.deepEqual(names((await raw('tools/list')).result.tools), ['x'])
+  assert.equal(
+    (await raw('tools/call')).error.message,
+    'Unknown tool: undefined',
+  )
+  assert.equal((await raw('completion/complete')).error.code, -32002)
+  assert.equal((await raw('resources/read')).error.code, -32002)
+})
+
+test('a discover answer that is neither a result nor an error fails it', async () => {
+  const { request } = combine({
+    odd: { answers: { 'server/discover': () => ({}) } },
+  })
+  assert.deepEqual((await request('server/discover'))!.error, {
+    code: -32603,
+    message: 'Server "odd" failed: undefined',
+  })
+})
+
+test('with no one listening, answers and failures go nowhere, and nothing throws', async () => {
+  const { entry, logger, errors, servers } = combine({
+    a: {
+      tools: ['x'],
+      answers: { 'server/discover': () => 'die', 'tools/call': () => 'hold' },
+    },
+  })
+  const fresh = () =>
+    new CombinedModernChild(
+      entry,
+      { version: MODERN_VERSION, params: {} },
+      logger,
+    )
+  const send = async (
+    child: CombinedModernChild,
+    method: string,
+    params = {},
+  ) => {
+    await child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method,
+      params: { _meta: meta, ...params },
+    } as never)
+    await child.finish()
+  }
+  // A result, a refusal, and a failure.
+  await send(fresh(), 'tools/list')
+  await send(fresh(), 'tools/call', { name: 'nope' })
+  await send(fresh(), 'server/discover')
+  assert.equal(errors.at(-1)![0], 'tools: request failed:')
+  // What the request's own server says, too.
+  const passed = fresh()
+  await send(passed, 'tools/call', { name: 'x' })
+  servers.a.instances.at(-1)!.child.onmessage!({
+    jsonrpc: '2.0',
+    id: 1,
+    result: {},
+  } as never)
+})
+
+test('a send that fails because the request was closed is not reported', async () => {
+  const { open, servers, errors } = combine({
+    a: { tools: ['x'], hangSend: true },
+  })
+  const { child, failures, request } = open()
+  await request('tools/list', {}, 1)
+  await child.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: { _meta: meta, name: 'x' },
+  } as never)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(servers.a.instances.at(-1)!.sent.at(-1)!.method, 'tools/call')
+  const before = errors.length
+  await child.close()
+  await child.finish()
+  assert.deepEqual(failures, [])
+  assert.equal(errors.length, before)
 })

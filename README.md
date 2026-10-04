@@ -632,6 +632,15 @@ npm test
 The `tests/helpers/mock-mcp-server.js` script provides a local MCP server so all
 tests run without network access.
 
+Two more checks compare this build with the last release, and need the network to fetch it. CI runs both on every pull request:
+
+```bash
+npm run test:versions   # the same client against the release and this build, side by side
+npm run test:released   # the release's own end-to-end tests, run against this build
+```
+
+A difference that is meant is written down with its reason in `tests/crossVersion.intended.ts` or `tests/releasedTests.intended.json`; any other fails.
+
 ## License
 
 [MIT License](./LICENSE)

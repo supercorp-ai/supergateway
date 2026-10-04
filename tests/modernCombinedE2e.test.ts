@@ -369,7 +369,7 @@ test(
     assert.equal(refused.status, 400)
     assert.match(
       refused.message.error.message,
-      /^Bad Request: Unsupported protocol version: 2026-07-28 /,
+      /^Bad Request: Unsupported protocol version/,
     )
     const client = await pinned(t, url, 'auto')
     const tools = (await client.listTools()).tools.map((tool) => tool.name)

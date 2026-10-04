@@ -462,3 +462,58 @@ test('the answer stands for a minute, and one question is asked at a time', asyn
   assert.equal(await speaks(), false)
   assert.equal(sent.length, 2)
 })
+
+test('a message that is no request, or an answer cut mid-event, is handled like any other', async (t) => {
+  const reply = { jsonrpc: '2.0', id: 7, result: {} }
+  // The first chunk holds no whole event.
+  const sent = fetched(t, () =>
+    stream(['data: {"jsonrpc":"2.0",', `"id":7,"result":{}}\n\n`]),
+  )
+  const { upstream, messages, failures } = child({ 'mcp-param-value': 'x' })
+  await upstream.send(call('wait'))
+  await upstream.finish()
+  assert.deepEqual(messages, [reply])
+
+  // A response of the client's own: posted, with no mirrors, and no answer
+  // is waited for.
+  t.mock.restoreAll()
+  const answered = fetched(t, () => new Response(null, { status: 202 }))
+  await upstream.send({ jsonrpc: '2.0', id: 3, result: { roots: [] } })
+  await upstream.finish()
+  assert.equal('mcp-method' in answered[0].init.headers, false)
+  assert.equal('mcp-param-value' in answered[0].init.headers, false)
+  assert.deepEqual(failures, [])
+  assert.equal(sent.length, 1)
+})
+
+test("a request of the server's under the same id is no answer to it", async (t) => {
+  fetched(t, () =>
+    stream(['data: {"jsonrpc":"2.0","id":7,"method":"roots/list"}\n\n']),
+  )
+  const { upstream, messages, failures } = child()
+  await upstream.send(call('x'))
+  await upstream.finish()
+  assert.equal(messages.length, 1)
+  assert.deepEqual(failures, [
+    'The remote server ended its answer without a reply',
+  ])
+})
+
+test('a failure with no one to tell still closes the request', async (t) => {
+  fetched(t, () => new Response('nope', { status: 502 }))
+  const { logger, errors } = logs()
+  const upstream = new UpstreamModernChild(
+    remote,
+    { version: MODERN_VERSION, params: {} },
+    logger,
+  )
+  await upstream.send(call('x'))
+  await upstream.finish()
+  assert.equal(errors.length, 1)
+  await assert.rejects(upstream.send(call('y')), /Upstream request is closed/)
+})
+
+test('an answer with no body at all is a server that does not speak it', async (t) => {
+  fetched(t, () => new Response(null, { status: 200 }))
+  assert.equal(await remoteSpeaksModern(remote, logs().logger)(), false)
+})

@@ -15,8 +15,10 @@ import {
 // flight, whichever it was for: delivered, but on a stream that closes when
 // the first call is answered, which another call's later progress would miss.
 
-// A call whose response stream is read as it arrives.
-const openCall = async (
+// A call whose response stream is read as it arrives. The response itself
+// may not arrive before the stream's first event: SDKs before 1.25 send the
+// headers with it.
+const openCall = (
   t: TestContext,
   url: string,
   session: string,
@@ -25,7 +27,7 @@ const openCall = async (
 ) => {
   const aborting = new AbortController()
   t.after(() => aborting.abort())
-  const response = await fetch(url, {
+  const reader = fetch(url, {
     method: 'POST',
     signal: aborting.signal,
     headers: {
@@ -40,18 +42,19 @@ const openCall = async (
       // "wait" reports progress, if asked to, and never answers.
       params: { name: 'wait', arguments: {}, ...(meta ? { _meta: meta } : {}) },
     }),
-  })
-  const reader = response.body!.getReader()
+  }).then((response) => response.body!.getReader())
+  // Aborted at the end of the test, whatever it was waiting for.
+  reader.catch(() => {})
   const decoder = new TextDecoder()
   // One read at a time: a read that outlives its wait still gets the next
   // chunk, so it is kept for the next wait.
-  let reading: ReturnType<typeof reader.read> | undefined
+  let reading: Promise<{ done: boolean; value?: Uint8Array }> | undefined
   // The messages that arrive on this call's stream within `ms`.
   const within = async (ms: number) => {
     const deadline = delay(ms, 'time' as const, { ref: false })
     let text = ''
     while (!text.includes('\n\n')) {
-      reading ??= reader.read()
+      reading ??= reader.then((stream) => stream.read())
       const chunk = await Promise.race([reading, deadline])
       if (chunk === 'time') break
       reading = undefined
@@ -86,12 +89,12 @@ test(
       'mcp-session-id',
     )!
     // The first call in flight asks for no progress.
-    const first = await openCall(t, url, session, 10)
+    const first = openCall(t, url, session, 10)
     await gateway.waitFor(
       () => gateway.output().includes('"id":10'),
       'pass the first call on',
     )
-    const second = await openCall(t, url, session, 11, {
+    const second = openCall(t, url, session, 11, {
       progressToken: 'second',
     })
     assert.deepEqual(await second.within(requestTimeout(4000)), [

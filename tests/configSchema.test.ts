@@ -2,13 +2,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { CONFIG_KEYS, loadConfig } from '../src/config/configFile.js'
-import { configSchema } from '../src/config/configSchema.js'
 
 // config.schema.json, the schema editors check a --config file against: it is
 // the loader's own keys, the shipped file is the generated one, and what the
 // loader takes, the schema takes.
 
 type Schema = Record<string, any>
+
+// Loaded inside the tests that use it. The gateway never loads this module,
+// so it only runs here, and the coverage gate counts what runs within a
+// test, not what a test file's own imports run while the file loads.
+const generator = () => import('../src/config/configSchema.js')
 
 const shipped: Schema = JSON.parse(readFileSync('config.schema.json', 'utf8'))
 
@@ -77,7 +81,8 @@ function problems(
 const loads = (value: unknown) =>
   'config' in loadConfig('servers.json', JSON.stringify(value), {})
 
-test('the shipped config.schema.json is the generated one', () => {
+test('the shipped config.schema.json is the generated one', async () => {
+  const { configSchema } = await generator()
   assert.deepEqual(
     shipped,
     configSchema(),
@@ -268,6 +273,7 @@ for (const [name, config, problem] of invalid)
   })
 
 test('a key the loader takes with no definition fails the generation', async () => {
+  const { configSchema } = await generator()
   CONFIG_KEYS.entry.push('brandNew')
   try {
     assert.throws(() => configSchema(), {

@@ -42,7 +42,10 @@ export function packRelease(publishedVersion) {
   )
   if (publishedVersion) assert.equal(packed.version, publishedVersion)
   for (const file of packed.files)
-    assert.match(file.path, /^(dist\/|package\.json$|README\.md$|LICENSE$)/)
+    assert.match(
+      file.path,
+      /^(dist\/|package\.json$|README\.md$|LICENSE$|config\.schema\.json$)/,
+    )
   assert.ok(
     !packed.files.some((f) => /(?:shrinkwrap|lock)\.json$/.test(f.path)),
   )

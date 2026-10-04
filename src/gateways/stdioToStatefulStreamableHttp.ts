@@ -99,14 +99,17 @@ export function stdioToStatefulStreamableHttpMount(
   // The 2026-07-28 relay starts a local server per request. A remote one,
   // or several combined, is served over the sessions of the earlier protocol
   // versions only.
-  const modern = args.stdioCmd
-    ? createModernHttp({
-        stdioCmd: args.stdioCmd,
-        toolNames: args.toolNames,
-        children,
-        logger,
-      })
-    : undefined
+  // "Given", not "non-empty": the library entry points take an empty command,
+  // which fails when it is started, as it always has.
+  const modern =
+    args.stdioCmd !== undefined
+      ? createModernHttp({
+          stdioCmd: args.stdioCmd,
+          toolNames: args.toolNames,
+          children,
+          logger,
+        })
+      : undefined
 
   const app = streamableHttpApp(express, cors, {
     headers,

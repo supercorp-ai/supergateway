@@ -73,6 +73,44 @@ for (const mode of ['ws', 'stateless']) {
             },
           ])
         }
+        // A 2026-07-28 request reaches the relay for a local server, which
+        // fails to start it, as the earlier versions' requests do.
+        const modern = await fetch(url + '/mcp', {
+          method: 'POST',
+          signal: AbortSignal.timeout(2000),
+          headers: {
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': '2026-07-28',
+            'mcp-method': 'server/discover',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 7,
+            method: 'server/discover',
+            params: {
+              _meta: {
+                'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+                'io.modelcontextprotocol/clientInfo': {
+                  name: 'library',
+                  version: '1',
+                },
+                'io.modelcontextprotocol/clientCapabilities': {},
+              },
+            },
+          }),
+        })
+        assert.deepEqual(
+          [modern.status, await modern.json()],
+          [
+            200,
+            {
+              jsonrpc: '2.0',
+              id: 7,
+              error: { code: -32603, message: 'MCP server process failed' },
+            },
+          ],
+        )
         const health = await fetch(url + '/health', {
           signal: AbortSignal.timeout(2000),
         })

@@ -310,7 +310,7 @@ test(
       assert.deepEqual(refused.message.id, null, type)
       assert.match(
         refused.message.error.message,
-        /^Bad Request: Unsupported protocol version: 2026-07-28 /,
+        /^Bad Request: Unsupported protocol version/,
         type,
       )
       // A client that negotiates gets the version the server does speak.

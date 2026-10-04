@@ -31,6 +31,12 @@ import type { ToolNames } from './toolNames.js'
 import type { RemoteServer } from './upstreamPeer.js'
 import type { ServerSource } from './serverSource.js'
 import {
+  CombinedModernChild,
+  combinedSpeaksModern,
+  type CombinedModernEntry,
+  type ModernMember,
+} from './combinedModernChild.js'
+import {
   UpstreamModernChild,
   remoteSpeaksModern,
   type ModernChild,
@@ -43,29 +49,36 @@ export function createModernHttp(
     children: OwnedChildProcesses
     logger: Logger
   } & (
-    | { stdioCmd: ChildCommand; upstream?: undefined }
-    | { upstream: RemoteServer; stdioCmd?: undefined }
+    | { stdioCmd: ChildCommand; upstream?: undefined; combined?: undefined }
+    | { upstream: RemoteServer; stdioCmd?: undefined; combined?: undefined }
+    | {
+        combined: CombinedModernEntry
+        stdioCmd?: undefined
+        upstream?: undefined
+      }
   ),
 ) {
   const { toolNames, children, logger } = args
-  // A local server is sent whatever its client sends. A remote one is asked
-  // first whether it speaks the version at all.
-  const speaks = args.upstream
-    ? remoteSpeaksModern(args.upstream, logger)
-    : () => true
-  // The server one request is for: a process started for it, or the remote
-  // server, told what the client's request declared.
-  const childFor = (req: Request): ModernChild =>
-    args.upstream
-      ? new UpstreamModernChild(
-          args.upstream,
-          {
-            version: headerValue(req)('mcp-protocol-version'),
-            params: paramHeaders(req),
-          },
-          logger,
-        )
-      : new OwnedStdioTransport(args.stdioCmd, children, logger)
+  // A local server is sent whatever its client sends. A remote one, or
+  // several combined, are asked first whether they speak the version at all.
+  const speaks = args.combined
+    ? combinedSpeaksModern(args.combined, logger)
+    : args.upstream
+      ? remoteSpeaksModern(args.upstream, logger)
+      : () => true
+  // The server one request is for: a process started for it, the remote
+  // server, or the servers combined, told what the client's request declared.
+  const childFor = (req: Request): ModernChild => {
+    if (args.stdioCmd !== undefined)
+      return new OwnedStdioTransport(args.stdioCmd, children, logger)
+    const declared = {
+      version: headerValue(req)('mcp-protocol-version'),
+      params: paramHeaders(req),
+    }
+    return args.combined
+      ? new CombinedModernChild(args.combined, declared, logger)
+      : new UpstreamModernChild(args.upstream!, declared, logger)
+  }
   const active = new Set<() => Promise<void>>()
   const retained = new RetainedChildren({
     idleMs: CONTINUATION_TIMEOUT,
@@ -124,10 +137,10 @@ export function createModernHttp(
 
 /**
  * The 2026-07-28 relay for a gateway's server, if it can have one: a local
- * server is started for each request, and a remote Streamable HTTP server is
- * sent each. A remote SSE server has no such requests, and servers combined
- * answer the earlier protocol versions only; a client asking either for
- * 2026-07-28 is told it is not spoken, and falls back by itself.
+ * server is started for each request, a remote Streamable HTTP server is
+ * sent each, and servers combined are sent what is theirs. A remote SSE
+ * server has no such requests; a client asking it for 2026-07-28 is told it
+ * is not spoken, and falls back by itself.
  */
 export function modernRelayFor(
   source: ServerSource,
@@ -135,23 +148,51 @@ export function modernRelayFor(
   logger: Logger,
 ) {
   const { toolNames } = source
+  const common = { toolNames, children, logger }
   // "Given", not "non-empty": the library entry points take an empty
   // command, which fails when it is started, as it always has.
   if (source.stdioCmd !== undefined)
+    return createModernHttp({ stdioCmd: source.stdioCmd, ...common })
+  if (source.combined)
     return createModernHttp({
-      stdioCmd: source.stdioCmd,
-      toolNames,
-      children,
-      logger,
+      combined: {
+        name: source.combined.name,
+        members: source.combined.members.map((member) =>
+          modernMember(member, children, logger),
+        ),
+        tables: new Map(),
+        warned: source.combined.warned,
+      },
+      ...common,
     })
-  if (source.upstream?.type === 'streamableHttp')
-    return createModernHttp({
-      upstream: source.upstream,
+  // Neither a command nor several servers: a remote one.
+  const upstream = source.upstream!
+  return upstream.type === 'streamableHttp'
+    ? createModernHttp({ upstream, ...common })
+    : undefined
+}
+
+// One of the servers combined, as a 2026-07-28 request reaches it.
+const modernMember = (
+  member: ServerSource & { name: string },
+  children: OwnedChildProcesses,
+  logger: Logger,
+): ModernMember => {
+  const { name, toolNames, stdioCmd, upstream } = member
+  if (stdioCmd !== undefined)
+    return {
+      name,
       toolNames,
-      children,
-      logger,
-    })
-  return undefined
+      child: () => new OwnedStdioTransport(stdioCmd, children, logger),
+    }
+  // The loader combines servers one level deep, so it is a remote one.
+  return upstream!.type === 'streamableHttp'
+    ? {
+        name,
+        toolNames,
+        child: (request) => new UpstreamModernChild(upstream!, request, logger),
+      }
+    : { name, toolNames }
 }
 
 type Route = Exclude<Awaited<ReturnType<typeof admit>>, boolean>

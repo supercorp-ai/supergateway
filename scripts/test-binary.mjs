@@ -18,8 +18,12 @@ if (!binary) {
   process.exit(1)
 }
 
+// A test that preloads a module into the gateway (probe-retention patches a
+// class of dist/ to count what the garbage collector reclaims) tests the
+// package's module graph too: an executable is one file with nothing to
+// patch, and its NODE_OPTIONS would reach the server it starts.
 const others =
-  /SUPERGATEWAY_TEST_ENTRY|SUPERGATEWAY_TEST_NODE|dist\/index\.js|mock\.module|observeGateway/
+  /SUPERGATEWAY_TEST_ENTRY|SUPERGATEWAY_TEST_NODE|dist\/index\.js|mock\.module|observeGateway|probe-retention/
 const files = readdirSync(join(repository, 'tests'))
   .filter((name) => name.endsWith('.test.ts'))
   .map((name) => join('tests', name))

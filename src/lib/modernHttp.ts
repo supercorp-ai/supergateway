@@ -135,7 +135,9 @@ export function modernRelayFor(
   logger: Logger,
 ) {
   const { toolNames } = source
-  if (source.stdioCmd)
+  // "Given", not "non-empty": the library entry points take an empty
+  // command, which fails when it is started, as it always has.
+  if (source.stdioCmd !== undefined)
     return createModernHttp({
       stdioCmd: source.stdioCmd,
       toolNames,

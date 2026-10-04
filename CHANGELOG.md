@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.2.0-rc.0
+
+No breaking changes. Everything new is behind a new flag or a config file: a 4.1.0 command line runs as it did.
+
+### New
+
+- **Several servers from one config file.** `--config servers.json` reads the `mcpServers` file Claude Desktop and other clients use, and serves each server at `/<name>` on one port. Any option can be set per server or as a default. `--checkConfig` validates a file, and `--printConfig` prints the resolved one.
+- **Servers combined on one URL.** An entry with its own `mcpServers` is served as one MCP server: tools, prompts and resources of all of them, with requests from the servers to the client (sampling, roots, elicitation) passed through. A combined entry can also be the one stdio server a desktop client launches.
+- **Remote servers over any transport.** `--sse` and `--streamableHttp` servers (and `url` entries) can be served over SSE, WebSocket or Streamable HTTP, not only bridged to stdio. One remote entry may stay on stdio beside servers on the port.
+- **`--toolPrefix` and `--tools`**: put a prefix before a server's tool names, and expose only the tools listed.
+- **`--healthCheck server`**: the health endpoints start the MCP server, initialize and ping it, and answer 503 with the reason when it does not respond.
+- **`--apiKey`, `--apiKeyFile`, `SUPERGATEWAY_API_KEY`**: require clients to present a key, as `Authorization: Bearer` or `X-API-Key`.
+- **`--host`**: the address to listen on.
+- **`--logFormat json`**: one JSON object per log line.
+- **`--exitWithProcess <pid>`**: shut down, stopping the server, when the launcher exits.
+- **Standalone executables and a Homebrew formula**: Supergateway with Node built in, for macOS, Linux (glibc and musl) and Windows.
+- **MCP 2026-07-28** is now also served for a remote Streamable HTTP server and for combined servers, when they speak it; otherwise clients fall back as before.
+- Unknown options and stray arguments are warned about at startup.
+
+### Fixes
+
+- A client that reconnects to an SSE or WebSocket gateway without initializing again (as the TypeScript SDK's SSE client does after a dropped stream) no longer has its calls refused by servers that enforce the handshake. A 4.1.0 regression.
+- A client that retries after a slow server's start timed out now gets the server already starting, instead of starting a new one each time and timing out forever. A 4.1.0 regression.
+- The `--sse` and `--streamableHttp` bridges stop reading the remote server while their client is not reading, instead of holding its output in memory.
+- The bridges pass an upstream application error through with its own code, as before 4.0.0.
+- `--stdio=cmd` and `--streamable-http url` start the gateway instead of "stdio→undefined not supported".
+- A call's progress on a stateful session rides that call's own response stream when several calls are in flight.
+- A stateful session whose server fails at startup no longer logs a counting error.
+- A `--header` given as one word with no colon is no longer written to the log.
+- On macOS, stopping a server no longer logs `Failed to signal child ... kill EPERM` with a stack trace when the server has exited but is not reaped yet.
+
 ## 4.1.0
 
 No breaking changes to flags or protocol, and no new flags. Upgrading from 4.0.0:

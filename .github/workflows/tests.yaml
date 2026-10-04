@@ -116,7 +116,9 @@ jobs:
   coverage:
     name: Coverage gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The measured suite took 29 of 30 minutes once the multi-server tests
+    # were in, and the check after it was cut off.
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,14 +133,17 @@ jobs:
       # report coverage of code this commit does not contain.
       - name: Build
         run: npm run build
+      # The version measured with locally, so a red gate can be reproduced.
+      # 0.0.53 did not count what runs while a test file loads, which 3.0.x
+      # does: the two disagreed on a module only its own test loads.
       - name: Measure coverage
-        timeout-minutes: 30
-        run: npx -y supercov@0.0.53 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
+        timeout-minutes: 40
+        run: npx -y supercov@3.0.3 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
       - name: Enforce 100%
         run: >-
-          npx -y supercov@0.0.53 runs check --per-file
+          npx -y supercov@3.0.3 runs latest check --per-file
           --min-lines 100 --min-statements 100 --min-functions 100
           --min-branches 100 --min-mcdc 100
 

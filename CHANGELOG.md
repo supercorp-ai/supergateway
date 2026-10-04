@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.2.0-rc.1
+
+- `--printConfig` replaces every `env` value and every URL query value, not only those with a sensitive name. Command lines (`args`, `stdio`) are still printed as written.
+
 ## 4.2.0-rc.0
 
 No breaking changes. Everything new is behind a new flag or a config file: a 4.1.0 command line runs as it did.

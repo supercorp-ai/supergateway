@@ -1,15 +1,16 @@
 # Release candidate soak
 
-Use the exact published `4.2.0-rc.0` tarball and its verified SHA-256 from the
+Use the exact published `4.2.0-rc.1` tarball and its verified SHA-256 from the
 npm publication workflow. The installer rejects an absent or mismatched digest;
 it does not follow the moving `next` tag. Installation keeps normal npm dependency
 resolution and archives the resolved production lockfile.
 
 The **Published release soak** workflow is manual. Select `canary` first.
-Only select `five-hours` or `twenty-five-hours` after reviewing the canary
-results and receiving approval for the long run. `five-hours` is one phase; the
-25-hour campaign is five of them, one after another. A push does not start this
-workflow.
+Only select `five-hours`, `twenty-five-hours` or `forty-eight-hours` after
+reviewing the canary results and receiving approval for the long run.
+`five-hours` is one phase; the 25-hour campaign is five of them, one after
+another; the 48-hour campaign is nine and a last one of three hours. A push does
+not start this workflow.
 
 A failure costs only what failed. Within a phase, a failed command is recorded
 and everything else runs on to the phase's deadline; a failed lane does not
@@ -56,13 +57,14 @@ continuation test and cleanup. It usually takes more than ten minutes. Each long
 phase is five hours of load on fresh runners and fresh processes, so the longest
 gateway lifetime the hosted soak checks is five hours: a GitHub-hosted job runs
 at most six (https://docs.github.com/en/actions/reference/limits), and nothing
-outlives its job. The 25-hour campaign is not one uninterrupted 25-hour gateway
-lifetime.
+outlives its job. A campaign is not one uninterrupted gateway lifetime of its
+whole length. Five hours of load takes about 315 minutes of the 360 a job may
+run (a three-hour phase took at most 194), so a phase cannot be longer.
 
 For an uninterrupted local six-hour run, install the same public artifact using
 `scripts/install-soak-artifact.mjs`, then run `scripts/overnight-release.mjs` with
 `SOAK_SECONDS=21600`. Set `SUPERGATEWAY_TEST_ENTRY` to the generated `entry.txt`
-path, `SOAK_PACKAGE_VERSION=4.2.0-rc.0`, the verified `SOAK_PACKAGE_SHA256`, and
+path, `SOAK_PACKAGE_VERSION=4.2.0-rc.1`, the verified `SOAK_PACKAGE_SHA256`, and
 `SUPERGATEWAY_SOAK_CONFIRMED=1`. Use Node 24 for the macOS memory follow-up.
 
 The original five resource modes retain their 30-second cooldown and existing

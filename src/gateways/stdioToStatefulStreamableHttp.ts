@@ -361,6 +361,8 @@ class StatefulSessions {
 class StatefulSession {
   private initializedSessionId: string | undefined
   private readonly pendingRequests = new Set<string | number>()
+  // The request each progress token came with, while it is pending.
+  private readonly progressOf = new Map<string | number, string | number>()
   private readonly link: ChildLink
   private childStopped = false
   private childFailed = false
@@ -474,9 +476,7 @@ class StatefulSession {
 
   private fromChild(jsonMsg: any, line: string) {
     this.logger.info('Child → StreamableHttp:', line)
-    if ('id' in jsonMsg && !('method' in jsonMsg)) {
-      this.pendingRequests.delete(jsonMsg.id)
-    }
+    if ('id' in jsonMsg && !('method' in jsonMsg)) this.settle(jsonMsg.id)
     this.transport
       .send(jsonMsg, {
         // A message with no related request is routed to the standalone
@@ -487,16 +487,47 @@ class StatefulSession {
         // 35410255256 lost `progress: 1` and kept 2 and 3. Responses
         // route by their own id regardless; everything else rides the
         // request in flight, as the stateless bridge already does.
-        relatedRequestId: this.pendingRequests.values().next().value,
+        relatedRequestId: this.relatedRequest(jsonMsg),
       })
       .catch((e) => {
         this.logger.error(`Failed to send to StreamableHttp`, e)
       })
   }
 
+  // The request in flight a message from the child rides with. Progress is
+  // its own request's: with several calls in flight, the first one's stream
+  // may close, on its answer, while another's progress is still arriving.
+  // Anything else rides the first, which has always been enough to deliver
+  // it.
+  private relatedRequest(message: {
+    method?: string
+    params?: { progressToken?: string | number }
+  }) {
+    const own =
+      message.method === 'notifications/progress'
+        ? this.progressOf.get(message.params?.progressToken as string)
+        : undefined
+    // A token is forgotten with its request, so `own` is in flight.
+    return own ?? this.pendingRequests.values().next().value
+  }
+
+  // A request is answered or cancelled: nothing rides with it any more.
+  private settle(requestId: string | number): boolean {
+    for (const [token, id] of this.progressOf)
+      if (id === requestId) this.progressOf.delete(token)
+    return this.pendingRequests.delete(requestId)
+  }
+
   private fromClient(msg: JSONRPCMessage) {
     if (this.probe?.accept(msg)) return
-    if ('id' in msg && 'method' in msg) this.pendingRequests.add(msg.id!)
+    if ('id' in msg && 'method' in msg) {
+      this.pendingRequests.add(msg.id)
+      const token = (
+        msg.params as
+          { _meta?: { progressToken?: string | number } } | undefined
+      )?._meta?.progressToken
+      if (token !== undefined) this.progressOf.set(token, msg.id)
+    }
     this.logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
     this.link.write(msg)
     if ('method' in msg && msg.method === 'notifications/cancelled')
@@ -512,7 +543,7 @@ class StatefulSession {
   // notifications to it. The SDK has closeSSEStream from 1.23.1; with an
   // older one the stream stays open, as before.
   private endCancelled(requestId: string | number | undefined) {
-    if (!this.pendingRequests.delete(requestId!)) return
+    if (!this.settle(requestId!)) return
     // Typed by hand: the SDK matrix builds against versions that do not
     // declare it.
     const closable = this.transport as unknown as {

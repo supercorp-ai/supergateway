@@ -7,7 +7,7 @@ import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { Logger } from '../types.js'
 import { getVersion } from '../lib/getVersion.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
-import { createModernHttp } from '../lib/modernHttp.js'
+import { modernRelayFor } from '../lib/modernHttp.js'
 import { randomUUID } from 'node:crypto'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
@@ -96,20 +96,7 @@ export function stdioToStatefulStreamableHttpMount(
   )
 
   const children = new OwnedChildProcesses(logger)
-  // The 2026-07-28 relay starts a local server per request. A remote one,
-  // or several combined, is served over the sessions of the earlier protocol
-  // versions only.
-  // "Given", not "non-empty": the library entry points take an empty command,
-  // which fails when it is started, as it always has.
-  const modern =
-    args.stdioCmd !== undefined
-      ? createModernHttp({
-          stdioCmd: args.stdioCmd,
-          toolNames: args.toolNames,
-          children,
-          logger,
-        })
-      : undefined
+  const modern = modernRelayFor(args, children, logger)
 
   const app = streamableHttpApp(express, cors, {
     headers,

@@ -3,3 +3,4 @@ dist
 .claude
 .release/
 .binary/
+.baselines/

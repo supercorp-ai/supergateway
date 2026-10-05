@@ -323,6 +323,70 @@ jobs:
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
 
+  # Nothing a client of the last release sees may change by accident. Two
+  # checks, both against the release as npm and its tag have it:
+  #
+  # - Side by side: the released gateway and this build are started, the same
+  #   client does the same things to both (a whole session over each
+  #   transport, the HTTP answers, the command line's refusals, the startup
+  #   log), and the two are chained, old bridge to new gateway and back.
+  #   Everything observed must be equal.
+  # - The release's own end-to-end tests, unchanged, run against this build:
+  #   what passed then must pass now.
+  #
+  # A difference that is meant is written down with its reason, in
+  # tests/crossVersion.intended.ts and tests/releasedTests.intended.json. One
+  # that is not written down fails here, and so does a written one that is no
+  # longer there. When a release ships, it is added to
+  # tests/crossVersion.baselines.json and to the matrix below.
+  versions:
+    name: Side by side with ${{ matrix.release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['4.1.0']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Builds, and installs each release's published tarball after checking
+      # it against the SHA-256 in tests/crossVersion.baselines.json.
+      - name: The same client against the release and this build
+        timeout-minutes: 10
+        run: npm run test:versions
+
+  released-tests:
+    name: The tests of ${{ matrix.release }} against this build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['4.1.0']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: The release's end-to-end tests, unchanged
+        timeout-minutes: 30
+        run: node scripts/released-tests.mjs ${{ matrix.release }}
+
   # Every Node version the package is actually run on, with real tests rather
   # than a smoke check. Only the files needing the runner's module mocking are
   # left out: that API is experimental and behaves differently on 20 and 22,

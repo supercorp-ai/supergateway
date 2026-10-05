@@ -13,13 +13,19 @@ let last = 'none'
 
 mcp.tool('slow', { ms: z.number() }, async ({ ms }, extra) => {
   last = 'running'
-  const aborted = await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), ms)
-    extra.signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      resolve(true)
-    })
-  })
+  // A cancel that arrives with its request (one read of stdin, as after a
+  // stalled moment on a loaded host) has aborted the signal before this runs,
+  // and an aborted signal fires no event. Hour 15 of the 4.2.0-rc.1 soak, on
+  // macOS, read "running" here for a call that had been cancelled.
+  const aborted =
+    extra.signal.aborted ||
+    (await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms)
+      extra.signal.addEventListener('abort', () => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+    }))
   last = aborted ? 'aborted' : 'completed'
   return { content: [{ type: 'text', text: last }] }
 })

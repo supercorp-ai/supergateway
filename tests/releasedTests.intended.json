@@ -1,0 +1,7 @@
+{
+  "4.1.0": {
+    "tests/gatewayE2e.test.ts: CLI rejects unsupported SSE output": "#292: a remote server can be served over SSE, WebSocket and Streamable HTTP, so --sse or --streamableHttp with one of those outputs starts a gateway instead of being refused.",
+    "tests/gatewayE2e.test.ts: CLI rejects unsupported HTTP output": "#292: as above.",
+    "tests/wsClientIdentity.test.ts: a server request with a string id reaches the client and its reply reaches the server": "#264 (GW-034): this client never initializes, so the gateway initializes the server for it, and this fixture pings the client before answering any request: the client sees that ping once more, for the gateway's initialize."
+  }
+}

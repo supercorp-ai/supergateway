@@ -33,6 +33,10 @@
     "prepack": "npm run build",
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "test:package": "node scripts/test-package.mjs",
+    "pretest:versions": "npm run build && node scripts/install-baselines.mjs",
+    "test:versions": "SUPERGATEWAY_BASELINES=.baselines node --import tsx --test --test-concurrency=1 tests/crossVersion.test.ts",
+    "pretest:released": "npm run build",
+    "test:released": "node scripts/released-tests.mjs",
     "pack:release": "node scripts/pack-release.mjs",
     "publish:next": "npm publish --tag next"
   },

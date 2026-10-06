@@ -185,8 +185,20 @@ export function reapAfter(
       try {
         process.kill(target, 'SIGKILL')
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        if (!alreadyGone(error)) throw error
       }
     }
   })
 }
+
+/**
+ * Whether a signal failed because there was nothing left to signal, which is
+ * what a safety-net kill after a test's assertions expects.
+ *
+ * ESRCH says so. On macOS so does EPERM: a group whose processes have all
+ * exited but are not reaped yet refuses the signal. They are another
+ * process's children here, so this test cannot reap them. Hour 27 of the
+ * 4.2.0-rc.1 soak failed a test whose assertions had passed on exactly this.
+ */
+export const alreadyGone = (error: unknown) =>
+  ['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')

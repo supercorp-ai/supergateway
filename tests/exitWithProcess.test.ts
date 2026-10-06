@@ -22,7 +22,7 @@ import {
   unusedPort,
 } from './helpers/gateway-process.js'
 import { enableFakeTimers } from './helpers/fake-timers.js'
-import { descendantsOf } from './helpers/process-tree.js'
+import { alreadyGone, descendantsOf } from './helpers/process-tree.js'
 
 // --exitWithProcess <pid>: a launcher that does not give the gateway a stdin
 // pipe used to leave it orphaned when the launcher died (#155: 3.7 days).
@@ -620,7 +620,7 @@ test(
       try {
         process.kill(-gateway.pid!, 'SIGKILL')
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        if (!alreadyGone(error)) throw error
       }
       await exited
     })

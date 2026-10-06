@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
 import { gatewayTimeout } from './helpers/gateway-process.js'
+import { alreadyGone } from './helpers/process-tree.js'
 
 function alive(pid: number) {
   try {
@@ -48,7 +49,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           try {
             process.kill(-group, 'SIGKILL')
           } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+            if (!alreadyGone(error)) throw error
           }
         })
         b.gateway.child.kill('SIGTERM') // Never signal the whole group for the assertion.

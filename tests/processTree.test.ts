@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { descendantsOf } from './helpers/process-tree.js'
+import { alreadyGone, descendantsOf } from './helpers/process-tree.js'
 
 for (const platform of ['win32', 'linux', 'darwin'] as const) {
   test(`${platform}: process enumeration counts descendants and excludes unrelated processes`, () => {
@@ -383,4 +383,13 @@ test('a process query that fails for any other reason is not retried', () => {
     /ENOENT/,
   )
   assert.equal(attempts, 1, 'a missing binary will not appear on a second try')
+})
+
+test('a safety-net kill counts an unreaped group as gone, and nothing else', () => {
+  const failed = (code: string) => Object.assign(new Error(code), { code })
+  assert.equal(alreadyGone(failed('ESRCH')), true)
+  // macOS, for a group whose processes have exited but are not reaped yet.
+  assert.equal(alreadyGone(failed('EPERM')), true)
+  assert.equal(alreadyGone(failed('EINVAL')), false)
+  assert.equal(alreadyGone(new Error('no code')), false)
 })

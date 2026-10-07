@@ -17,7 +17,8 @@ const summary = [
   '',
   failed.length
     ? `**${failed.length} phase(s) did not pass:** ${failed.join(', ')}. ` +
-      `Rerun only their failed lanes with \`gh run rerun ${process.env.GITHUB_RUN_ID} --failed\`.`
+      'To check their failed lanes again, run a fresh `five-hours` campaign: ' +
+      'rerunning the failed jobs of this one reruns every later phase in full.'
     : 'Every phase that ran passed.',
 ].join('\n')
 if (process.env.GITHUB_STEP_SUMMARY)

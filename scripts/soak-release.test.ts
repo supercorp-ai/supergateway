@@ -13,7 +13,7 @@ import { WebSocket } from 'ws'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { unusedPort } from '../tests/helpers/gateway-process.js'
+import { requestTimeout, unusedPort } from '../tests/helpers/gateway-process.js'
 import type { TestContext } from 'node:test'
 import { descendantsOf } from '../tests/helpers/process-tree.js'
 
@@ -254,20 +254,45 @@ test(
       }
       if (mode === 'ws') {
         const socket = new WebSocket(url)
-        const timeout = setTimeout(() => socket.terminate(), 10000)
+        // Each connection waits for a server process of its own to start,
+        // and a round starts up to 24 of them at once. Scaled like every
+        // other budget, and said when it runs out: a terminated socket emits
+        // no message and no error, so the request waiting on it never
+        // settled, and the round failed a minute later with only "Soak round
+        // exceeded 60 seconds" (hour 15 of the 4.2.0-rc.1 soak's rerun, on
+        // macOS: the slowest of four connections in a round was cut off
+        // between its tools/list and its tools/call).
+        const budget = requestTimeout(10000)
+        let waitingFor = 'the connection to open'
+        let timeout!: NodeJS.Timeout
+        const expired = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            socket.terminate()
+            reject(
+              Error(
+                `WebSocket round trip exceeded ${budget / 1000} seconds, waiting for ${waitingFor}`,
+              ),
+            )
+          }, budget)
+        })
+        // Nothing awaits `expired` once the round trip is over.
+        expired.catch(() => {})
         const request = async (method: string, params: object) => {
           const requestId = ++id
+          waitingFor = `the answer to ${method}`
           const reply = once(socket, 'message')
           socket.send(
             JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }),
           )
-          const message = JSON.parse(String((await reply)[0]))
+          const message = JSON.parse(
+            String((await Promise.race([reply, expired]))[0]),
+          )
           assert.equal(message.id, requestId)
           assert.equal(message.error, undefined)
           return message.result
         }
         try {
-          await once(socket, 'open')
+          await Promise.race([once(socket, 'open'), expired])
           await request('initialize', {
             protocolVersion: '2024-11-05',
             capabilities: {},
@@ -326,7 +351,10 @@ test(
             }),
           })
         const expected = `soak Unicode 🌙 漢字 \u2028 ${id + 1}`
-        const result = await post('echo', AbortSignal.timeout(10000))
+        const result = await post(
+          'echo',
+          AbortSignal.timeout(requestTimeout(10000)),
+        )
         const body = await result.text()
         assert.equal(result.status, 200, body)
         const messages = body
@@ -341,7 +369,7 @@ test(
         ])
         assert.deepEqual(message.result.structuredContent, { value: expected })
         const abort = new AbortController()
-        const timer = setTimeout(() => abort.abort(), 10000)
+        const timer = setTimeout(() => abort.abort(), requestTimeout(10000))
         try {
           const waiting = await post('wait', abort.signal)
           assert.equal(waiting.status, 200)

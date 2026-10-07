@@ -44,8 +44,9 @@ jobs:
   # Phases run one at a time: a lane has five macOS jobs, which is as many
   # as the free plan runs at once. A phase runs whether or not the one before it passed: one flaky
   # test used to stop every later phase and throw away the rest of the
-  # campaign. Each failure still fails the campaign (see verdict), and
-  # `gh run rerun --failed` reruns only the lanes that failed.
+  # campaign. Each failure still fails the campaign (see verdict). Rerunning
+  # the failed jobs reruns every later phase in full too, since each waits
+  # for the one before: a fresh five-hour campaign rechecks lanes for less.
   second:
     needs: [canary, first]
     if: ${{ !cancelled() && inputs.duration != 'canary' && inputs.duration != 'five-hours' && needs.canary.result == 'success' }}

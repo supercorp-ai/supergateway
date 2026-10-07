@@ -12,6 +12,12 @@ reviewing the canary results and receiving approval for the long run.
 another; the 48-hour campaign is nine and a last one of three hours. A push does
 not start this workflow.
 
+A phase has five macOS jobs, and five is every macOS job the account may run
+at once, so while a campaign runs with `macos: all` (the default) a pull
+request's macOS checks wait for it. `macos: fewer` runs three: Node 20 and
+Node 26, and the scenarios on Node 24. It leaves out macOS on Node 22 and 24;
+Linux and Windows still run all four Node versions.
+
 A failure costs only what failed. Within a phase, a failed command is recorded
 and everything else runs on to the phase's deadline; a failed lane does not
 cancel the other lanes; and each phase runs after the one before it whether or

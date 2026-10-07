@@ -16,8 +16,14 @@ A failure costs only what failed. Within a phase, a failed command is recorded
 and everything else runs on to the phase's deadline; a failed lane does not
 cancel the other lanes; and each phase runs after the one before it whether or
 not that one passed, as long as the canary did. The `verdict` job fails the
-campaign if any phase failed and names them: rerun only the failed lanes with
-`gh run rerun <run id> --failed`.
+campaign if any phase failed and names them.
+
+`gh run rerun <run id> --failed` does not rerun only the failed lanes. GitHub
+reruns a failed job and everything that waits for it, and each phase waits for
+the one before, so it reruns the failed lanes of the first failed phase and then
+every later phase in full: a failure in the third of ten phases costs 35 more
+hours. To check failed lanes again, run a fresh `five-hours` campaign instead:
+it has every lane.
 
 ## Workload
 

@@ -12,6 +12,10 @@ on:
       sha256:
         required: true
         type: string
+      # "fewer" leaves out macOS on Node 22 and 24 (see release-soak.yaml).
+      macos:
+        type: string
+        default: all
 
 permissions:
   contents: read
@@ -36,6 +40,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 22, 24, 26]
+        # With "fewer", macOS keeps the oldest and the newest Node here, and
+        # Node 24 in the scenarios job below: three macOS jobs, not five.
+        # Linux and Windows still run all four. (Node 0 excludes nothing.)
+        exclude: ${{ fromJSON(inputs.macos == 'fewer' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || '[{"os":"macos-latest","node":0}]') }}
     env:
       SOAK_DIRECTORY: .release/overnight
       # The scenario soak has runners of its own (the scenarios job below).

@@ -12,6 +12,11 @@ on:
         type: choice
         options: [canary, five-hours, twenty-five-hours, forty-eight-hours]
         default: canary
+      macos:
+        description: macOS jobs per phase. "all" is five, every macOS job the account may run at once, so pull requests wait for a Mac while a campaign runs. "fewer" is three (Node 20, Node 26 and the scenarios) and leaves two.
+        type: choice
+        options: [all, fewer]
+        default: all
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ jobs:
       seconds: 60
       label: canary
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   # Five-hour phases. A hosted job runs at most six hours
   # (https://docs.github.com/en/actions/reference/limits) and nothing outlives
@@ -38,11 +44,12 @@ jobs:
       seconds: 18000
       label: hours-0-to-5
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   # The campaigns continue from the first phase, one phase after another:
   # five phases for 25 hours, ten for 48 (nine of five hours and one of three).
   # Phases run one at a time: a lane has five macOS jobs, which is as many
-  # as the free plan runs at once. A phase runs whether or not the one before it passed: one flaky
+  # as the account runs at once (three with `macos: fewer`). A phase runs whether or not the one before it passed: one flaky
   # test used to stop every later phase and throw away the rest of the
   # campaign. Each failure still fails the campaign (see verdict). Rerunning
   # the failed jobs reruns every later phase in full too, since each waits
@@ -55,6 +62,7 @@ jobs:
       seconds: 18000
       label: hours-5-to-10
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   third:
     needs: [canary, second]
@@ -64,6 +72,7 @@ jobs:
       seconds: 18000
       label: hours-10-to-15
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   fourth:
     needs: [canary, third]
@@ -73,6 +82,7 @@ jobs:
       seconds: 18000
       label: hours-15-to-20
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   fifth:
     needs: [canary, fourth]
@@ -82,6 +92,7 @@ jobs:
       seconds: 18000
       label: hours-20-to-25
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   sixth:
     needs: [canary, fifth]
@@ -91,6 +102,7 @@ jobs:
       seconds: 18000
       label: hours-25-to-30
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   seventh:
     needs: [canary, sixth]
@@ -100,6 +112,7 @@ jobs:
       seconds: 18000
       label: hours-30-to-35
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   eighth:
     needs: [canary, seventh]
@@ -109,6 +122,7 @@ jobs:
       seconds: 18000
       label: hours-35-to-40
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   ninth:
     needs: [canary, eighth]
@@ -118,6 +132,7 @@ jobs:
       seconds: 18000
       label: hours-40-to-45
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   tenth:
     needs: [canary, ninth]
@@ -127,6 +142,7 @@ jobs:
       seconds: 10800
       label: hours-45-to-48
       sha256: ${{ inputs.sha256 }}
+      macos: ${{ inputs.macos }}
 
   # Phases do not depend on each other's success, so the campaign's result
   # is here: it fails if any phase failed or was cancelled, and lists them.

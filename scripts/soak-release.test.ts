@@ -520,6 +520,25 @@ test(
       await delay(5000)
       settled.push(sample('cooldown', round))
     }
+    // RSS: each gateway's settled final against its warm-up envelope, the
+    // highest sample in the first fifth of the run (at least three), from
+    // round 20 on: the rule the scenario soak has, for the reason it gives.
+    // One reference sample decides the verdict by where it lands, and RSS
+    // swings (allocator retention; on macOS the compressor too). In hour 30 of
+    // the second 4.2.0-rc.1 campaign the WebSocket gateway on macOS was
+    // sampled at 53 MiB at round 110, the lowest it was all run, and failed a
+    // settled 80 MiB by under 1 MiB. It had moved between 51 and 85 MiB for
+    // five hours, with a median of 56 in the first hour and 58 in the last.
+    // A leak still has to outgrow the envelope by a fifth plus 16 MiB. A
+    // canary has too few samples to say, and says so.
+    const warm = activeSamples
+      .slice(1)
+      .slice(0, Math.max(3, Math.floor((activeSamples.length - 1) / 5)))
+    if (warm.length < 3) emit({ phase: 'rss-not-judged', warm: warm.length })
+    const warmPeak = (index: number) =>
+      warm.length < 3
+        ? undefined
+        : Math.max(...warm.map((rows) => rows[index].rssKiB))
     for (const [index, row] of settled.at(-1)!.entries()) {
       if (row.mode === 'continuation') continue
       assert.equal(
@@ -530,14 +549,11 @@ test(
         row.descriptors <= baseline[index].descriptors + 8,
         `${row.mode}: descriptor growth`,
       )
-      // RSS includes allocator retention. Compare a warmed-up sample to the final
-      // idle sample; retain all observations for longer-run trend review.
-      const warm =
-        activeSamples[Math.min(10, activeSamples.length - 1)]?.[index]
-      if (warm)
+      const reference = warmPeak(index)
+      if (reference !== undefined)
         assert.ok(
-          row.rssKiB <= warm.rssKiB * 1.2 + 16 * 1024,
-          `${row.mode}: RSS kept growing after warm-up`,
+          row.rssKiB <= reference * 1.2 + 16 * 1024,
+          `${row.mode}: RSS kept growing after warm-up (${row.rssKiB} KiB, warm-up peak ${reference} KiB)`,
         )
     }
     // Original five modes keep their RSS gate, after the 75-second cooldown.
@@ -563,12 +579,11 @@ test(
         baseline[continuationIndex].descriptors + 8,
       'continuation: descriptor growth',
     )
-    const continuationWarm =
-      activeSamples[Math.min(10, activeSamples.length - 1)]?.[continuationIndex]
-    if (continuationWarm)
+    const continuationReference = warmPeak(continuationIndex)
+    if (continuationReference !== undefined)
       assert.ok(
-        continuationRow.rssKiB <= continuationWarm.rssKiB * 1.2 + 16 * 1024,
-        'continuation: RSS kept growing after warm-up',
+        continuationRow.rssKiB <= continuationReference * 1.2 + 16 * 1024,
+        `continuation: RSS kept growing after warm-up (${continuationRow.rssKiB} KiB, warm-up peak ${continuationReference} KiB)`,
       )
     emit({
       phase: 'complete',

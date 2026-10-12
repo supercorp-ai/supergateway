@@ -480,6 +480,9 @@ test('a call starts only the server that has the tool, once the entry knows who 
   const first = await request('tools/call', { name: 'two' })
   assert.equal(first!.result.content[0].text, 'b ran two')
   assert.deepEqual(servers.a.methods(), ['tools/list'])
+  // The lists are asked on the request's behalf: with what it declared of
+  // itself, which a 2026-07-28 server requires of every request.
+  assert.deepEqual(servers.a.instances[0].sent[0].params, { _meta: meta })
   // The next does not: only the tool's server is started.
   const before = servers.a.instances.length
   const declared = { version: MODERN_VERSION, params: { 'mcp-param-x': '1' } }

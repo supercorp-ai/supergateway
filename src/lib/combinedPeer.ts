@@ -2,23 +2,16 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from '../types.js'
 import type { ChildOwner, Peer, StartPeer } from './childHandoff.js'
 import { Backend, type CombinedMember, type Id } from './combinedBackend.js'
+import { CombinedCatalog } from './combinedCatalog.js'
 import { getVersion } from './getVersion.js'
 import {
-  BY_URI,
   INTERNAL_ERROR,
-  INVALID_PARAMS,
   INVALID_REQUEST,
-  LISTS,
   LIST_CHANGED,
-  METHOD_NOT_FOUND,
-  NAMED,
-  RESOURCE_NOT_FOUND,
   RpcError,
   isList,
   isObject,
-  templateMatches,
   union,
-  type ListMethod,
   type Params,
 } from './combinedRules.js'
 
@@ -47,9 +40,10 @@ type Notification = { jsonrpc: '2.0'; method: string; params?: Params }
  */
 class Combined implements Peer {
   private backends: Backend[] = []
+  /** Who has what, as the last lists said. */
+  private readonly catalog: CombinedCatalog
   /** Settles when initialize has been answered; unset before it arrives. */
   private ready: Promise<void> | undefined
-  private readonly tables = new Map<ListMethod, Promise<Map<string, Backend>>>()
   /** The client's requests a server has yet to answer. */
   private readonly inFlight = new Map<Id, Backend>()
   /** The servers' requests the client has yet to answer, by the id it sees. */
@@ -70,8 +64,10 @@ class Combined implements Peer {
     private readonly owner: ChildOwner,
     private readonly logger: Logger,
     /** The clashes already warned about, for every session of the entry. */
-    private readonly warned: Set<string>,
-  ) {}
+    warned: Set<string>,
+  ) {
+    this.catalog = new CombinedCatalog(entry, logger, warned, () => this.live())
+  }
 
   get gone() {
     return this.ended
@@ -150,21 +146,9 @@ class Combined implements Peer {
     if (!this.ready)
       throw new RpcError(INVALID_REQUEST, 'The session is not initialized')
     await this.ready
-    if (isList(method)) return this.list(method, params)
+    if (isList(method)) return this.catalog.list(method, params)
     if (method === 'logging/setLevel') return this.setLevel(params)
-    this.forward(await this.target(method, params), request)
-  }
-
-  // The server a request is for: the one with the tool, prompt or resource
-  // it names.
-  private target(method: string, params: Params | undefined) {
-    if (method in NAMED) return this.named(NAMED[method], params?.name)
-    if (BY_URI.has(method)) return this.byUri(params?.uri)
-    if (method === 'completion/complete')
-      return params?.ref?.type === 'ref/prompt'
-        ? this.named('prompts/list', params.ref.name)
-        : this.byUri(params?.ref?.uri)
-    throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${method}`)
+    this.forward(await this.catalog.target(method, params), request)
   }
 
   private forward(backend: Backend, request: Request) {
@@ -333,103 +317,6 @@ class Combined implements Peer {
     void backend.peer.stop()
   }
 
-  // --- Lists and what they route ---
-
-  private async list(method: ListMethod, params: Params | undefined) {
-    // Every list is one page, so no cursor is the gateway's.
-    if (params?.cursor !== undefined)
-      throw new RpcError(INVALID_PARAMS, 'Invalid cursor')
-    const { items } = await this.merged(method)
-    return { [LISTS[method].key]: items }
-  }
-
-  private async merged(method: ListMethod) {
-    const list = LISTS[method]
-    const backends = this.live().filter(
-      (backend) => list.capability in backend.capabilities,
-    )
-    const lists = await Promise.all(
-      backends.map((backend) =>
-        backend.listAll(method).catch((err: Error) => {
-          this.logger.error(
-            `${this.entry}: ${method} of server "${backend.name}" failed: ${err.message}`,
-          )
-          return []
-        }),
-      ),
-    )
-    const owners = new Map<string, Backend>()
-    const items = lists.flatMap((listed, i) =>
-      listed.filter((item) => {
-        const id = (item as Params | null)?.[list.id]
-        if (typeof id !== 'string') return true
-        const first = owners.get(id)
-        if (!first) {
-          owners.set(id, backends[i])
-          return true
-        }
-        this.warnOfClash(list.what, id, first, backends[i])
-        return false
-      }),
-    )
-    this.tables.set(method, Promise.resolve(owners))
-    return { items, owners }
-  }
-
-  private warnOfClash(
-    what: string,
-    id: string,
-    first: Backend,
-    other: Backend,
-  ) {
-    const key = `${what} ${id}`
-    if (this.warned.has(key)) return
-    this.warned.add(key)
-    this.logger.error(
-      `${this.entry}: ${what} "${id}" is offered by "${first.name}" and "${other.name}"; clients get the one of "${first.name}", listed first${what === 'tool' ? '. Set "toolPrefix" on one of them to keep both' : ''}`,
-    )
-  }
-
-  // Who has what, from the last list; fetched if there has been none, or
-  // again when `fresh`.
-  private table(method: ListMethod, fresh: boolean) {
-    const known = fresh ? undefined : this.tables.get(method)
-    if (known) return known
-    const fetched = this.merged(method).then(({ owners }) => owners)
-    this.tables.set(method, fetched)
-    return fetched
-  }
-
-  // The server with the tool or prompt called `name`. A name the last list
-  // did not have may be new, so the list is fetched once more before it is
-  // refused.
-  private async named(method: ListMethod, name: unknown): Promise<Backend> {
-    for (const fresh of [false, true]) {
-      const owner = (await this.table(method, fresh)).get(name as string)
-      if (owner && !owner.gone) return owner
-    }
-    throw new RpcError(INVALID_PARAMS, `Unknown ${LISTS[method].what}: ${name}`)
-  }
-
-  // The server with the resource at `uri`: one that lists it, or one with a
-  // template it fits.
-  private async byUri(uri: unknown): Promise<Backend> {
-    for (const fresh of [false, true]) {
-      const listed = (await this.table('resources/list', fresh)).get(
-        uri as string,
-      )
-      if (listed && !listed.gone) return listed
-      const templates = await this.table('resources/templates/list', fresh)
-      for (const [template, owner] of templates)
-        if (
-          !owner.gone &&
-          (template === uri || templateMatches(template, String(uri)))
-        )
-          return owner
-    }
-    throw new RpcError(RESOURCE_NOT_FOUND, 'Resource not found', { uri })
-  }
-
   private async setLevel(params: Params | undefined) {
     await Promise.all(
       this.live()
@@ -520,7 +407,7 @@ class Combined implements Peer {
       return
     }
     // What it lists has changed, and so may who has what.
-    if (LIST_CHANGED.test(method)) this.tables.clear()
+    if (LIST_CHANGED.test(method)) this.catalog.forget()
     this.toClient(notification, line)
   }
 
@@ -564,7 +451,7 @@ class Combined implements Peer {
         },
       })
     }
-    this.tables.clear()
+    this.catalog.forget()
     if (this.live().length === 0) {
       this.finish(code, signal)
       return

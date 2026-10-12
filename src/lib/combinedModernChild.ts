@@ -253,7 +253,6 @@ export class CombinedModernChild implements ModernChild {
         ? { ...request, params: { ...params, name: own } }
         : request,
     )
-    return undefined
   }
 
   // A server started for this request. It is stopped with the request.

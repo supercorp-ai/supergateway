@@ -787,6 +787,59 @@ test('a server that stops fails what it was asked, and the client is told its li
   assert.equal(client.unasked().length, 4)
 })
 
+test('what a stopped server had is unknown at the very next call, with no list asked in between', async () => {
+  const { client, servers } = combine({
+    dies: { tools: ['doomed'], prompts: ['gone'] },
+    stays: { tools: ['fine'] },
+  })
+  await client.initialize()
+  // The session has learnt who has what.
+  assert.deepEqual(names((await result(client.request('tools/list'))).tools), [
+    'doomed',
+    'fine',
+  ])
+  assert.deepEqual(
+    names((await result(client.request('prompts/list'))).prompts),
+    ['gone'],
+  )
+  servers.dies.exit(1, null)
+  // What it learnt is forgotten with the server: the call is not sent to a
+  // server that is no longer there, and the client is told why at once.
+  assert.deepEqual(
+    await error(client.request('tools/call', { name: 'doomed' })),
+    { code: -32602, message: 'Unknown tool: doomed' },
+  )
+  assert.equal(
+    (await error(client.request('prompts/get', { name: 'gone' }))).code,
+    -32602,
+  )
+})
+
+test('a server stopping is a change like any other: what the session knew is dropped, and looked at again', async () => {
+  const { client, servers } = combine({
+    dies: { tools: ['doomed'] },
+    stays: { tools: ['fine'] },
+  })
+  await client.initialize()
+  await client.request('tools/list')
+  const lists = () =>
+    servers.stays.methods().filter((m) => m === 'tools/list').length
+  const before = lists()
+  // Known already: no list is asked for.
+  await client.request('tools/call', { name: 'fine' })
+  assert.equal(lists(), before)
+  servers.dies.exit(1, null)
+  // Who has what was learnt with that server in it. The next call asks again,
+  // once, as it does after a server says its list changed.
+  assert.equal(
+    (await client.request('tools/call', { name: 'fine' })).error,
+    undefined,
+  )
+  assert.equal(lists(), before + 1)
+  await client.request('tools/call', { name: 'fine' })
+  assert.equal(lists(), before + 1)
+})
+
 test('the session ends when its last server does, with that exit', async () => {
   const { client, servers } = combine({ a: { tools: ['x'] }, b: {} })
   await client.initialize()

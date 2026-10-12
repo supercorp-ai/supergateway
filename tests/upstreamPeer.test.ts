@@ -15,7 +15,12 @@ const sse = (...messages: object[]) =>
 // A `fetch` that answers each POST with the next scripted SSE body, chunk by
 // chunk as it is pulled, and records each request and pull.
 const scripted = (t: TestContext, bodies: string[][]) => {
-  const requests: { method: string; headers: Headers; body: unknown }[] = []
+  const requests: {
+    method: string
+    headers: Headers
+    body: unknown
+    signal: AbortSignal
+  }[] = []
   let pulls = 0
   t.mock.method(
     globalThis,
@@ -25,6 +30,7 @@ const scripted = (t: TestContext, bodies: string[][]) => {
         method: init.method!,
         headers: new Headers(init.headers),
         body: init.body ? JSON.parse(String(init.body)) : undefined,
+        signal: init.signal!,
       })
       if (init.method !== 'POST') return new Response(null, { status: 405 })
       const chunks = [...(bodies.shift() ?? [])]
@@ -165,4 +171,26 @@ test('the remote server is read only as fast as its client reads', async (t) => 
     ['answer', 'notification'],
   )
   await peer.stop()
+})
+
+test('stopping the session ends it at the remote server, then closes the connection', async (t) => {
+  const remote = scripted(t, [
+    sse({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-06-18' } }),
+  ])
+  const { sink, received } = owner()
+  const peer = start(sink)
+  peer.write(initialize(1))
+  await until(() => received.length === 1)
+  const [opened] = remote.requests
+  assert.equal(opened.signal.aborted, false)
+  await peer.stop()
+  // The session is ended by name, so the server need not wait it out...
+  const ended = remote.requests.at(-1)!
+  assert.deepEqual(
+    [ended.method, ended.headers.get('mcp-session-id')],
+    ['DELETE', 'remote-session'],
+  )
+  // ...and the connection is closed: whatever was still open on it is cut,
+  // not left for the remote server to hold.
+  assert.equal(opened.signal.aborted, true)
 })

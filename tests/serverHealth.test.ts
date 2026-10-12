@@ -78,6 +78,21 @@ test('a server that answers initialize and ping is healthy, and is stopped', asy
   assert.equal(peer.stops(), 1)
 })
 
+test('a probe that has its answer leaves no timer running', async () => {
+  // The probe's limit is a timer. Left alone after the answer, it would keep
+  // the process from ending for up to ten seconds after every probe.
+  const timers = () =>
+    process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length
+  const before = timers()
+  const peer = fakePeer()
+  const probed = probeServer(peer.start)
+  assert.equal(timers(), before + 1, 'a probe is timed')
+  peer.answer()
+  peer.answer()
+  assert.deepEqual(await probed, { ok: true })
+  assert.equal(timers(), before)
+})
+
 test('what the server says besides the answers is ignored', async () => {
   const peer = fakePeer()
   const probed = probeServer(peer.start)

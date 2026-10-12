@@ -197,7 +197,6 @@ const defaultOutputTransport = (argv: {
   if (argv.stdio !== undefined) return 'sse'
   if (argv.sse !== undefined || argv.streamableHttp !== undefined)
     return 'stdio'
-  return undefined
 }
 
 export type Cli = ReturnType<typeof parseCli>

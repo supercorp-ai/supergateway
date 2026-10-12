@@ -104,6 +104,40 @@ const post = (url: string, headers: Record<string, string> = {}) =>
   })
 
 test(
+  "several servers with a host: the gateway's own lines say the port, then the host",
+  options,
+  async (t) => {
+    const { port, gateway } = await serve(t, {
+      host: '127.0.0.1',
+      mcpServers: { one: mock, two: { ...mock, outputTransport: 'ws' } },
+    })
+    const logged = gateway
+      .output()
+      .split('\n')
+      .filter((line) => line.startsWith(prefix))
+      .map((line) => line.slice(prefix.length))
+    // Before any server's own lines, which carry its name.
+    assert.deepEqual(
+      logged.slice(
+        2,
+        logged.findIndex((line) => line.startsWith('[one]')),
+      ),
+      [
+        `  - port: ${port}`,
+        '  - host: 127.0.0.1',
+        '  - Health endpoints: (none)',
+      ],
+    )
+    // And it is listening there.
+    const response = await fetch(`http://127.0.0.1:${port}/one/sse`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    assert.equal(response.status, 200)
+    await response.body!.cancel()
+  },
+)
+
+test(
   'every output transport serves its own entry on one port',
   options,
   async (t) => {

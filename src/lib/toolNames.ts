@@ -160,13 +160,13 @@ export const toolNamesPeer =
         const replies: JSONRPCResponse[] = []
         const sent = each(message, (item) => {
           const inbound = names.inbound(item)
-          if ('reply' in inbound) {
-            replies.push(inbound.reply)
-            return undefined
+          if ('forward' in inbound) {
+            if (isRequest(item) && item.method === 'tools/list')
+              lists.add(item.id)
+            return inbound.forward
           }
-          if (isRequest(item) && item.method === 'tools/list')
-            lists.add(item.id)
-          return inbound.forward
+          // Answered here: nothing of it goes to the server.
+          replies.push(inbound.reply)
         })
         // As the server's own answers would: later, never inside write.
         for (const reply of replies)

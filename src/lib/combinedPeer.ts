@@ -233,7 +233,6 @@ class Combined implements Peer {
     if (isList(method)) return this.list(method, params)
     if (method === 'logging/setLevel') return this.setLevel(params)
     this.forward(await this.target(method, params), request)
-    return undefined
   }
 
   // The server a request is for: the one with the tool, prompt or resource

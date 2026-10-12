@@ -54,7 +54,11 @@ for (const stateful of [true, false]) {
           (error: Error) => error,
         )
         if (fault) {
-          assert.match(gateway.errors(), /AUDIT: native spawn failure selected/)
+          // The log comes by its own pipe, after the reply or before it.
+          await gateway.waitFor(
+            () => /AUDIT: native spawn failure selected/.test(gateway.errors()),
+            'log the spawn failure',
+          )
           if (second instanceof Error)
             assert.notEqual(second.name, 'TimeoutError')
           else

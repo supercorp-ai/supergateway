@@ -1,5 +1,5 @@
 import { type ChildLink, isHandshake, isResponseTo } from './childLink.js'
-import type { ChildOwner, Peer, StartPeer } from './peer.js'
+import type { ChildOwner } from './peer.js'
 import type { Logger } from '../types.js'
 import { WaitingChild } from './waitingChild.js'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'

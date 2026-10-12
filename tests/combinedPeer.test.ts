@@ -1118,3 +1118,181 @@ test('a server that stops fails only its own calls', async () => {
   servers.a.say({ jsonrpc: '2.0', id: request.id, result: { content: [] } })
   assert.deepEqual(await result(ofA), { content: [] })
 })
+
+// --- What is over stays over ---
+//
+// Each of these plays on what the session remembers of a request once it is
+// done with it: a server stopping, or saying something late, must find
+// nothing left to act on.
+
+test('two calls at once, with nothing known yet, ask each server for its list once', async () => {
+  const { client, servers } = combine({
+    a: { tools: ['one'] },
+    b: { tools: ['two'] },
+  })
+  await client.initialize()
+  const lists = () =>
+    Object.values(servers).map(
+      (server) => server.methods().filter((m) => m === 'tools/list').length,
+    )
+  const answers = await Promise.all([
+    result(client.request('tools/call', { name: 'one' })),
+    result(client.request('tools/call', { name: 'two' })),
+  ])
+  assert.deepEqual(
+    answers.map((answer) => answer.content[0].text),
+    ['a ran one', 'b ran two'],
+  )
+  assert.deepEqual(lists(), [1, 1])
+  // And what was learnt is kept for the next.
+  await client.request('tools/call', { name: 'two' })
+  assert.deepEqual(lists(), [1, 1])
+})
+
+test('a tool that moved to another server is called there once its list is said to have changed', async () => {
+  const has: Record<string, string[]> = { first: ['moves'], second: [] }
+  const listing = (name: string) => ({
+    capabilities: { tools: { listChanged: true } },
+    answers: {
+      'tools/list': () => ({
+        result: { tools: has[name].map((tool) => ({ name: tool })) },
+      }),
+    },
+  })
+  const { client, servers } = combine({
+    first: listing('first'),
+    second: listing('second'),
+  })
+  await client.initialize()
+  const ran = async () =>
+    (await result(client.request('tools/call', { name: 'moves' }))).content[0]
+      .text
+  assert.equal(await ran(), 'first ran moves')
+  has.first = []
+  has.second = ['moves']
+  // Not told yet, the session still knows it where it was.
+  assert.equal(await ran(), 'first ran moves')
+  // Any other notification changes nothing of that.
+  servers.first.say({
+    jsonrpc: '2.0',
+    method: 'notifications/resources/updated',
+    params: { uri: 'file:///x' },
+  })
+  assert.equal(await ran(), 'first ran moves')
+  servers.first.say({
+    jsonrpc: '2.0',
+    method: 'notifications/tools/list_changed',
+  })
+  assert.equal(await ran(), 'second ran moves')
+})
+
+test('a call a server answered is over: a second answer, or the server stopping, says nothing more of it', async () => {
+  const { client, servers } = combine({ a: { tools: ['t'] }, b: {} })
+  await client.initialize()
+  const answer = await client.request('tools/call', { name: 't' }, 'c1')
+  servers.a.say({ jsonrpc: '2.0', id: 'c1', result: { again: true } })
+  servers.a.exit(1)
+  assert.deepEqual(
+    client.told.filter((message) => message.id === 'c1'),
+    [answer],
+  )
+})
+
+test('a call a stopped server was doing is over: its cancellation goes nowhere', async () => {
+  const { client, servers } = combine({
+    dies: { tools: ['doomed'], answers: { 'tools/call': () => 'hold' } },
+    stays: {},
+  })
+  await client.initialize()
+  const pending = client.request('tools/call', { name: 'doomed' }, 'd1')
+  await settled()
+  servers.dies.fail('process', 'boom')
+  assert.equal((await error(pending)).code, -32603)
+  const before = servers.dies.received().length
+  client.notify('notifications/cancelled', { requestId: 'd1' })
+  assert.equal(servers.dies.received().length, before)
+  assert.equal(
+    servers.stays.methods().includes('notifications/cancelled'),
+    false,
+  )
+})
+
+test("a server's request the client answered is over: nothing is cancelled when the server stops", async () => {
+  const { client, servers } = combine({ asks: { tools: ['t'] }, stays: {} })
+  await client.initialize()
+  servers.asks.say({ jsonrpc: '2.0', id: 5, method: 'roots/list' })
+  client.peer.write({
+    jsonrpc: '2.0',
+    id: 'sgw:asks:1',
+    result: { roots: [] },
+  } as any)
+  // Cancelling what was answered names nothing the client knows.
+  servers.asks.say({
+    jsonrpc: '2.0',
+    method: 'notifications/cancelled',
+    params: { requestId: 5 },
+  })
+  servers.asks.exit(1)
+  assert.deepEqual(client.unasked().slice(1), [
+    { jsonrpc: '2.0', method: 'notifications/tools/list_changed' },
+  ])
+})
+
+test("a stopped server's request is over: the client's late answer, and progress for it, do not reach it", async () => {
+  const { client, servers } = combine({ asks: {}, stays: {} })
+  await client.initialize()
+  servers.asks.say({
+    jsonrpc: '2.0',
+    id: 5,
+    method: 'sampling/createMessage',
+    params: { _meta: { progressToken: 'p' }, messages: [] },
+  })
+  servers.asks.fail('process', 'boom')
+  const before = servers.asks.received().length
+  client.peer.write({ jsonrpc: '2.0', id: 'sgw:asks:1', result: {} } as any)
+  client.notify('notifications/progress', {
+    progressToken: 'sgw:asks:1:progress',
+    progress: 1,
+  })
+  assert.equal(servers.asks.received().length, before)
+  // The token is no one's now, so the notification goes to who is left.
+  assert.deepEqual(servers.stays.received().at(-1), {
+    jsonrpc: '2.0',
+    method: 'notifications/progress',
+    params: { progressToken: 'sgw:asks:1:progress', progress: 1 },
+  })
+})
+
+test('servers exiting because the session was stopped are not failures: nothing is logged, nothing answered', async () => {
+  const { client, servers, errors } = combine({
+    a: { tools: ['wait'], answers: { 'tools/call': () => 'hold' } },
+    b: {},
+  })
+  await client.initialize()
+  void client.request('tools/call', { name: 'wait' }, 'w1')
+  await settled()
+  const told = client.told.length
+  await client.peer.stop()
+  servers.a.exit(0)
+  servers.b.exit(0)
+  assert.deepEqual(errors, [])
+  assert.equal(client.told.length, told)
+  assert.deepEqual(client.exits, [])
+})
+
+test('a server started again at a lower version: the exit of its first start is not a failure', async () => {
+  const { client, servers, errors } = combine({
+    old: { versions: ['2024-11-05'] },
+    both: { versions: ['2024-11-05', '2025-06-18'], tools: ['b'] },
+  })
+  await client.initialize('2025-06-18')
+  assert.equal(servers.both.instances.length, 2)
+  // Its first process exits, as one that was stopped does.
+  servers.both.instances[0].owner.exit(0, null)
+  assert.deepEqual(errors, [])
+  assert.deepEqual(client.unasked(), [])
+  assert.equal(
+    (await result(client.request('tools/call', { name: 'b' }))).content[0].text,
+    'both ran b',
+  )
+})

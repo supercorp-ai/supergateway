@@ -14,6 +14,12 @@ export interface CombinedMember {
 }
 
 export type Id = string | number
+export type Request = {
+  jsonrpc: '2.0'
+  id: Id
+  method: string
+  params?: Params
+}
 
 /** One combined server within a session: its peer and what it declared. */
 export class Backend {

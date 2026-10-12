@@ -1,155 +1,43 @@
+import type {
+  ModernRequestInfo,
+  ModernMember,
+  CombinedModernEntry,
+  Request,
+} from './combinedModernTypes.js'
+import type { ModernChild } from './upstreamModernChild.js'
 import type { JSONRPCMessage } from './modernSdk.js'
 import type { Logger } from '../types.js'
-import { getVersion } from './getVersion.js'
-import type { ToolNames } from './toolNames.js'
 import {
-  MODERN_VERSION,
-  SPEAKS_FOR_MS,
-  type ModernChild,
-} from './upstreamModernChild.js'
+  detach,
+  ask,
+  cacheHints,
+  allPages,
+  ownName,
+} from './combinedModernAsk.js'
 import {
-  BY_URI,
+  RpcError,
+  type Params,
+  isList,
+  NAMED,
   INTERNAL_ERROR,
+  union,
+  isObject,
+  type ListMethod,
   INVALID_PARAMS,
   LISTS,
-  METHOD_NOT_FOUND,
-  NAMED,
-  RESOURCE_NOT_FOUND,
-  RpcError,
-  isList,
-  isObject,
   templateMatches,
-  union,
-  type ListMethod,
-  type Params,
+  BY_URI,
+  METHOD_NOT_FOUND,
+  RESOURCE_NOT_FOUND,
 } from './combinedRules.js'
+import { getVersion } from './getVersion.js'
+export { combinedSpeaksModern } from './combinedSpeaksModern.js'
 
-type Id = string | number
-type Request = { jsonrpc: '2.0'; id: Id; method: string; params?: Params }
-type Answer = { jsonrpc: '2.0'; id: Id; result?: Params; error?: Params }
-
-/** What the client's request declared, for a server that is sent it. */
-export interface ModernRequestInfo {
-  version: string | undefined
-  params: Record<string, string>
-}
-
-/** One of the servers combined, as a 2026-07-28 request reaches it. */
-export interface ModernMember {
-  name: string
-  toolNames?: ToolNames
-  /** Nothing for a server that has no such requests (a remote SSE one). */
-  child?: (request: ModernRequestInfo) => ModernChild
-}
-
-/** A combined entry, and what its requests share: who has what. */
-export interface CombinedModernEntry {
-  name: string
-  members: ModernMember[]
-  /** By list, what a client names, and the server and its own name for it. */
-  tables: Map<ListMethod, Map<string, { member: ModernMember; own: string }>>
-  /** The clashes already warned about, with the entry's sessions. */
-  warned: Set<string>
-}
-
-const DISCOVER_TIMEOUT_MS = 10_000
-
-// One request of the gateway's own to a server started for it, and its
-// answer. Whatever else the server says meanwhile is not the client's.
-function ask(child: ModernChild, request: Request): Promise<Answer> {
-  return new Promise((resolve, reject) => {
-    child.onmessage = (message) => {
-      if (
-        'id' in message &&
-        !('method' in message) &&
-        message.id === request.id
-      )
-        resolve(message as Answer)
-    }
-    child.onerror = reject
-    child.onclose = () => reject(new Error('The server stopped'))
-    child.send(request as JSONRPCMessage).catch(reject)
-  })
-}
-
-// Nothing a server says or does any more is anyone's.
-const detach = (child: ModernChild) => {
-  child.onmessage = undefined
-  child.onerror = undefined
-  child.onclose = undefined
-}
-
-const discoverRequest = (): Request => ({
-  jsonrpc: '2.0',
-  id: 'supergateway-discover',
-  method: 'server/discover',
-  params: {
-    _meta: {
-      'io.modelcontextprotocol/protocolVersion': MODERN_VERSION,
-      'io.modelcontextprotocol/clientInfo': {
-        name: 'supergateway',
-        version: getVersion(),
-      },
-      'io.modelcontextprotocol/clientCapabilities': {},
-    },
-  },
-})
-
-/**
- * Whether every server of a combined entry speaks 2026-07-28, asked with
- * `server/discover` and remembered for a minute. One that does not makes
- * the entry answer the earlier versions only, as it did before: nothing is
- * translated between a client and a server that speak different ones.
- */
-export function combinedSpeaksModern(
-  entry: CombinedModernEntry,
-  logger: Logger,
-  now: () => number = Date.now,
-) {
-  let last: { at: number; speaks: Promise<boolean> } | undefined
-  const speaksIt = async (member: ModernMember) => {
-    if (!member.child) return false
-    const child = member.child({ version: MODERN_VERSION, params: {} })
-    try {
-      await child.start()
-      let timer!: NodeJS.Timeout
-      const answer = await Promise.race([
-        ask(child, discoverRequest()),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('No answer')),
-            DISCOVER_TIMEOUT_MS,
-          )
-        }),
-      ]).finally(() => clearTimeout(timer))
-      return answer.result!.supportedVersions.includes(MODERN_VERSION)
-    } catch {
-      return false
-    } finally {
-      detach(child)
-      await child.close()
-    }
-  }
-  return (): Promise<boolean> => {
-    if (last && now() - last.at < SPEAKS_FOR_MS) return last.speaks
-    const speaks = Promise.all(entry.members.map(speaksIt)).then((each) => {
-      const all = each.every(Boolean)
-      logger.info(
-        all
-          ? `${entry.name}: every server speaks ${MODERN_VERSION}`
-          : `${entry.name}: ${entry.members
-              .filter((_member, i) => !each[i])
-              .map(({ name }) => `"${name}"`)
-              .join(
-                ', ',
-              )} do not speak ${MODERN_VERSION}, so the entry answers the earlier versions`,
-      )
-      return all
-    })
-    last = { at: now(), speaks }
-    return speaks
-  }
-}
+export {
+  type ModernRequestInfo,
+  type ModernMember,
+  type CombinedModernEntry,
+} from './combinedModernTypes.js'
 
 /**
  * Several servers as one, for one 2026-07-28 request. The rules are the
@@ -455,46 +343,5 @@ export class CombinedModernChild implements ModernChild {
       (await this.templateOwner(uri, meta))
     if (owner) return owner
     throw new RpcError(RESOURCE_NOT_FOUND, 'Resource not found', { uri })
-  }
-}
-
-// A server's own name for what the client calls `id`: a tool's, without the
-// server's prefix.
-const ownName = (member: ModernMember, method: ListMethod, id: string) =>
-  method === 'tools/list' && member.toolNames
-    ? id.slice(member.toolNames.prefix.length)
-    : id
-
-// Every page of one server's list. One that has no such list has none.
-async function allPages(server: {
-  ask: (cursor?: string) => Promise<Answer>
-}): Promise<Params[]> {
-  const pages: Params[] = []
-  const seen = new Set<string>()
-  let cursor: string | undefined
-  do {
-    const answer = await server.ask(cursor)
-    if (!answer.result) return pages
-    pages.push(answer.result)
-    // A server that repeats a cursor would be asked forever.
-    if (cursor !== undefined) seen.add(cursor)
-    cursor = seen.has(answer.result.nextCursor)
-      ? undefined
-      : answer.result.nextCursor
-  } while (typeof cursor === 'string')
-  return pages
-}
-
-// How long a client may keep an answer made of several: no longer than the
-// shortest any of them allows, and privately if any is private.
-function cacheHints(results: Params[]) {
-  const ttls = results
-    .map((result) => result.ttlMs)
-    .filter((ttl) => typeof ttl === 'number')
-  return {
-    ...(ttls.length ? { ttlMs: Math.min(...ttls) } : {}),
-    ...(results.some((result) => result.cacheScope === 'private')
-      ? { cacheScope: 'private' }
-      : {}),
   }
 }

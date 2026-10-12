@@ -100,6 +100,15 @@ test('what the server says besides the answers is ignored', async () => {
   // A request and a notification from the server, an answer to something it
   // was not asked, and output that is not JSON-RPC at all.
   owner.message({ jsonrpc: '2.0', id: 7, method: 'roots/list' }, '')
+  // A server's own request is not an answer, whatever id it chose for it.
+  owner.message(
+    {
+      jsonrpc: '2.0',
+      id: 'supergateway-health-initialize',
+      method: 'roots/list',
+    },
+    '',
+  )
   owner.message({ jsonrpc: '2.0', method: 'notifications/message' }, '')
   owner.message({ jsonrpc: '2.0', id: 'other', result: {} }, '')
   owner.message({ jsonrpc: '2.0', result: {} }, '')

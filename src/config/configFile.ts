@@ -1,16 +1,13 @@
 import type {
   Transport,
   EndpointOptions,
-  ServerSource,
   InnerServer,
   Entry,
-  GatewaySettings,
   Config,
   Loaded,
   Fail,
 } from './configTypes.js'
 import {
-  text,
   describeParseError,
   pathText,
   object,

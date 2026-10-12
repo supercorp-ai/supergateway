@@ -174,7 +174,16 @@ for (const id of [17, 'opaque', null]) {
     assert.equal(await s.open(), true)
     assert.equal(s.httpStatus, 400)
     assert.equal(JSON.parse(s.body).id, id)
-    assert.ok(JSON.parse(s.body).error)
+    // The rejection is the SDK's, and its `data` (which header disagreed
+    // with the body) is passed on with it. A null id is refused for itself,
+    // before the headers are compared.
+    const { error } = JSON.parse(s.body)
+    assert.ok(error)
+    if (id !== null) {
+      assert.equal(error.code, -32020)
+      assert.equal(error.data.mismatch.header, 'tools/list')
+      assert.equal(typeof error.data.mismatch.body, 'string')
+    }
     assert.equal(s.starts, 0)
     assert.equal(s.child, undefined)
   })

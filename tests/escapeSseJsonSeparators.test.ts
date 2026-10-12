@@ -193,3 +193,18 @@ test('a response that is not SSE, sent whole by end(), keeps its bytes and its l
   assert.deepEqual(bytes, json)
   assert.equal(length, String(json.length))
 })
+
+test('characters that share a first and last byte with a separator are left alone', async () => {
+  // U+20A8 (rupee sign) is E2 82 A8 and U+20A9 (won sign) is E2 82 A9: the
+  // separators' first and third bytes around another second one.
+  const original = 'costs ₨500 or ₩9000, then \u2028 a real one'
+  assert.deepEqual([...Buffer.from('₨')], [0xe2, 0x82, 0xa8])
+  assert.deepEqual([...Buffer.from('₩')], [0xe2, 0x82, 0xa9])
+  const frame = Buffer.from(`data: ${JSON.stringify({ text: original })}\n\n`)
+  const { body } = await response('text/event-stream', [frame])
+  assert.equal(
+    body,
+    `data: ${JSON.stringify({ text: original }).replace('\u2028', '\\u2028')}\n\n`,
+  )
+  assert.equal(JSON.parse(body.slice(6)).text, original)
+})

@@ -1,6 +1,5 @@
 import type { Route } from './modernAdmission.js'
 import { HEADER_MISMATCH } from './modernHeaders.js'
-import type { Response } from 'express'
 import type { JSONRPCMessage } from './modernSdk.js'
 import type { RetainedChildren } from './retainedChildren.js'
 

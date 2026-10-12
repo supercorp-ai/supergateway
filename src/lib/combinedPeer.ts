@@ -1,8 +1,14 @@
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from '../types.js'
 import type { ChildOwner, Peer, StartPeer } from './childHandoff.js'
-import { Backend, type CombinedMember, type Id } from './combinedBackend.js'
+import {
+  Backend,
+  type CombinedMember,
+  type Id,
+  type Request,
+} from './combinedBackend.js'
 import { CombinedCatalog } from './combinedCatalog.js'
+import { ServerRequests } from './combinedServerRequests.js'
 import { getVersion } from './getVersion.js'
 import {
   INTERNAL_ERROR,
@@ -15,7 +21,6 @@ import {
   type Params,
 } from './combinedRules.js'
 
-type Request = { jsonrpc: '2.0'; id: Id; method: string; params?: Params }
 type Notification = { jsonrpc: '2.0'; method: string; params?: Params }
 
 /**
@@ -46,14 +51,8 @@ class Combined implements Peer {
   private ready: Promise<void> | undefined
   /** The client's requests a server has yet to answer. */
   private readonly inFlight = new Map<Id, Backend>()
-  /** The servers' requests the client has yet to answer, by the id it sees. */
-  private readonly toBackend = new Map<
-    string,
-    { backend: Backend; id: Id; token?: string }
-  >()
-  /** Progress tokens of those requests, as the client sees them. */
-  private readonly tokens = new Map<string, { backend: Backend; token: Id }>()
-  private serverRequests = 0
+  /** The servers' requests the client has yet to answer. */
+  private readonly serverRequests = new ServerRequests()
   private ended = false
   /** Whether initialize has been answered: before it, nothing is announced. */
   private initialized = false
@@ -168,7 +167,7 @@ class Combined implements Peer {
     }
     const progress =
       method === 'notifications/progress'
-        ? this.tokens.get(params?.progressToken)
+        ? this.serverRequests.progress(params?.progressToken)
         : undefined
     if (progress) {
       progress.backend.peer.write({
@@ -183,17 +182,9 @@ class Combined implements Peer {
 
   // The client's answer to a request a server made, under the server's id.
   private clientResponse(message: JSONRPCMessage & { id?: Id }) {
-    const asked = this.toBackend.get(message.id as string)
+    const asked = this.serverRequests.answered(message.id as string)
     if (!asked) return
-    this.forget(message.id as string)
     asked.backend.peer.write({ ...message, id: asked.id } as JSONRPCMessage)
-  }
-
-  private forget(clientId: string) {
-    const asked = this.toBackend.get(clientId)!
-    this.toBackend.delete(clientId)
-    asked.backend.sent.delete(asked.id)
-    if (asked.token !== undefined) this.tokens.delete(asked.token)
   }
 
   // --- initialize ---
@@ -359,26 +350,7 @@ class Combined implements Peer {
   // A request a server makes of the client. Two servers number theirs alike,
   // so the client sees an id, and a progress token, of the gateway's.
   private backendRequest(backend: Backend, request: Request) {
-    const n = ++this.serverRequests
-    const id = `sgw:${backend.name}:${n}`
-    const original = request.params?._meta?.progressToken
-    const token =
-      original === undefined ? undefined : `sgw:${backend.name}:${n}:progress`
-    this.toBackend.set(id, { backend, id: request.id, token })
-    backend.sent.set(request.id, id)
-    if (token === undefined) {
-      this.toClient({ ...request, id })
-      return
-    }
-    this.tokens.set(token, { backend, token: original })
-    this.toClient({
-      ...request,
-      id,
-      params: {
-        ...request.params,
-        _meta: { ...request.params!._meta, progressToken: token },
-      },
-    })
+    this.toClient(this.serverRequests.add(backend, request))
   }
 
   private backendNotification(
@@ -389,9 +361,8 @@ class Combined implements Peer {
     const { method, params } = notification
     if (method === 'notifications/cancelled') {
       // Its own request, which the client knows under the gateway's id.
-      const id = backend.sent.get(params?.requestId)
+      const id = this.serverRequests.cancelled(backend, params?.requestId)
       if (id === undefined) return
-      this.forget(id)
       this.toClient({ ...notification, params: { ...params, requestId: id } })
       return
     }
@@ -440,8 +411,7 @@ class Combined implements Peer {
         },
       })
     }
-    for (const id of [...backend.sent.values()]) {
-      this.forget(id)
+    for (const id of this.serverRequests.abandoned(backend))
       this.toClient({
         jsonrpc: '2.0',
         method: 'notifications/cancelled',
@@ -450,7 +420,6 @@ class Combined implements Peer {
           reason: `MCP server "${backend.name}" failed`,
         },
       })
-    }
     this.catalog.forget()
     if (this.live().length === 0) {
       this.finish(code, signal)

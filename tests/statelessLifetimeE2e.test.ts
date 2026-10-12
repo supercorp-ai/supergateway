@@ -7,6 +7,7 @@ import {
   gatewayTimeout,
   initialize,
   launchGateway,
+  requestTimeout,
   rpc,
   unusedPort,
 } from './helpers/gateway-process.js'
@@ -23,7 +24,9 @@ function alive(pid: number) {
     throw error
   }
 }
-async function stopped(pid: number, ms = 2500) {
+// How long a peer may take to be gone is the host's business, as every other
+// wait here is: a build under emulation is given the same slack for this one.
+async function stopped(pid: number, ms = requestTimeout(2500)) {
   const deadline = Date.now() + ms
   while (alive(pid) && Date.now() < deadline) await delay(20)
   assert.equal(alive(pid), false, `completed request left peer ${pid} alive`)

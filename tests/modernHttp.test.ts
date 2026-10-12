@@ -334,6 +334,26 @@ test('a failed round releases the retained child instead of keeping it', async (
   assert.equal(JSON.parse(s.body).error.code, -32602)
 })
 
+test('a round whose client leaves while the child is working does not keep that child for a retry', async () => {
+  const s = continuationSetup()
+  await s.open()
+  assert.equal(s.closes, 0)
+  const send = s.send
+  // The retried call is never answered: its client goes first.
+  s.send = async (message: any) => {
+    if (message.method !== 'tools/call') return send(message)
+    s.response.emit('close')
+  }
+  s.nextRound(1)
+  await s.open().catch(() => {})
+  assert.equal(s.closes, 1, 'a child stopped mid-call is not one to retry on')
+  s.send = send
+  s.nextRound(2)
+  await s.open()
+  assert.equal(s.starts, 1)
+  assert.equal(JSON.parse(s.body).error.code, -32602)
+})
+
 test('a round that disconnects before dispatch leaves the child waiting for a retry', async () => {
   const s = continuationSetup()
   await s.open()
@@ -413,13 +433,24 @@ for (const failure of [
     })
     assert.equal(s.closes, 1)
     assert.equal(s.response.listenerCount('close'), 0)
-    assert.ok(s.errors.length > 0)
-    // The client is told only that the server failed. The log says why.
-    if (failure === 'closing')
-      assert.deepEqual(
-        s.errors.map(([what, why]: [string, Error]) => [what, why.message]),
-        [['MCP child request failed:', 'Gateway is shutting down']],
-      )
+    // The client is told only that the server failed. The log says why, and
+    // why is each case's own: a case that failed for another reason would
+    // pass everything above.
+    assert.deepEqual(
+      s.errors.map(([what, why]: [string, Error]) => [what, why.message]),
+      [
+        [
+          'MCP child request failed:',
+          {
+            start: 'private diagnostic',
+            send: 'private diagnostic',
+            exit: 'Child stdout closed',
+            reverse: 'Unexpected server request on a modern connection',
+            closing: 'Gateway is shutting down',
+          }[failure],
+        ],
+      ],
+    )
   })
 }
 

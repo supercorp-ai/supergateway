@@ -10,6 +10,7 @@ import {
 import { CombinedCatalog } from './combinedCatalog.js'
 import { ClientRequests } from './combinedClientRequests.js'
 import { ServerRequests } from './combinedServerRequests.js'
+import { CombinedServers } from './combinedServers.js'
 import { getVersion } from './getVersion.js'
 import {
   INTERNAL_ERROR,
@@ -17,7 +18,6 @@ import {
   LIST_CHANGED,
   RpcError,
   isList,
-  isObject,
   union,
   type Params,
 } from './combinedRules.js'
@@ -45,7 +45,7 @@ type Notification = { jsonrpc: '2.0'; method: string; params?: Params }
  *   the session ends when the last one does.
  */
 class Combined implements Peer {
-  private backends: Backend[] = []
+  private readonly servers: CombinedServers
   /** Who has what, as the last lists said. */
   private readonly catalog: CombinedCatalog
   /** Settles when initialize has been answered; unset before it arrives. */
@@ -60,13 +60,18 @@ class Combined implements Peer {
 
   constructor(
     private readonly entry: string,
-    private readonly members: CombinedMember[],
+    members: CombinedMember[],
     private readonly owner: ChildOwner,
     private readonly logger: Logger,
     /** The clashes already warned about, for every session of the entry. */
     warned: Set<string>,
   ) {
-    this.catalog = new CombinedCatalog(entry, logger, warned, () => this.live())
+    this.servers = new CombinedServers(entry, members, logger, (backend) =>
+      this.ownerOf(backend),
+    )
+    this.catalog = new CombinedCatalog(entry, logger, warned, () =>
+      this.servers.live(),
+    )
   }
 
   get gone() {
@@ -80,21 +85,12 @@ class Combined implements Peer {
   }
 
   end() {
-    for (const backend of this.live()) backend.peer.end()
+    for (const backend of this.servers.live()) backend.peer.end()
   }
 
   async stop() {
     this.ended = true
-    await Promise.all(
-      this.backends.map((backend) => {
-        backend.gone = true
-        return backend.peer.stop()
-      }),
-    )
-  }
-
-  private live() {
-    return this.backends.filter((backend) => !backend.gone)
+    await this.servers.stopAll()
   }
 
   private toClient(message: object, line = JSON.stringify(message)) {
@@ -125,7 +121,8 @@ class Combined implements Peer {
       })
       // With no server at all, the session is over, as it is for a server
       // alone that exits; the client has just been told why.
-      if (this.backends.length > 0 && this.live().length === 0) this.finish()
+      if (this.servers.wereStarted && this.servers.live().length === 0)
+        this.finish()
     }
   }
 
@@ -177,7 +174,7 @@ class Combined implements Peer {
       } as JSONRPCMessage)
       return
     }
-    for (const backend of this.live())
+    for (const backend of this.servers.live())
       backend.peer.write(notification as JSONRPCMessage)
   }
 
@@ -196,21 +193,14 @@ class Combined implements Peer {
     let done!: () => void
     this.ready = new Promise((resolve) => (done = resolve))
     try {
-      this.backends = this.members.map((member) => this.start(member))
-      await Promise.all(
-        this.backends.map((backend) => this.handshake(backend, params)),
-      )
-      // Dates, so the lowest sorts first.
-      const [version] = this.started()
-        .map((backend) => backend.version)
-        .sort()
-      await Promise.all(
-        this.live()
-          .filter((backend) => backend.version !== version)
-          .map((backend) => this.restartAt(backend, version, params)),
-      )
+      this.servers.startAll()
+      await this.servers.handshakeAll(params)
+      // A server that answered a later version than another is started
+      // again at the lowest: nothing is translated between them.
+      const version = this.servers.lowestVersion()
+      await this.servers.restartOthersAt(version, params)
       // Again: one may have stopped while another was started again.
-      for (const backend of this.started())
+      for (const backend of this.servers.started())
         backend.peer.write({
           jsonrpc: '2.0',
           method: 'notifications/initialized',
@@ -224,16 +214,16 @@ class Combined implements Peer {
 
   // What initialize is answered: the servers still there, as one.
   private asOneServer(version: string): Params {
-    const instructions = this.live()
+    const instructions = this.servers
+      .live()
       .filter((backend) => backend.instructions)
       .map((backend) => `## ${backend.name}\n\n${backend.instructions}`)
       .join('\n\n')
     return {
       protocolVersion: version,
-      capabilities: this.live().reduce(
-        (all, backend) => union(all, backend.capabilities),
-        {},
-      ),
+      capabilities: this.servers
+        .live()
+        .reduce((all, backend) => union(all, backend.capabilities), {}),
       serverInfo: {
         name: 'supergateway',
         title: this.entry,
@@ -243,17 +233,10 @@ class Combined implements Peer {
     }
   }
 
-  // The servers that are there; without any, there is no session.
-  private started() {
-    const live = this.live()
-    if (live.length === 0)
-      throw new RpcError(INTERNAL_ERROR, `No server of "${this.entry}" started`)
-    return live
-  }
-
-  private start(member: CombinedMember) {
-    const backend = new Backend(member)
-    backend.peer = member.start()({
+  // What a server of the session reports to: its messages are placed, what
+  // else it prints is passed on under its name, and its end is `lost`.
+  private ownerOf(backend: Backend): ChildOwner {
+    return {
       message: (message, line) => this.fromBackend(backend, message, line),
       nonJson: (line) => this.owner.nonJson(`[${backend.name}] ${line}`),
       stderr: (text) => this.owner.stderr(`[${backend.name}] ${text}`),
@@ -267,56 +250,13 @@ class Combined implements Peer {
           signal,
         ),
       output: () => this.owner.output(),
-    })
-    return backend
-  }
-
-  private async handshake(backend: Backend, params: Params | undefined) {
-    try {
-      const result = await backend.ask('initialize', params)
-      backend.version = String(result.protocolVersion)
-      backend.capabilities = isObject(result.capabilities)
-        ? result.capabilities
-        : {}
-      // Not in 4.2: a task would outlive the request that routes it.
-      delete backend.capabilities.tasks
-      if (typeof result.instructions === 'string')
-        backend.instructions = result.instructions
-    } catch (err) {
-      this.leaveOut(backend, (err as Error).message)
     }
-  }
-
-  // A server that answered a later version than another is started again and
-  // asked for the one they all can speak; nothing is translated between them.
-  private async restartAt(
-    backend: Backend,
-    version: string,
-    params: Params | undefined,
-  ) {
-    backend.gone = true
-    await backend.peer.stop()
-    const again = this.start(backend.member)
-    this.backends[this.backends.indexOf(backend)] = again
-    await this.handshake(again, { ...params, protocolVersion: version })
-    if (!again.gone && again.version !== version)
-      this.leaveOut(
-        again,
-        `it speaks ${again.version}, and the others ${version}`,
-      )
-  }
-
-  private leaveOut(backend: Backend, reason: string) {
-    backend.gone = true
-    this.logger.error(
-      `${this.entry}: server "${backend.name}" is left out of this session: ${reason}`,
-    )
-    void backend.peer.stop()
   }
 
   private async setLevel(params: Params | undefined) {
     await Promise.all(
-      this.live()
+      this.servers
+        .live()
         .filter((backend) => 'logging' in backend.capabilities)
         .map((backend) =>
           backend
@@ -407,7 +347,7 @@ class Combined implements Peer {
     this.failRequestsTo(backend)
     this.cancelRequestsOf(backend)
     this.catalog.forget()
-    if (this.live().length === 0) {
+    if (this.servers.live().length === 0) {
       this.finish(code, signal)
       return
     }

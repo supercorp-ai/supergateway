@@ -414,6 +414,12 @@ for (const failure of [
     assert.equal(s.closes, 1)
     assert.equal(s.response.listenerCount('close'), 0)
     assert.ok(s.errors.length > 0)
+    // The client is told only that the server failed. The log says why.
+    if (failure === 'closing')
+      assert.deepEqual(
+        s.errors.map(([what, why]: [string, Error]) => [what, why.message]),
+        [['MCP child request failed:', 'Gateway is shutting down']],
+      )
   })
 }
 

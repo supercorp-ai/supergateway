@@ -51,8 +51,6 @@ export class SessionLivenessProbe {
     this.revision++
     clearTimeout(this.timer)
     this.graceTimer?.clear()
-    this.timer = undefined
-    this.graceTimer = undefined
   }
 
   close(): void {

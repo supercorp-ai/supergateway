@@ -15,16 +15,20 @@ import { setLongTimeout, type LongTimeout } from './longTimeout.js'
  * function's contract, and a unit test can exercise it directly; inline, the
  * only way to reach the throw would be to manufacture a state the class cannot
  * produce.
+ *
+ * It is the decrement itself, not a check beside it. A check `dec()` called
+ * and ignored the result of was a line no test could tell was there: taking
+ * it out changed nothing any ordering of the operations could show. The count
+ * `dec()` stores is this function's answer, so the guard cannot be dropped
+ * without the count going with it.
  */
-export function assertPositiveAccessCount(
-  accessCount: number,
-  sessionId: string,
-) {
+export function oneFewerAccess(accessCount: number, sessionId: string) {
   if (accessCount <= 0) {
     throw new Error(
       `Invalid access count ${accessCount} for session ${sessionId}`,
     )
   }
+  return accessCount - 1
 }
 
 export class SessionAccessCounter {
@@ -92,9 +96,7 @@ export class SessionAccessCounter {
       return
     }
 
-    assertPositiveAccessCount(session.accessCount, sessionId)
-
-    session.accessCount--
+    session.accessCount = oneFewerAccess(session.accessCount, sessionId)
     this.logger.info(
       `Session access count ${session.accessCount + 1} -> ${session.accessCount} for ${sessionId}`,
     )

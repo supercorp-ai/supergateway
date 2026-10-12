@@ -11,6 +11,7 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
       writes: string[] = []
     const failure = new Error('upstream connection refused')
     let stdio: any, remote: any
+    let closes = 0
     t.mock.module('@modelcontextprotocol/sdk/client/index.js', {
       namedExports: {
         Client: class {
@@ -20,6 +21,12 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
           async connect(transport: any) {
             connections.push(transport)
             throw failure
+          }
+          // A client that could not connect is closed, and a close that
+          // fails as well does not replace what the client is told.
+          async close() {
+            closes++
+            throw new Error('close failed too')
           }
         },
       },
@@ -67,9 +74,8 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
         headers: {},
       })
     } else {
-      const { streamableHttpToStdio } = await import(
-        '../src/gateways/streamableHttpToStdio.js'
-      )
+      const { streamableHttpToStdio } =
+        await import('../src/gateways/streamableHttpToStdio.js')
       await streamableHttpToStdio({
         streamableHttpUrl: 'http://127.0.0.1:54321/rpc',
         logger,
@@ -93,6 +99,9 @@ for (const mode of ['sse', 'streamableHttp'] as const) {
     ])
     // map: failure-diagnostic
     assert.deepEqual(errors, [['Request error:', failure]])
+    // The Streamable HTTP bridge reconnects with a new client each time, so
+    // the one that failed is closed. The SSE bridge has one client for life.
+    assert.equal(closes, mode === 'sse' ? 0 : 1)
     // map: failure-envelope
     assert.deepEqual(
       writes.map((line) => JSON.parse(line)),

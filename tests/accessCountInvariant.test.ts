@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assertPositiveAccessCount } from '../src/lib/sessionAccessCounter.js'
+import { oneFewerAccess } from '../src/lib/sessionAccessCounter.js'
 
 /**
  * The guard `dec()` leans on, tested on its own terms.
@@ -16,15 +16,15 @@ import { assertPositiveAccessCount } from '../src/lib/sessionAccessCounter.js'
  * count" — and that contract is ordinary to test. The guard survives, and the
  * obligation is discharged honestly rather than waived.
  */
-test('a positive access count passes the invariant untouched', () => {
-  assert.doesNotThrow(() => assertPositiveAccessCount(1, 'session-a'))
-  assert.doesNotThrow(() => assertPositiveAccessCount(7, 'session-a'))
+test('a positive access count is one fewer', () => {
+  assert.equal(oneFewerAccess(1, 'session-a'), 0)
+  assert.equal(oneFewerAccess(7, 'session-a'), 6)
 })
 
 test('a non-positive access count is rejected, and names what it saw', () => {
   for (const count of [0, -1, -42]) {
     assert.throws(
-      () => assertPositiveAccessCount(count, 'session-b'),
+      () => oneFewerAccess(count, 'session-b'),
       (error: Error) => {
         // The message has to identify both the count and the session: a bare
         // throw here would tell whoever hits it nothing about which session

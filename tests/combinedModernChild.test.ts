@@ -710,6 +710,38 @@ test("the request's server failing or stopping fails the request, once, and stop
   }
 })
 
+test("a server started for a request is no one's once the request is closed", async () => {
+  const { open, servers } = combine({
+    a: { tools: ['x'], answers: { 'tools/call': () => 'hold' } },
+  })
+  const { child, said, failures, closes, request } = open()
+  void request('tools/call', { name: 'x' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const server = servers.a.instances.at(-1)!.child
+  const listening = [server.onmessage, server.onerror, server.onclose]
+  assert.deepEqual(
+    listening.map((handler) => typeof handler),
+    ['function', 'function', 'function'],
+  )
+  await child.close()
+  // It is being stopped, and may still answer, fail or close on the way.
+  // None of that is this request's any more: nothing is left listening.
+  assert.deepEqual(
+    [server.onmessage, server.onerror, server.onclose],
+    [undefined, undefined, undefined],
+  )
+  // And what was listening, had it been left, is what would have told the
+  // client: an answer, a failure, a second close.
+  listening[0]!({ jsonrpc: '2.0', id: 7, result: { late: true } } as never)
+  assert.deepEqual(
+    said.filter((message) => message.id === 7),
+    [{ jsonrpc: '2.0', id: 7, result: { late: true } }],
+    'the handlers do forward, which is why they are taken off',
+  )
+  assert.deepEqual(failures, [])
+  assert.equal(closes(), 1)
+})
+
 test('a server that dies while it is asked for the request fails it', async () => {
   const { open } = combine({
     a: { answers: { 'server/discover': () => 'die' } },

@@ -64,15 +64,16 @@ const scripted = (t: TestContext, bodies: string[][]) => {
 const owner = (output: () => Promise<void> | undefined = () => undefined) => {
   const received: unknown[] = []
   const failures: Error[] = []
+  const exits: [number | null, NodeJS.Signals | null][] = []
   const sink: ChildOwner = {
     message: (message) => received.push(message),
     nonJson() {},
     stderr() {},
     failure: (_kind, err) => failures.push(err),
-    exit() {},
+    exit: (code, signal) => exits.push([code, signal]),
     output,
   }
-  return { sink, received, failures }
+  return { sink, received, failures, exits }
 }
 
 const start = (sink: ChildOwner) =>
@@ -177,13 +178,18 @@ test('stopping the session ends it at the remote server, then closes the connect
   const remote = scripted(t, [
     sse({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-06-18' } }),
   ])
-  const { sink, received } = owner()
+  const { sink, received, exits } = owner()
   const peer = start(sink)
   peer.write(initialize(1))
   await until(() => received.length === 1)
   const [opened] = remote.requests
   assert.equal(opened.signal.aborted, false)
+  assert.equal(peer.gone, false)
+  assert.deepEqual(exits, [])
   await peer.stop()
+  // Its owner is told, once, as it is of a process that exits.
+  assert.equal(peer.gone, true)
+  assert.deepEqual(exits, [[null, null]])
   // The session is ended by name, so the server need not wait it out...
   const ended = remote.requests.at(-1)!
   assert.deepEqual(
@@ -193,4 +199,44 @@ test('stopping the session ends it at the remote server, then closes the connect
   // ...and the connection is closed: whatever was still open on it is cut,
   // not left for the remote server to hold.
   assert.equal(opened.signal.aborted, true)
+})
+
+test('ending the session stops it, once what was sent has gone', async (t) => {
+  const remote = scripted(t, [
+    sse({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-06-18' } }),
+  ])
+  const { sink, received, exits } = owner()
+  const peer = start(sink)
+  peer.write(initialize(1))
+  // Ended at once, with initialize not yet answered: it is answered first.
+  peer.end()
+  assert.equal(peer.gone, false)
+  await until(() => exits.length === 1)
+  assert.equal(received.length, 1)
+  assert.deepEqual(
+    remote.requests.map((request) => request.method).filter((m) => m !== 'GET'),
+    ['POST', 'DELETE'],
+  )
+  assert.equal(peer.gone, true)
+  assert.deepEqual(exits, [[null, null]])
+})
+
+test("a later answer under initialize's id does not change the version the session declares", async (t) => {
+  const remote = scripted(t, [
+    sse({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-06-18' } }),
+    // A client may use an id again once it has been answered.
+    sse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
+    sse({ jsonrpc: '2.0', id: 3, result: {} }),
+  ])
+  const { sink, received } = owner()
+  const peer = start(sink)
+  peer.write(initialize(1))
+  peer.write({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  await until(() => received.length === 2)
+  peer.write({ jsonrpc: '2.0', id: 3, method: 'ping' })
+  await until(() => received.length === 3)
+  const posts = remote.requests.filter((request) => request.method === 'POST')
+  assert.equal((posts[2].body as { method: string }).method, 'ping')
+  assert.equal(posts[2].headers.get('mcp-protocol-version'), '2025-06-18')
+  await peer.stop()
 })

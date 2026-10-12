@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { randomInt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
@@ -304,6 +304,29 @@ export async function unusedPort() {
     return port
   }
   throw Error('Could not find an unused gateway test port')
+}
+
+/**
+ * Resolves once something accepts connections on `port`. For a gateway
+ * started without `launchGateway`, whose log is not read: how long it takes
+ * to start is the machine's business, and a fixed wait is a guess at it.
+ */
+export async function listening(port: number, host = 'localhost') {
+  const deadline = Date.now() + readyTimeout()
+  for (;;) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = connect(port, host)
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve(true)
+      })
+      socket.once('error', () => resolve(false))
+    })
+    if (open) return
+    if (Date.now() > deadline)
+      throw Error(`Nothing listened on ${host}:${port}`)
+    await delay(50)
+  }
 }
 
 export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'

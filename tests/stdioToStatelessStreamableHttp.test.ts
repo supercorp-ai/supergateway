@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn, ChildProcess } from 'child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { listening } from './helpers/gateway-process.js'
 
 const PORT = 11005
 const MCP_URL = `http://localhost:${PORT}/mcp`
@@ -38,7 +39,7 @@ test.after(async () => {
 test('stdioToStatelessStreamableHttp listTools and callTool', async () => {
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL))
   const client = new Client({ name: 'stateless-test', version: '1.0.0' })
-  await new Promise((r) => setTimeout(r, 2000))
+  await listening(PORT)
   await client.connect(transport)
 
   assert.strictEqual(transport.sessionId, undefined)

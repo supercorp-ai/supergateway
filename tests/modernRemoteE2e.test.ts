@@ -332,6 +332,12 @@ test(
         arguments: { a: 2, b: 3 },
       })
       assert.equal((result.content as { text: string }[])[0].text, '5', type)
+      // The log comes by its own pipes, after the reply or before it.
+      if (type !== '--sse')
+        await gateway.waitFor(
+          () => (gateway.output() + gateway.errors()).includes('remote server'),
+          'log that the remote server does not speak 2026-07-28',
+        )
       const asked = (gateway.output() + gateway.errors())
         .split('\n')
         .filter((line) => line.includes('remote server'))

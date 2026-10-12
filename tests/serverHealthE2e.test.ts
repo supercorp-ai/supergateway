@@ -189,6 +189,11 @@ test(
         [503, 'unhealthy: the server exited (code=3, signal=null)'],
       )
     }
+    // The log comes by its own pipes, after the replies or before them.
+    await gateway.waitFor(
+      () => (gateway.output() + gateway.errors()).includes('Health check:'),
+      'log the failed health check',
+    )
     const logged = asExit(gateway.output() + gateway.errors())
       .split('\n')
       .filter((line) => line.includes('Health check:'))

@@ -135,6 +135,16 @@ test(
       },
       { jsonrpc: '2.0', id: 3, result: { tools: [] } },
     ])
+    // The log reaches this process by its own pipes, after the reply or
+    // before it: its last lines seen, all of it is.
+    await gateway.waitFor(
+      () =>
+        gateway
+          .output()
+          .includes(`${prefix}StreamableHttp connection closed`) &&
+        gateway.errors().includes(`${prefix}Child exited`),
+      'log that the request was over',
+    )
     // map: handshake-once
     assert.equal(
       gateway

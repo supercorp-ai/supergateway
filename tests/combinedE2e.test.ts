@@ -105,6 +105,14 @@ const logged = (gateway: Gateway, pattern: RegExp) =>
     .filter((line) => pattern.test(line))
     .map((line) => line.replace(prefix, ''))
 
+// The log comes by its own pipes, after a reply or before it: what a test
+// expects to find there is waited for, then read.
+const untilLogged = (gateway: Gateway, pattern: RegExp, lines = 1) =>
+  gateway.waitFor(
+    () => logged(gateway, pattern).length >= lines,
+    `log ${lines} line(s) matching ${pattern}`,
+  )
+
 for (const [name, entry, transport] of [
   [
     'sse',
@@ -184,6 +192,7 @@ for (const [name, entry, transport] of [
       assert.deepEqual(read.contents, [
         { uri: 'note://beta', text: 'alpha-body' },
       ])
+      await untilLogged(gateway, /offered by|combines:/, 2)
       assert.deepEqual(logged(gateway, /offered by|combines:/), [
         '  - combines: near, pages, far',
         'all: tool "add" is offered by "near" and "far"; clients get the one of "near", listed first. Set "toolPrefix" on one of them to keep both',
@@ -351,8 +360,8 @@ test(
       'The sum of 1 and 2 is 3.',
     )
     assert.equal(changed, 1)
-    assert.match(
-      log(gateway),
+    await untilLogged(
+      gateway,
       /all: server "pages" stopped: it exited, code=0, signal=null/,
     )
   },

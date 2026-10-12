@@ -271,25 +271,35 @@ export function launchGateway(
 // port or one that a subsequent HTTP connection claims before gateway startup.
 // This is still a probe, not a reservation; keep previously issued ports out
 // of reuse for the rest of this test process.
+//
+// The loopback address is probed as well: a program listening on 127.0.0.1
+// alone leaves the wildcard bind free, the gateway starts, and the test's
+// requests to 127.0.0.1 are answered by that program instead.
 const issued = new Set<number>()
+
+const canListen = async (port: number, host?: string) => {
+  const server = createServer()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(port, host, resolve)
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') return false
+    throw error
+  }
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  )
+  return true
+}
 
 export async function unusedPort() {
   for (let attempt = 0; attempt < 100; attempt++) {
     const port = randomInt(20000, 32768)
     if (issued.has(port)) continue
-    const server = createServer()
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(port, resolve)
-      })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') continue
-      throw error
-    }
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    )
+    if (!(await canListen(port)) || !(await canListen(port, '127.0.0.1')))
+      continue
     issued.add(port)
     return port
   }

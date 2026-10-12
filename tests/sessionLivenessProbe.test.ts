@@ -459,3 +459,123 @@ test('a replacement GET does not inherit the previous stream’s missed pings', 
   assert.equal(stale, 0, 'a single miss on the new stream is not two')
   assert.equal(sent.length, 5, 'the new stream retries after its first miss')
 })
+
+// --- What the probe does once it is done ---
+//
+// Each of these counts the pings sent: a probe that goes on, or stops, when
+// it should not shows nowhere else.
+
+// A probe whose pings are counted, and time that moves in steps small enough
+// for each send to settle before the next timer.
+const counted = (
+  t: import('node:test').TestContext,
+  send: (id: string) => Promise<void> = async () => {},
+  staleAfterMs = 100,
+) => {
+  enableFakeTimers(t)
+  const sent: string[] = []
+  const said: string[] = []
+  let stale = 0
+  const probe = new SessionLivenessProbe(
+    100,
+    40,
+    staleAfterMs,
+    (id) => {
+      sent.push(id)
+      return send(id)
+    },
+    () => stale++,
+    { info: (line: string) => said.push(line), error() {} },
+  )
+  const advance = async (ms: number) => {
+    for (let passed = 0; passed < ms; passed += 10) {
+      t.mock.timers.tick(10)
+      for (let i = 0; i < 4; i++) await Promise.resolve()
+    }
+  }
+  return { probe, sent, said, stale: () => stale, advance }
+}
+
+test('a closed probe sends nothing', async (t) => {
+  const { probe, sent, advance } = counted(t)
+  probe.start()
+  probe.close()
+  await advance(1000)
+  assert.deepEqual(sent, [])
+})
+
+test('a ping still on its way out when the client shows life is not then counted as missed', async (t) => {
+  let delivered!: () => void
+  const { probe, sent, advance } = counted(
+    t,
+    () => new Promise<void>((resolve) => (delivered = resolve)),
+  )
+  probe.start()
+  await advance(100)
+  assert.equal(sent.length, 1)
+  // A request arrives, and stays in flight, before the ping has left.
+  probe.requestStarted()
+  delivered()
+  await advance(1000)
+  assert.equal(sent.length, 1, 'nothing is probed while a request is in flight')
+})
+
+test('a ping that cannot be sent is a missed one: the next goes out at once', async (t) => {
+  const { probe, sent, said, advance } = counted(t, () =>
+    Promise.reject(new Error('stream gone')),
+  )
+  probe.start()
+  await advance(100)
+  // The first failed, so did the second, and a client that never answered
+  // is left alone.
+  assert.equal(sent.length, 2)
+  assert.deepEqual(said.slice(-1), [
+    'Client has not answered liveness pings; preserving session for compatibility',
+  ])
+})
+
+test('given up on, a client that never answered is not probed again when it shows life', async (t) => {
+  const { probe, sent, stale, advance } = counted(t)
+  probe.start()
+  await advance(200)
+  assert.equal(sent.length, 2)
+  probe.activity()
+  await advance(1000)
+  assert.equal(sent.length, 2)
+  assert.equal(stale(), 0)
+})
+
+test('a client that shows life starts its idle grace again', async (t) => {
+  const { probe, sent, stale, advance } = counted(t, undefined, 200)
+  probe.start()
+  await advance(100)
+  // Its last sign of life is at 100 ms: the grace ends at 300.
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  // Two pings go unanswered by 280, within the grace, so the session stays.
+  await advance(250)
+  assert.equal(stale(), 0)
+  // At 350 the grace is over, and the client shows life: a new one starts,
+  // and the two pings that go unanswered next are within it.
+  probe.activity()
+  const before = sent.length
+  await advance(190)
+  assert.equal(sent.length, before + 2)
+  assert.equal(stale(), 0, 'the session is not stale yet')
+  // That grace ends too.
+  await advance(200)
+  assert.equal(stale(), 1)
+})
+
+test('a session declared stale is not probed again', async (t) => {
+  const { probe, sent, stale, advance } = counted(t)
+  probe.start()
+  await advance(100)
+  probe.accept({ jsonrpc: '2.0', id: sent[0], result: {} })
+  await advance(300)
+  assert.equal(stale(), 1)
+  const before = sent.length
+  probe.activity()
+  await advance(1000)
+  assert.equal(sent.length, before)
+  assert.equal(stale(), 1)
+})

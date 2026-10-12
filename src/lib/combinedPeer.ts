@@ -8,6 +8,7 @@ import {
   type Request,
 } from './combinedBackend.js'
 import { CombinedCatalog } from './combinedCatalog.js'
+import { ClientRequests } from './combinedClientRequests.js'
 import { ServerRequests } from './combinedServerRequests.js'
 import { getVersion } from './getVersion.js'
 import {
@@ -50,7 +51,7 @@ class Combined implements Peer {
   /** Settles when initialize has been answered; unset before it arrives. */
   private ready: Promise<void> | undefined
   /** The client's requests a server has yet to answer. */
-  private readonly inFlight = new Map<Id, Backend>()
+  private readonly clientRequests = new ClientRequests()
   /** The servers' requests the client has yet to answer. */
   private readonly serverRequests = new ServerRequests()
   private ended = false
@@ -151,7 +152,7 @@ class Combined implements Peer {
   }
 
   private forward(backend: Backend, request: Request) {
-    this.inFlight.set(request.id, backend)
+    this.clientRequests.sent(request.id, backend)
     backend.peer.write(request as JSONRPCMessage)
   }
 
@@ -160,8 +161,8 @@ class Combined implements Peer {
     // The gateway has told each server itself.
     if (method === 'notifications/initialized') return
     if (method === 'notifications/cancelled') {
-      this.inFlight
-        .get(params?.requestId)
+      this.clientRequests
+        .by(params?.requestId)
         ?.peer.write(notification as JSONRPCMessage)
       return
     }
@@ -214,26 +215,31 @@ class Combined implements Peer {
           jsonrpc: '2.0',
           method: 'notifications/initialized',
         })
-      const instructions = this.live()
-        .filter((backend) => backend.instructions)
-        .map((backend) => `## ${backend.name}\n\n${backend.instructions}`)
-        .join('\n\n')
       this.initialized = true
-      return {
-        protocolVersion: version,
-        capabilities: this.live().reduce(
-          (all, backend) => union(all, backend.capabilities),
-          {},
-        ),
-        serverInfo: {
-          name: 'supergateway',
-          title: this.entry,
-          version: getVersion(),
-        },
-        ...(instructions ? { instructions } : {}),
-      }
+      return this.asOneServer(version)
     } finally {
       done()
+    }
+  }
+
+  // What initialize is answered: the servers still there, as one.
+  private asOneServer(version: string): Params {
+    const instructions = this.live()
+      .filter((backend) => backend.instructions)
+      .map((backend) => `## ${backend.name}\n\n${backend.instructions}`)
+      .join('\n\n')
+    return {
+      protocolVersion: version,
+      capabilities: this.live().reduce(
+        (all, backend) => union(all, backend.capabilities),
+        {},
+      ),
+      serverInfo: {
+        name: 'supergateway',
+        title: this.entry,
+        version: getVersion(),
+      },
+      ...(instructions ? { instructions } : {}),
     }
   }
 
@@ -342,8 +348,7 @@ class Combined implements Peer {
   private backendResponse(backend: Backend, message: any, line: string) {
     if (backend.settle(message)) return
     // An answer to nothing the client is waiting for from it is dropped.
-    if (this.inFlight.get(message.id) !== backend) return
-    this.inFlight.delete(message.id)
+    if (!this.clientRequests.answered(message.id, backend)) return
     this.toClient(message, line)
   }
 
@@ -399,9 +404,20 @@ class Combined implements Peer {
     this.logger.error(
       `${this.entry}: server "${backend.name}" stopped: ${reason}`,
     )
-    for (const [id, target] of this.inFlight) {
-      if (target !== backend) continue
-      this.inFlight.delete(id)
+    this.failRequestsTo(backend)
+    this.cancelRequestsOf(backend)
+    this.catalog.forget()
+    if (this.live().length === 0) {
+      this.finish(code, signal)
+      return
+    }
+    if (!this.initialized) return
+    this.announceListsOf(backend)
+  }
+
+  // What the client asked of a server that stopped fails.
+  private failRequestsTo(backend: Backend) {
+    for (const id of this.clientRequests.abandoned(backend))
       this.toClient({
         jsonrpc: '2.0',
         id,
@@ -410,7 +426,10 @@ class Combined implements Peer {
           message: `MCP server "${backend.name}" failed`,
         },
       })
-    }
+  }
+
+  // What a server that stopped asked of the client no longer wants an answer.
+  private cancelRequestsOf(backend: Backend) {
     for (const id of this.serverRequests.abandoned(backend))
       this.toClient({
         jsonrpc: '2.0',
@@ -420,12 +439,10 @@ class Combined implements Peer {
           reason: `MCP server "${backend.name}" failed`,
         },
       })
-    this.catalog.forget()
-    if (this.live().length === 0) {
-      this.finish(code, signal)
-      return
-    }
-    if (!this.initialized) return
+  }
+
+  // The lists a server that stopped had a part in have changed.
+  private announceListsOf(backend: Backend) {
     for (const kind of ['tools', 'prompts', 'resources'])
       if (kind in backend.capabilities)
         this.toClient({

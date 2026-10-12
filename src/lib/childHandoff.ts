@@ -1,143 +1,20 @@
-import type { ChildProcessWithoutNullStreams } from 'child_process'
-import { StringDecoder } from 'node:string_decoder'
-import {
-  InitializeRequest,
-  JSONRPCMessage,
-  isInitializeRequest,
-} from '@modelcontextprotocol/sdk/types.js'
-import { Logger } from '../types.js'
-import { LineSplitter } from './lineSplitter.js'
-import { holdOutput } from './outputBackpressure.js'
+import { type ChildLink, isHandshake, isResponseTo } from './childLink.js'
+import type { ChildOwner, Peer, StartPeer } from './peer.js'
+import type { Logger } from '../types.js'
+import { WaitingChild } from './waitingChild.js'
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+
+export { ChildLink, isHandshake } from './childLink.js'
+
+export {
+  type ChildOwner,
+  type Peer,
+  type StartPeer,
+  processPeer,
+} from './peer.js'
 
 // How long a child whose client gave up during initialize waits for a retry.
 export const HANDOFF_WINDOW_MS = 30000
-
-/** Where one child's output goes. A handoff moves a child to a new owner. */
-export interface ChildOwner {
-  /** A line of the child's stdout that parsed as JSON, and the line itself. */
-  message(message: any, line: string): void
-  nonJson(line: string): void
-  stderr(text: string): void
-  failure(kind: 'process' | 'stdin' | 'upstream', err: Error): void
-  exit(code: number | null, signal: NodeJS.Signals | null): void
-  /** What the child's stdout waits for before it is read again, if anything. */
-  output(): Promise<void> | undefined
-}
-
-/**
- * A session's MCP server, as a link drives it. A child process is one (see
- * processPeer); what the link needs from it is only this.
- */
-export interface Peer {
-  write(message: JSONRPCMessage): void
-  /** No more input: a process finishes what it has, and exits. */
-  end(): void
-  /** Stops it, and resolves once it is gone. */
-  stop(): Promise<void>
-  /** Whether it has already ended by itself. */
-  readonly gone: boolean
-}
-
-/** Starts a peer that delivers everything it says to `owner`. */
-export type StartPeer = (owner: ChildOwner) => Peer
-
-/**
- * A child process as a peer: its stdout read as JSON lines, its stderr,
- * failures and exit reported, and its stdout not read while `owner.output()`
- * says to wait.
- */
-export const processPeer =
-  (
-    child: ChildProcessWithoutNullStreams,
-    stop: () => Promise<void>,
-  ): StartPeer =>
-  (owner) => {
-    child.on('error', (err) => owner.failure('process', err))
-    child.stdin.on('error', (err) => owner.failure('stdin', err))
-    child.on('exit', (code, signal) => owner.exit(code, signal))
-    const decoder = new StringDecoder('utf8')
-    const lines = new LineSplitter()
-    child.stdout.on('data', (chunk: Buffer) => {
-      lines.push(decoder.write(chunk)).forEach((line) => {
-        if (!line.trim()) return
-        try {
-          owner.message(JSON.parse(line), line)
-        } catch {
-          owner.nonJson(line)
-        }
-      })
-      holdOutput(child.stdout, owner.output())
-    })
-    child.stderr.on('data', (chunk: Buffer) =>
-      owner.stderr(chunk.toString('utf8')),
-    )
-    return {
-      write: (message) => child.stdin.write(JSON.stringify(message) + '\n'),
-      end: () => child.stdin.end(),
-      stop,
-      get gone() {
-        return child.exitCode !== null || child.signalCode !== null
-      },
-    }
-  }
-
-/**
- * Whether a client's message is an initialize request with an id, the
- * handshake a child answers; `isInitializeRequest` also accepts one without.
- */
-export const isHandshake = (
-  message: JSONRPCMessage,
-): message is JSONRPCMessage & InitializeRequest & { id: string | number } =>
-  isInitializeRequest(message) && 'id' in message
-
-// Whether a message from the child is its response to the request with this
-// id.
-const isResponseTo = (message: any, id: string | number | undefined) =>
-  !('method' in message) && 'id' in message && message.id === id
-
-/**
- * One server, delivered to whichever owner holds it.
- *
- * It also remembers the initialize request the server received and whether
- * the server has answered it, which is what decides whether a server abandoned
- * by its client can be handed to the next one (GW-035).
- */
-export class ChildLink {
-  initialize?: { id: string | number; params: unknown }
-  answered = false
-  readonly peer: Peer
-  readonly stop: () => Promise<void>
-
-  constructor(
-    start: StartPeer,
-    public owner: ChildOwner,
-  ) {
-    this.peer = start({
-      message: (message, line) => {
-        if (isResponseTo(message, this.initialize?.id)) this.answered = true
-        this.owner.message(message, line)
-      },
-      nonJson: (line) => this.owner.nonJson(line),
-      stderr: (text) => this.owner.stderr(text),
-      failure: (kind, err) => this.owner.failure(kind, err),
-      exit: (code, signal) => this.owner.exit(code, signal),
-      output: () => this.owner.output(),
-    })
-    this.stop = () => this.peer.stop()
-  }
-
-  /** Whether the server is still running and has not answered its initialize. */
-  get initializing(): boolean {
-    return this.initialize !== undefined && !this.answered && !this.peer.gone
-  }
-
-  write(message: JSONRPCMessage) {
-    // Only the first initialize is the handshake the child is answering.
-    if (!this.initialize && isHandshake(message))
-      this.initialize = { id: message.id, params: message.params }
-    this.peer.write(message)
-  }
-}
 
 // Initialize params compared regardless of key order.
 const canonical = (value: unknown): string =>
@@ -148,91 +25,6 @@ const canonical = (value: unknown): string =>
         )
       : inner,
   )
-
-/**
- * A child parked for a retry, as its owner: it keeps what the child says until
- * someone takes the child over, and stops the child if nobody does in time.
- */
-class WaitingChild implements ChildOwner {
-  private readonly held: [any, string][] = []
-  private settled = false
-  // With nobody to deliver to, the child is not read past what it has
-  // already sent: the rest waits in its pipe, as it does for a client that
-  // is behind, so waiting costs no memory however much it writes.
-  private resume!: () => void
-  private readonly unread = new Promise<void>(
-    (resolve) => (this.resume = resolve),
-  )
-  private readonly timer: NodeJS.Timeout
-
-  constructor(
-    readonly link: ChildLink,
-    private readonly label: string,
-    private readonly logger: Logger,
-    windowMs: number,
-    // Takes it off the handoff's list of waiting children.
-    private readonly leave: () => void,
-  ) {
-    this.timer = setTimeout(
-      () => this.end('no client took it over'),
-      windowMs,
-    ).unref()
-  }
-
-  message(message: any, line: string) {
-    this.held.push([message, line])
-  }
-
-  nonJson(line: string) {
-    this.logger.error(`${this.label}: waiting server wrote non-JSON: ${line}`)
-  }
-
-  stderr(text: string) {
-    this.logger.error(`${this.label}: waiting server stderr: ${text}`)
-  }
-
-  failure(kind: 'process' | 'stdin' | 'upstream', err: Error) {
-    this.end(`${kind} failure: ${err.message}`)
-  }
-
-  exit(code: number | null, signal: NodeJS.Signals | null) {
-    this.end(`it exited, code=${code}, signal=${signal}`)
-  }
-
-  output() {
-    return this.unread
-  }
-
-  /** Stops it waiting, unless it already has; false then. */
-  settle(): boolean {
-    if (this.settled) return false
-    this.settled = true
-    clearTimeout(this.timer)
-    this.leave()
-    return true
-  }
-
-  /**
-   * Replays everything the child said while waiting to its new owner, and
-   * reads it again.
-   */
-  replay() {
-    this.held.forEach(([message, line]) =>
-      this.link.owner.message(message, line),
-    )
-    this.resume()
-  }
-
-  // Every way a waiting child ends goes through here, once: the window
-  // running out, or the child exiting (as it does when that stops it) or
-  // failing.
-  private end(reason: string) {
-    if (!this.settle()) return
-    this.logger.info(`${this.label}: stopping the waiting server: ${reason}`)
-    this.resume()
-    void this.link.stop()
-  }
-}
 
 // The owner of a child taken over by another client: the child's answer to the
 // initialize it received carries the new client's request id.

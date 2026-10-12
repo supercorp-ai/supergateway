@@ -182,6 +182,49 @@ const modes: Record<
       }
     },
   },
+  // The same session, with the burst on its GET stream: the call is answered
+  // first, so what the server then says is of no request.
+  'stateful GET stream': {
+    args: ['--outputTransport', 'streamableHttp', '--stateful'],
+    async open(t, base) {
+      const seen = collect()
+      const url = `${base}/mcp`
+      const { response } = await rpc(url, initialize(1))
+      const session = response.headers.get('mcp-session-id')!
+      await rpc(
+        url,
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        session,
+      )
+      const res = await new Promise<IncomingMessage>((resolve, reject) => {
+        const req = request(url, {
+          headers: { accept: 'text/event-stream', 'mcp-session-id': session },
+        })
+        t.after(() => req.destroy())
+        req.once('error', reject).once('response', resolve).end()
+      })
+      res.setEncoding('utf8').on('data', seen.sse)
+      res.on('error', () => {})
+      await stream(
+        t,
+        url,
+        {
+          ...burst,
+          params: {
+            ...burst.params,
+            arguments: { ...burst.params.arguments, detached: true },
+          },
+        },
+        seen.sse,
+        session,
+      )
+      return {
+        pause: () => res.pause(),
+        resume: () => res.resume(),
+        ...seen,
+      }
+    },
+  },
   // The 2026-07-28 protocol: each request is its own HTTP exchange and child.
   modern: {
     args: ['--outputTransport', 'streamableHttp'],

@@ -12,6 +12,10 @@ import { drained } from '../lib/outputBackpressure.js'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { failPendingCalls } from '../lib/failPendingCalls.js'
 
+// How long a server sent only notifications has to read them and exit by
+// itself, once its input has ended, before it is stopped.
+const ONE_WAY_GRACE_MS = 5000
+
 /**
  * One stateless POST: a server, transport and child of its own, released once
  * the response is over and the child owes it nothing.
@@ -230,7 +234,7 @@ export class StatelessRequest {
       // HTTP 202 precedes delivery, and notifications have no completion
       // reply. Forward first, then allow stdio EOF a bounded grace period.
       this.link.peer.end()
-      this.finishTimer = setTimeout(() => this.release(), 5000)
+      this.finishTimer = setTimeout(() => this.release(), ONE_WAY_GRACE_MS)
     } else this.release()
   }
 }

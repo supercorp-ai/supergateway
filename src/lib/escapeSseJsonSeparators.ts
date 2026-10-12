@@ -1,7 +1,6 @@
-import type { OutgoingHttpHeaders, ServerResponse } from 'node:http'
-
-const LINE_SEPARATOR = Buffer.from('\\u2028')
-const PARAGRAPH_SEPARATOR = Buffer.from('\\u2029')
+import type { ServerResponse, OutgoingHttpHeaders } from 'node:http'
+import { SeparatorEscaper } from './separatorEscaper.js'
+export { SeparatorEscaper } from './separatorEscaper.js'
 
 // The SDK serializes each MCP message as JSON in an SSE `data:` field. Raw
 // U+2028/U+2029 are valid there, but some clients incorrectly split on every
@@ -98,61 +97,3 @@ const withoutContentLength = (headers: OutgoingHttpHeaders) =>
       ([name]) => name.toLowerCase() !== 'content-length',
     ),
   ) as OutgoingHttpHeaders
-
-/**
- * Rewrites U+2028 and U+2029 in a stream of UTF-8 bytes as their JSON escapes.
- * A separator split across writes is held until its last byte arrives.
- */
-export class SeparatorEscaper {
-  private pending: Buffer = Buffer.alloc(0)
-
-  /** The escaped bytes of `chunk`, less any separator still incomplete. */
-  encode(chunk: Buffer): Buffer {
-    const input = this.pending.length
-      ? Buffer.concat([this.pending, chunk])
-      : chunk
-    this.pending = Buffer.alloc(0)
-    let end = input.length
-    if (end && input[end - 1] === 0xe2) end--
-    else if (end > 1 && input[end - 2] === 0xe2 && input[end - 1] === 0x80)
-      end -= 2
-
-    const separators: number[] = []
-    for (
-      let i = input.indexOf(0xe2);
-      i >= 0 && i < end;
-      i = input.indexOf(0xe2, i + 1)
-    ) {
-      // indexOf guarantees the leading byte. A candidate must still have
-      // both continuation bytes within this write's complete prefix.
-      if (i + 2 >= end || input[i + 1] !== 0x80) continue
-      if (input[i + 2] !== 0xa8 && input[i + 2] !== 0xa9) continue
-      separators.push(i)
-      i += 2
-    }
-    this.pending = input.subarray(end)
-    if (!separators.length) return input.subarray(0, end)
-    const output = Buffer.allocUnsafe(end + separators.length * 3)
-    let copiedFrom = 0
-    let written = 0
-    separators.forEach((i) => {
-      written += input.copy(output, written, copiedFrom, i)
-      const replacement =
-        input[i + 2] === 0xa8 ? LINE_SEPARATOR : PARAGRAPH_SEPARATOR
-      written += replacement.copy(output, written)
-      copiedFrom = i + 3
-    })
-    input.copy(output, written, copiedFrom, end)
-    return output
-  }
-
-  /** The last bytes: `chunk` escaped, and whatever was still held. */
-  end(chunk: Buffer): Buffer {
-    const tail = this.encode(chunk)
-    const final = this.pending.length
-      ? Buffer.concat([tail, this.pending])
-      : tail
-    this.pending = Buffer.alloc(0)
-    return final
-  }
-}

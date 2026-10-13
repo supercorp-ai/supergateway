@@ -256,6 +256,33 @@ test('a peer rewrites the answers to the tools/list requests it was sent', () =>
   ])
 })
 
+test("a server's own request under the id of a list still unanswered is not that list's answer", () => {
+  const fake = fakePeer()
+  const peer = toolNamesPeer(
+    fake.start,
+    names({ toolPrefix: 'gh_' }),
+  )(fake.owner)
+  peer.write({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+  // Client and server number their requests independently: both may say 1.
+  const request = { jsonrpc: '2.0', id: 1, method: 'roots/list' }
+  fake.server().message(request, 'line')
+  fake
+    .server()
+    .message(
+      { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'a' }] } },
+      'raw',
+    )
+  const answer = {
+    jsonrpc: '2.0',
+    id: 1,
+    result: { tools: [{ name: 'gh_a' }] },
+  }
+  assert.deepEqual(fake.said, [
+    [request, 'line'],
+    [answer, JSON.stringify(answer)],
+  ])
+})
+
 test('a peer passes everything else from the server as it is', () => {
   const fake = fakePeer()
   const peer = toolNamesPeer(

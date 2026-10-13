@@ -174,7 +174,16 @@ for (const id of [17, 'opaque', null]) {
     assert.equal(await s.open(), true)
     assert.equal(s.httpStatus, 400)
     assert.equal(JSON.parse(s.body).id, id)
-    assert.ok(JSON.parse(s.body).error)
+    // The rejection is the SDK's, and its `data` (which header disagreed
+    // with the body) is passed on with it. A null id is refused for itself,
+    // before the headers are compared.
+    const { error } = JSON.parse(s.body)
+    assert.ok(error)
+    if (id !== null) {
+      assert.equal(error.code, -32020)
+      assert.equal(error.data.mismatch.header, 'tools/list')
+      assert.equal(typeof error.data.mismatch.body, 'string')
+    }
     assert.equal(s.starts, 0)
     assert.equal(s.child, undefined)
   })
@@ -298,6 +307,23 @@ test('the child that minted continuation state serves the next round without res
   await s.bridge.close()
   assert.equal(s.closes, 1)
   assert.equal(s.response.listenerCount('close'), 0)
+})
+
+test('closing the gateway waits for the children it kept for retries to be gone', async () => {
+  const s = continuationSetup()
+  await s.open()
+  assert.equal(s.closes, 0, 'the child is kept for the retry')
+  let gone!: () => void
+  s.close = () => new Promise<void>((resolve) => (gone = resolve))
+  let closed = false
+  const closing = s.bridge.close().then(() => (closed = true))
+  await tick()
+  await tick()
+  assert.equal(s.closes, 1, 'it is being stopped')
+  assert.equal(closed, false, 'and the gateway is not closed before it has')
+  gone()
+  await closing
+  assert.equal(closed, true)
 })
 
 test('a continuation token nobody retained starts a fresh child', async () => {

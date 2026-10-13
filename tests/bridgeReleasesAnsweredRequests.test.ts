@@ -27,7 +27,7 @@ const BRIDGES = [
 
 for (const kind of BRIDGES) {
   test(
-    `${kind.flag} bridge stops tracking a request once it is answered`,
+    `${kind.flag} bridge stops tracking a request once it is answered, with a result or an error`,
     { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
@@ -76,10 +76,18 @@ for (const kind of BRIDGES) {
       send({ method: 'notifications/initialized' })
       send({ id: 'list', method: 'tools/list' })
       await reply('list')
+      // One the server refuses is answered too, with its error.
+      send({ id: 'refused', method: 'no/such/method' })
+      await reply('refused')
+      assert.ok(replies().find((m) => m.id === 'refused').error)
 
       send({
         method: 'notifications/cancelled',
         params: { requestId: 'list', reason: 'after its reply' },
+      })
+      send({
+        method: 'notifications/cancelled',
+        params: { requestId: 'refused', reason: 'after its error' },
       })
       // A request that never existed: once its cancellation is logged, the
       // one before it has been handled too.
@@ -94,6 +102,10 @@ for (const kind of BRIDGES) {
       assert.ok(
         ignored().some((entry) => entry.includes("'list'")),
         'the cancellation of an answered request is ignored too',
+      )
+      assert.ok(
+        ignored().some((entry) => entry.includes("'refused'")),
+        'and so is the cancellation of one that was answered with an error',
       )
     },
   )

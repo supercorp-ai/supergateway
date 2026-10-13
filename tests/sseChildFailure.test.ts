@@ -33,6 +33,12 @@ test(
     await client.connect(
       new SSEClientTransport(new URL(`http://127.0.0.1:${port}/sse`)),
     )
+    // A request already answered is over: only the call in flight fails.
+    // An error for an id the client is no longer waiting on reaches its
+    // `onerror`, as a response to an unknown message.
+    await client.listTools()
+    const stray: string[] = []
+    client.onerror = (error) => stray.push(error.message)
     const call = client.callTool({ name: 'hold', arguments: {} }, undefined, {
       timeout: 15000,
     })
@@ -47,6 +53,11 @@ test(
     assert.ok(
       Date.now() - started < 5000,
       'the call failed promptly, not at its own timeout',
+    )
+    assert.deepEqual(
+      stray.filter((message) => /unknown message ID/i.test(message)),
+      [],
+      'nothing was said of the request that had been answered',
     )
   },
 )

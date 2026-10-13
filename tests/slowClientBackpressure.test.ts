@@ -325,7 +325,13 @@ for (const [mode, { args, open }] of Object.entries(modes)) {
       reader.resume()
       await control.wait('burst-done', undefined, 30000)
       const deadline = Date.now() + 30000
-      while (!reader.answered() && Date.now() < deadline) await delay(10)
+      // Answered, and everything read: the answer is the last thing a server
+      // says of a call, but not of a burst it makes after answering.
+      while (
+        !(reader.answered() && reader.received() === COUNT) &&
+        Date.now() < deadline
+      )
+        await delay(10)
       assert.equal(reader.received(), COUNT)
       assert.ok(reader.answered(), 'the call is answered after the burst')
       assert.equal(gateway.child.exitCode, null, gateway.errors())

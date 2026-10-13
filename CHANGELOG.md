@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.0-rc.2
+
+Nothing a client or a server can see changes from rc.1.
+
+- The source is reorganised: the largest modules are split into focused ones, and what a combined session keeps track of (its servers, their requests of the client, the client's requests in flight) is in classes of their own. The moves are text-for-text; the rewrites were each checked against the code they replaced with 30,000 random sessions, and against 4.1.0 side by side.
+- Tests: about 40 statements that no test would have missed are now pinned, found by changing every statement of the source one at a time. Tests that could fail on a slow or busy machine now wait for what they check.
+
 ## 4.2.0-rc.1
 
 - `--printConfig` replaces every `env` value and the whole query of every URL, not only the values with a sensitive name. Command lines (`args`, `stdio`) are still printed as written.

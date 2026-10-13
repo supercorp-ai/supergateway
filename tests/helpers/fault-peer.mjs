@@ -58,9 +58,27 @@ async function handle(request) {
     const action = await report('hold', { id: String(request.id) })
     if (action === 'exit') process.exit(17)
   }
+  const reply = () =>
+    send(request.id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            pid: process.pid,
+            wrapperPid: Number(process.env.FAULT_WRAPPER_PID ?? 0),
+            calls: ++calls,
+            name,
+          }),
+        },
+      ],
+    })
   if (name === 'burst') {
     const count = request.params.arguments?.count ?? 1024
     const data = 'x'.repeat(16384)
+    // `detached`: the call is answered first, so the burst belongs to no
+    // request, and goes wherever a server's unprompted messages go.
+    const detached = request.params.arguments?.detached === true
+    if (detached) reply()
     await report('burst-start')
     for (let seq = 0; seq < count; seq++) {
       const line =
@@ -72,20 +90,9 @@ async function handle(request) {
       if (!process.stdout.write(line)) await once(process.stdout, 'drain')
     }
     await report('burst-done', { bytes: String(count * data.length) })
+    if (detached) return
   }
-  send(request.id, {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          pid: process.pid,
-          wrapperPid: Number(process.env.FAULT_WRAPPER_PID ?? 0),
-          calls: ++calls,
-          name,
-        }),
-      },
-    ],
-  })
+  reply()
   if (name === 'hold') await report('held-reply')
 }
 for await (const line of createInterface({ input: process.stdin })) {

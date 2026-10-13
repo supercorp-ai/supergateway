@@ -309,6 +309,23 @@ test('the child that minted continuation state serves the next round without res
   assert.equal(s.response.listenerCount('close'), 0)
 })
 
+test('closing the gateway waits for the children it kept for retries to be gone', async () => {
+  const s = continuationSetup()
+  await s.open()
+  assert.equal(s.closes, 0, 'the child is kept for the retry')
+  let gone!: () => void
+  s.close = () => new Promise<void>((resolve) => (gone = resolve))
+  let closed = false
+  const closing = s.bridge.close().then(() => (closed = true))
+  await tick()
+  await tick()
+  assert.equal(s.closes, 1, 'it is being stopped')
+  assert.equal(closed, false, 'and the gateway is not closed before it has')
+  gone()
+  await closing
+  assert.equal(closed, true)
+})
+
 test('a continuation token nobody retained starts a fresh child', async () => {
   const s = continuationSetup()
   s.nextRound(1, { requestState: 'never minted here' })

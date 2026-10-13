@@ -168,6 +168,32 @@ test('non-SSE status-message responses are passed through', async () => {
   assert.equal(result.body, 'hello')
 })
 
+test('a length set as a header, with no writeHead, gives way to the longer escaped body', async () => {
+  const frame = Buffer.from(`data: ${JSON.stringify({ text: 'a b' })}\n\n`)
+  const { body, length } = await capture((res) => {
+    res.statusCode = 200
+    res.setHeader('content-type', 'text/event-stream')
+    res.setHeader('content-length', frame.length)
+    res.write(frame)
+    res.end()
+  })
+  assert.equal(length, null)
+  assert.equal(body, 'data: {"text":"a\\u2028b"}\n\n')
+})
+
+test('a response that is not SSE, sent whole by end(), keeps its bytes and its length', async () => {
+  const json = Buffer.from(JSON.stringify({ text: 'a b c' }))
+  const { bytes, length } = await capture((res) => {
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': json.length,
+    })
+    res.end(json)
+  })
+  assert.deepEqual(bytes, json)
+  assert.equal(length, String(json.length))
+})
+
 test('characters that share a first and last byte with a separator are left alone', async () => {
   // U+20A8 (rupee sign) is E2 82 A8 and U+20A9 (won sign) is E2 82 A9: the
   // separators' first and third bytes around another second one.

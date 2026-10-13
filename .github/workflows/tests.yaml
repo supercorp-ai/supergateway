@@ -10,6 +10,15 @@ on:
 permissions:
   contents: read
 
+# A newer run for the same pull request replaces the older one: the older would
+# report on a commit nobody is going to merge, and holds the macOS runners
+# (five at a time, eight wanted by one run) while the newer waits. A run on
+# main is never replaced: publishing looks for the run of the exact commit it
+# publishes.
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # The full suite needs Node 24: it relies on the test runner's module mocking,
   # which behaves differently on 20 and 22 (see the smoke job for what older

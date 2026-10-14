@@ -85,6 +85,116 @@ test('a timed-out soak command fails instead of allowing another cycle', async (
   assert.ok(events.some((row) => row.phase === 'end-command' && row.timedOut))
 })
 
+// A command that reports as it goes is judged by its silence. The first of
+// these is the 4.2.0-rc.2 campaign's one failed lane in small: a group that
+// took four times as long as usual, with every test passing as it went.
+test('a command that keeps reporting may take longer than it may stay silent', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-slow-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: process.env,
+  })
+  t.after(() => group.cancel('test cleanup'))
+  // Eight reports 150 ms apart: 1.2 s in all, never 600 ms without one.
+  await group.run(
+    'slow',
+    [
+      '-e',
+      `let n=0;const t=setInterval(()=>{console.log('test '+ ++n);if(n===8)clearInterval(t)},150)`,
+    ],
+    { quiet: 600, cap: 30000 },
+  )
+  assert.equal(group.failed, false)
+  assert.deepEqual(
+    events
+      .filter((row) => row.phase === 'end-command')
+      .map(({ code, timedOut, stalled }) => ({ code, timedOut, stalled })),
+    [{ code: 0, timedOut: false, stalled: false }],
+  )
+  assert.equal(
+    readFileSync(join(root, 'slow.log'), 'utf8').trim().split('\n').length,
+    8,
+  )
+})
+
+test('a command that goes silent is stopped as stuck, and the failure says so', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-stuck-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: process.env,
+  })
+  t.after(() => group.cancel('test cleanup'))
+  const started = Date.now()
+  // It reports, on both streams, and then never again.
+  await assert.rejects(
+    group.run(
+      'stuck',
+      [
+        '-e',
+        `console.log('test 1');setTimeout(()=>console.error('warning'),300);setInterval(()=>{},1000)`,
+      ],
+      { quiet: 400, cap: 30000 },
+    ),
+    /stuck failed: nothing said for 0\.4s; inspect /,
+  )
+  assert.ok(Date.now() - started < 10000, 'long before its cap')
+  // Silent for 400 ms after the warning at 300, not after the first line.
+  assert.ok(Date.now() - started >= 650, 'what it says on stderr counts too')
+  assert.equal(group.failed, true)
+  assert.ok(
+    events.some(
+      (row) => row.phase === 'end-command' && row.timedOut && row.stalled,
+    ),
+  )
+})
+
+test('a command that never says anything is stuck from the start', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-mute-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const group = createSoakCommandGroup({ root, events() {}, env: process.env })
+  t.after(() => group.cancel('test cleanup'))
+  const started = Date.now()
+  await assert.rejects(
+    group.run('mute', ['-e', 'setInterval(()=>{},1000)'], {
+      quiet: 300,
+      cap: 30000,
+    }),
+    /mute failed: nothing said for 0\.3s; inspect /,
+  )
+  assert.ok(Date.now() - started < 10000, 'long before its cap')
+})
+
+test('a command that never stops reporting is stopped at its cap', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'soak-endless-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const events: any[] = []
+  const group = createSoakCommandGroup({
+    root,
+    events: (event: any) => events.push(event),
+    env: process.env,
+  })
+  t.after(() => group.cancel('test cleanup'))
+  await assert.rejects(
+    group.run('endless', ['-e', `setInterval(()=>console.log('again'),50)`], {
+      quiet: 5000,
+      cap: 500,
+    }),
+    /endless failed: still running after 0\.5s; inspect /,
+  )
+  assert.ok(
+    events.some(
+      (row) =>
+        row.phase === 'end-command' && row.timedOut && row.stalled === false,
+    ),
+  )
+})
+
 test('successful soak commands complete without cancelling the group', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-success-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

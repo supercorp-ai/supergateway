@@ -32,8 +32,20 @@ export function createSoakCommandGroup({
     }
     for (const stop of active) stop()
   }
+  // How long a command may take. A number is its whole budget. For a command
+  // that reports as it goes, `{ quiet, cap }` instead: it is stopped when it
+  // has said nothing for `quiet`, or at `cap` whatever it says.
+  //
+  // A whole budget cannot tell a slow machine from a stuck command. The test
+  // groups had twelve minutes, three and a half times what they take; on one
+  // macOS runner in the 4.2.0-rc.2 campaign the first cycle ran four times
+  // slower than on every other, the group was stopped seven files in with all
+  // 73 of its tests passing, and a 48-hour campaign read as failed. Silence is
+  // what a stuck command has and a slow one does not.
   async function run(name, args, timeout, extra = {}) {
     if (abort.signal.aborted) throw Error('Soak already cancelled')
+    const { quiet, cap } =
+      typeof timeout === 'number' ? { cap: timeout } : timeout
     const log = createWriteStream(resolve(root, `${name}.log`))
     const child = spawn(process.execPath, args, {
       env: { ...env, ...extra },
@@ -43,6 +55,8 @@ export function createSoakCommandGroup({
     child.stderr.pipe(log, { end: false })
     events({ phase: 'start-command', name, pid: child.pid })
     let timedOut = false
+    // Stopped for saying nothing, as opposed to for taking too long in all.
+    let stalled = false
     let hardTimer
     const stop = () => {
       if (hardTimer) return
@@ -53,12 +67,27 @@ export function createSoakCommandGroup({
     const timer = setTimeout(() => {
       timedOut = true
       stop()
-    }, timeout)
+    }, cap)
+    let quietTimer
+    const heard = () => {
+      clearTimeout(quietTimer)
+      quietTimer = setTimeout(() => {
+        timedOut = true
+        stalled = true
+        stop()
+      }, quiet)
+    }
+    if (quiet !== undefined) {
+      heard()
+      child.stdout.on('data', heard)
+      child.stderr.on('data', heard)
+    }
     const result = await new Promise((ok) => {
       child.once('error', (error) => ok({ code: null, error: String(error) }))
       child.once('close', (code, signal) => ok({ code, signal }))
     })
     clearTimeout(timer)
+    clearTimeout(quietTimer)
     clearTimeout(hardTimer)
     active.delete(stop)
     await new Promise((ok) => log.end(ok))
@@ -67,13 +96,25 @@ export function createSoakCommandGroup({
     // on the command. Timeouts stay failures: `stop()` fired for this command's
     // own sake, and the group was not cancelling before it did.
     const cancelled = abort.signal.aborted && !timedOut && result.code !== 0
-    events({ phase: 'end-command', name, ...result, timedOut, cancelled })
+    events({
+      phase: 'end-command',
+      name,
+      ...result,
+      timedOut,
+      ...(quiet === undefined ? {} : { stalled }),
+      cancelled,
+    })
     if (cancelled)
       throw Error(`${name} was cancelled before it finished (${cancelReason})`)
     if (result.code !== 0 || timedOut) {
       failures.push(name)
       if (!keepGoing) cancel(`${name} failed`)
-      throw Error(`${name} failed; inspect ${root}/${name}.log`)
+      const why = stalled
+        ? `: nothing said for ${quiet / 1000}s`
+        : timedOut
+          ? `: still running after ${cap / 1000}s`
+          : ''
+      throw Error(`${name} failed${why}; inspect ${root}/${name}.log`)
     }
   }
   return {

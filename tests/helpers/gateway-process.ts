@@ -25,8 +25,8 @@ const readyTimeout = () => {
 // the two are written in different files, so they invert silently. Deriving one
 // from the other keeps a raised budget from blinding the tests it is meant to
 // help.
-// Capped so that one hung test cannot eat the twelve-minute budget the soak
-// gives a whole group: past this point the group timeout is the better backstop.
+// Capped so that one hung test is over well inside the six minutes of silence
+// the soak allows a group of them (GROUP_BUDGET in scripts/overnight-release.mjs).
 const maxTestTimeout = 240000
 
 export const gatewayTimeout = (ms: number) =>

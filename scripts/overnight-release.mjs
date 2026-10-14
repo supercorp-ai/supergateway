@@ -100,6 +100,12 @@ events({
     process.platform !== 'win32' && process.env.SOAK_SKIP_SCENARIOS !== '1',
 })
 writeFileSync(resolve(root, 'pid'), String(process.pid))
+// A group of test files reports each test as it ends, so it is judged by its
+// silence, not its length: no test here may run longer than four minutes (the
+// cap in tests/helpers/gateway-process.ts), so six with nothing said is a
+// group that is stuck, on any machine. The forty-five is a backstop for one
+// that keeps talking and never ends; a group takes three to four.
+const GROUP_BUDGET = { quiet: 6 * 60000, cap: 45 * 60000 }
 // What failed inside the battery loop. A failure is recorded and the cycle
 // goes on; only cancellation stops it.
 const batteryErrors = []
@@ -129,7 +135,7 @@ async function batteries() {
           './scripts/release-test-reporter.mjs',
           ...groups[index].map((name) => `tests/${name}.test.ts`),
         ],
-        12 * 60000,
+        GROUP_BUDGET,
       )
     }
     if (process.platform !== 'win32') {

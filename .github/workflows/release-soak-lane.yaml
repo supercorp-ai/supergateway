@@ -12,7 +12,9 @@ on:
       sha256:
         required: true
         type: string
-      # "fewer" leaves out macOS on Node 22 and 24 (see release-soak.yaml).
+      # Which macOS jobs run (see release-soak.yaml): "all" is five, "fewer"
+      # leaves out Node 22 and 24, and "node20", "node26" and "scenarios" run
+      # that one macOS job alone.
       macos:
         type: string
         default: all
@@ -42,8 +44,10 @@ jobs:
         node: [20, 22, 24, 26]
         # With "fewer", macOS keeps the oldest and the newest Node here, and
         # Node 24 in the scenarios job below: three macOS jobs, not five.
-        # Linux and Windows still run all four. (Node 0 excludes nothing.)
-        exclude: ${{ fromJSON(inputs.macos == 'fewer' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || '[{"os":"macos-latest","node":0}]') }}
+        # "node20" or "node26" keeps that one here and none below;
+        # "scenarios" keeps none here. Linux and Windows always run all four.
+        # (Node 0 excludes nothing.)
+        exclude: ${{ fromJSON(inputs.macos == 'fewer' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || inputs.macos == 'node20' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24},{"os":"macos-latest","node":26}]' || inputs.macos == 'node26' && '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || inputs.macos == 'scenarios' && '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":22},{"os":"macos-latest","node":24},{"os":"macos-latest","node":26}]' || '[{"os":"macos-latest","node":0}]') }}
     env:
       SOAK_DIRECTORY: .release/overnight
       # The scenario soak has runners of its own (the scenarios job below).
@@ -173,7 +177,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # On macOS unless the phase's one macOS job is a Node lane above.
+        os: ${{ fromJSON((inputs.macos == 'node20' || inputs.macos == 'node26') && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
     env:
       SOAK_DIRECTORY: .release/scenarios
     steps:

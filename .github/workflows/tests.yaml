@@ -355,7 +355,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ['4.1.0']
+        release: ['4.1.0', '4.2.0']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -379,7 +379,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ['4.1.0']
+        release: ['4.1.0', '4.2.0']
     steps:
       - name: Checkout
         uses: actions/checkout@v4

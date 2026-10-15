@@ -1,5 +1,8 @@
 {
   "4.1.0": {
     "sha256": "f8295d624eb36776211dadc6f5c5ff41b85fa18fd9f80b30759887b87d7c46af"
+  },
+  "4.2.0": {
+    "sha256": "80df6a77436bea178dcee576f0a72f6bcc19de18f44bd8f24591ae2ee4f07314"
   }
 }

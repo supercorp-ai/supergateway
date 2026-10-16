@@ -27,13 +27,6 @@ import {
 const enabled = process.env.SUPERGATEWAY_REAL_SERVERS === '1'
 const entry = process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js'
 const INSPECTOR = '@modelcontextprotocol/inspector@2.8.0'
-// The Inspector's own `engines`: it supports Node 22.19 and later. On Node 20
-// npm 10 cannot even install it (its resolver crashes on the Inspector's peer
-// dependencies, as in 4.2.1-rc.1's canary), and nobody runs it there. The
-// gateway on Node 20 still serves the same real servers to the SDK client
-// (realServers.test.ts).
-const [major, minor] = process.versions.node.split('.').map(Number)
-const inspectorRuns = major > 22 || (major === 22 && minor >= 19)
 
 // Installed once per machine; later runs start from it.
 function installInspector() {
@@ -43,7 +36,20 @@ function installInspector() {
     'node_modules/@modelcontextprotocol/inspector/clients/launcher/build/index.js',
   )
   if (!existsSync(bin))
-    npm(['install', '--prefix', root, '--no-audit', '--no-fund', INSPECTOR])
+    // Without peer resolution: the Inspector's optional peers reach vitest
+    // through vite's devtools, and npm 10 (Node 20) crashes resolving
+    // vitest 4.1.12's peer set (`Cannot read properties of null (reading
+    // 'edgesOut')`), as in 4.2.1-rc.1's canary. None of them is installed
+    // either way, so the Inspector installed is the same.
+    npm([
+      'install',
+      '--prefix',
+      root,
+      '--no-audit',
+      '--no-fund',
+      '--legacy-peer-deps',
+      INSPECTOR,
+    ])
   return bin
 }
 
@@ -217,10 +223,7 @@ const PATHS: Array<{
 test(
   'the Inspector CLI sees server-everything identically through every gateway path',
   {
-    skip:
-      (!enabled && 'set SUPERGATEWAY_REAL_SERVERS=1') ||
-      (!inspectorRuns &&
-        `the Inspector requires Node 22.19 or later, not ${process.version}`),
+    skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1',
     timeout: 20 * 60000,
   },
   async (t) => {

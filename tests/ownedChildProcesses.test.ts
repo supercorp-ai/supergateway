@@ -306,21 +306,27 @@ test('shutdown drains a child acquired by setup that was already in flight', asy
   ])
 })
 
-test("Windows does not end the tree of a shell that has already exited: its PID may be another process's now", async (t) => {
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
-  t.after(() => Object.defineProperty(process, 'platform', platform))
-  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-  const calls: unknown[] = []
-  t.mock.method(childProcess, 'execFile', ((...args: unknown[]) => {
-    calls.push(args.slice(0, 2))
-  }) as unknown as typeof childProcess.execFile)
-  const owner = new OwnedChildProcesses({ info() {}, error() {} })
-  const wrapper = child(2000004326)
-  owner.own(wrapper)
-  Object.defineProperty(process, 'platform', platform)
-  // The shell exits by itself, and its exit stops it.
-  Object.assign(wrapper, { exitCode: 0 })
-  wrapper.emit('exit', 0, null)
-  await owner.close()
-  assert.deepEqual(calls, [])
-})
+for (const ending of ['exited', 'was killed', 'never started'] as const) {
+  test(`Windows ends no tree for a shell that ${ending === 'never started' ? 'never started: it has no PID' : `${ending}: its PID may be another process's now`}`, async (t) => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    t.after(() => Object.defineProperty(process, 'platform', platform))
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    const calls: unknown[] = []
+    t.mock.method(childProcess, 'execFile', ((...args: unknown[]) => {
+      calls.push(args.slice(0, 2))
+      ;(args.at(-1) as () => void)()
+    }) as unknown as typeof childProcess.execFile)
+    const owner = new OwnedChildProcesses({ info() {}, error() {} })
+    const wrapper = child(ending === 'never started' ? undefined : 2000004326)
+    owner.own(wrapper)
+    Object.defineProperty(process, 'platform', platform)
+    // The shell exits by itself, or is ended by a signal, and that stops it.
+    if (ending === 'exited') Object.assign(wrapper, { exitCode: 0 })
+    if (ending === 'was killed')
+      Object.assign(wrapper, { signalCode: 'SIGTERM' })
+    if (ending !== 'never started')
+      wrapper.emit('exit', wrapper.exitCode, wrapper.signalCode)
+    await owner.close()
+    assert.deepEqual(calls, [])
+  })
+}

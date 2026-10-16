@@ -147,6 +147,8 @@ export function observeGateway(t: TestContext) {
   const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
       spawn(...args: any[]) {
         spawns.push(args)
         const child = new Child()

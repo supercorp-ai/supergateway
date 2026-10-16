@@ -4,6 +4,9 @@ import { connect, createServer } from 'node:net'
 import { randomInt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { watchGateway, forgetGateway } from './leak-check.js'
 
 // Eight seconds is many times the healthy worst case: across a full soak the
@@ -369,6 +372,56 @@ export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'
  */
 export const nodeServer = (...args: string[]) =>
   `${process.platform === 'win32' ? '' : 'exec '}node ${args.join(' ')}`
+/**
+ * Gateway arguments that serve `node <script>` over Streamable HTTP with the
+ * server's stdin its own: a closed stdin is then a broken pipe the gateway
+ * sees. A `--stdio` command line on POSIX execs the server, so it qualifies.
+ * On Windows cmd.exe stays between them and keeps its copy of the pipe open,
+ * so nothing the server does to its stdin can reach the gateway; there a
+ * config file's `command` + `args`, which run without a shell, serve it.
+ * `url` is the server's endpoint on that port.
+ */
+export function directServer(
+  t: TestContext,
+  script: string,
+  port: number,
+  stateful: boolean,
+) {
+  if (process.platform !== 'win32')
+    return {
+      args: [
+        '--stdio',
+        nodeServer(script),
+        '--outputTransport',
+        'streamableHttp',
+        '--port',
+        String(port),
+        ...(stateful ? ['--stateful'] : []),
+      ],
+      url: `http://127.0.0.1:${port}/mcp`,
+    }
+  const dir = mkdtempSync(join(tmpdir(), 'sg-direct-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'servers.json')
+  writeFileSync(
+    file,
+    JSON.stringify({
+      port,
+      mcpServers: {
+        peer: {
+          command: process.execPath,
+          args: [script],
+          outputTransport: 'streamableHttp',
+          stateful,
+        },
+      },
+    }),
+  )
+  return {
+    args: ['--config', file],
+    url: `http://127.0.0.1:${port}/peer/mcp`,
+  }
+}
 export async function stdioRpc(
   gateway: ReturnType<typeof launchGateway>,
   message: { id: string | number; [key: string]: unknown },

@@ -9,7 +9,7 @@ import {
   launchGateway,
   requestTimeout,
   unusedPort,
-  nodeServer,
+  directServer,
 } from './helpers/gateway-process.js'
 
 // An HTTP response ending is not a JSON-RPC reply. The SDK can keep a call
@@ -21,37 +21,28 @@ for (const stateful of [true, false]) {
       { timeout: gatewayTimeout(15000) },
       async (t) => {
         const control = await faultControl(t)
-        const port = await unusedPort()
-        const gateway = launchGateway(
+        const { args, url } = directServer(
           t,
-          [
-            '--stdio',
-            nodeServer('tests/helpers/fault-peer.mjs'),
-            '--outputTransport',
-            'streamableHttp',
-            '--port',
-            String(port),
-            ...(stateful ? ['--stateful'] : []),
-          ],
-          {
-            FAULT_CONTROL: control.url,
-            FAULT_INIT: !stateful && fault === 'stdin' ? '1' : '0',
-            ...(fault === 'spawn'
-              ? {
-                  FAIL_SPAWN_AT: '1',
-                  NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
-                }
-              : {}),
-          },
+          'tests/helpers/fault-peer.mjs',
+          await unusedPort(),
+          stateful,
         )
+        const gateway = launchGateway(t, args, {
+          FAULT_CONTROL: control.url,
+          FAULT_INIT: !stateful && fault === 'stdin' ? '1' : '0',
+          ...(fault === 'spawn'
+            ? {
+                FAIL_SPAWN_AT: '1',
+                NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
+              }
+            : {}),
+        })
         await gateway.ready()
         const client = new Client(
           { name: 'io-test', version: '1.0.0' },
           { capabilities: {} },
         )
-        const transport = new StreamableHTTPClientTransport(
-          new URL(`http://127.0.0.1:${port}/mcp`),
-        )
+        const transport = new StreamableHTTPClientTransport(new URL(url))
         t.after(() => client.close())
         t.after(() => transport.close())
         const failed = (error: any) => {

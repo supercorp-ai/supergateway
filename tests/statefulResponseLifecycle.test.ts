@@ -106,6 +106,8 @@ test('stateful response completion releases once and cleanup cancels session tim
   const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
       spawn() {
         const child = new Child()
         children.push(child)

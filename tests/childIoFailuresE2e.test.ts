@@ -9,6 +9,7 @@ import {
   rpc,
   unusedPort,
   nodeServer,
+  directServer,
 } from './helpers/gateway-process.js'
 
 // #177/GW-032: failures must terminate only the affected child transport.
@@ -99,25 +100,17 @@ for (const stateful of [true, false]) {
       { timeout: gatewayTimeout(15000) },
       async (t) => {
         const control = await faultControl(t)
-        const port = await unusedPort()
-        const gateway = launchGateway(
+        const { args, url } = directServer(
           t,
-          [
-            '--stdio',
-            peer,
-            '--outputTransport',
-            'streamableHttp',
-            '--port',
-            String(port),
-            ...(stateful ? ['--stateful'] : []),
-          ],
-          {
-            FAULT_INIT: !stateful && fault ? '1' : '0',
-            FAULT_CONTROL: control.url,
-          },
+          'tests/helpers/fault-peer.mjs',
+          await unusedPort(),
+          stateful,
         )
+        const gateway = launchGateway(t, args, {
+          FAULT_INIT: !stateful && fault ? '1' : '0',
+          FAULT_CONTROL: control.url,
+        })
         await gateway.ready()
-        const url = `http://127.0.0.1:${port}/mcp`
         const healthy = await rpc(url, initialize())
         let healthyCalls = 0
         const healthySession =

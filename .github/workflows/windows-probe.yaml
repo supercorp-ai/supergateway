@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   suite:
-    name: Full suite on Node ${{ matrix.node }} / windows-latest
+    name: Full suite ${{ matrix.shard }}/8 on Node ${{ matrix.node }} / windows-latest
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         node: ['24']
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
     steps:
@@ -28,9 +29,9 @@ jobs:
       - run: npm run build
       - name: Every test file
         shell: bash
-        run: node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml 'tests/**/*.test.ts'
+        run: node --import tsx --test --test-concurrency=1 --test-force-exit --test-timeout=240000 --test-shard=${{ matrix.shard }}/8 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml 'tests/**/*.test.ts'
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-suite-node${{ matrix.node }}
+          name: windows-suite-node${{ matrix.node }}-shard${{ matrix.shard }}
           path: junit.xml

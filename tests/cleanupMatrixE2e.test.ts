@@ -95,7 +95,11 @@ const until = async (check: () => boolean, what: () => string) => {
 }
 
 // Every process that started has ended.
-const allGone = (dir: string, expected: number) =>
+const allGone = (
+  dir: string,
+  expected: number,
+  gateway: { output: () => string; errors: () => string },
+) =>
   until(
     () =>
       started(dir).length >= expected &&
@@ -104,7 +108,7 @@ const allGone = (dir: string, expected: number) =>
       const pids = started(dir)
       return pids.length < expected
         ? `only ${pids.length} of ${expected} processes started`
-        : `still running: ${pids.filter(isAlive).join(', ')}`
+        : `still running: ${pids.filter(isAlive).join(', ')}; the gateway's log ends:\n${(gateway.output() + gateway.errors()).slice(-3000)}`
     },
   )
 
@@ -127,9 +131,15 @@ async function sseClient(t: TestContext, port: number) {
     `http://127.0.0.1:${port}`,
   )
   // Replies arrive on the stream; reading keeps it flowing.
+  let replies = text
   void (async () => {
-    for (;;)
-      if ((await reader.read().catch(() => ({ done: true }))).done) return
+    for (;;) {
+      const { value, done } = await reader
+        .read()
+        .catch(() => ({ value: undefined, done: true }))
+      if (done) return
+      replies += Buffer.from(value!).toString()
+    }
   })()
   const post = (message: object) =>
     fetch(endpoint, {
@@ -137,7 +147,13 @@ async function sseClient(t: TestContext, port: number) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(message),
     })
-  return { post, leave: () => abort.abort() }
+  // The answer to request `id`, once it has come down the stream.
+  const answered = (id: number) =>
+    until(
+      () => replies.includes(`"id":${id},`) || replies.includes(`"id":${id}}`),
+      () => `no answer to request ${id} on the SSE stream`,
+    )
+  return { post, answered, leave: () => abort.abort() }
 }
 
 async function wsClient(t: TestContext, port: number) {
@@ -211,6 +227,10 @@ for (const output of Object.keys(endings) as Output[]) {
           if (output === 'sse') {
             const client = await sseClient(t, port)
             assert.equal((await client.post(initialize())).status, 202)
+            // A client that leaves before its initialize is answered hands
+            // its server on to the next client for 30 seconds (GW-035); this
+            // one has finished its handshake, as the WebSocket client has.
+            await client.answered(1)
             leave = client.leave
             crash = async (tool) => void (await client.post(call(tool)))
           } else if (output === 'ws') {
@@ -272,7 +292,7 @@ for (const output of Object.keys(endings) as Output[]) {
           else if (ending === 'stdin closes') gateway.child.stdin.end()
           else if (ending === 'SIGINT' || ending === 'SIGTERM')
             gateway.interrupt(ending)
-          await allGone(dir, expected)
+          await allGone(dir, expected, gateway)
           if ((shutdowns as readonly string[]).includes(ending)) {
             const exit = await gateway.exited
             assert.equal(exit.code, 0, gateway.errors())
@@ -360,7 +380,7 @@ for (const shape of ['config entry', 'combined entry'] as const) {
           headers: { 'mcp-session-id': session },
         })
       }
-      await allGone(dir, per)
+      await allGone(dir, per, gateway)
       if ((shutdowns as readonly string[]).includes(ending))
         assert.equal((await gateway.exited).code, 0, gateway.errors())
       else assert.equal(gateway.child.exitCode, null, 'the gateway stays up')

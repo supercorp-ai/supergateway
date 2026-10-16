@@ -1,14 +1,27 @@
-import { test } from 'node:test'
+import { test, beforeEach, afterEach } from 'node:test'
+import childProcess from 'node:child_process'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { OwnedChildProcesses } from '../src/lib/ownedChildProcesses.js'
 import { enableFakeTimers } from './helpers/fake-timers.js'
 
+const nativePlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+beforeEach(() =>
+  Object.defineProperty(process, 'platform', {
+    ...nativePlatform,
+    value: 'linux',
+  }),
+)
+afterEach(() => Object.defineProperty(process, 'platform', nativePlatform))
+
 const gone = () => Object.assign(new Error('gone'), { code: 'ESRCH' })
 const child = (pid?: number) =>
   Object.assign(new EventEmitter(), {
     pid,
+    // Running, as a real ChildProcess reports it until it exits.
+    exitCode: null,
+    signalCode: null,
     kill: () => true,
   }) as unknown as ChildProcessWithoutNullStreams
 
@@ -220,27 +233,51 @@ test('a group that keeps refusing is reported once, after a second', async (t) =
   await owner.close()
 })
 
-for (const result of [false, true]) {
-  test(`Windows uses only the direct-child signal fallback (kill result ${result})`, async (t) => {
+for (const result of [undefined, 128, 5]) {
+  test(`Windows terminates the owned process tree (taskkill result ${result})`, async (t) => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
     t.after(() => Object.defineProperty(process, 'platform', platform))
     Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-    const signals: unknown[] = []
+    const calls: unknown[] = [],
+      errors: unknown[] = []
     t.mock.method(process, 'kill', () => {
       assert.fail('Windows must not receive a negative PID')
     })
     const wrapper = child(2000004325)
-    t.mock.method(wrapper, 'kill', (signal) => {
-      signals.push(signal)
-      return signal === 'SIGTERM' && result
+    t.mock.method(wrapper, 'kill', () => {
+      assert.fail('Do not kill the shell before terminating its tree')
     })
-    const owner = new OwnedChildProcesses({ info() {}, error() {} })
+    t.mock.method(childProcess, 'execFile', ((
+      file: string,
+      args: string[],
+      options: unknown,
+      callback: (error?: Error) => void,
+    ) => {
+      calls.push([file, args, options])
+      callback(
+        result === undefined
+          ? undefined
+          : Object.assign(new Error('taskkill'), { code: result }),
+      )
+    }) as typeof childProcess.execFile)
+    const owner = new OwnedChildProcesses({
+      info() {},
+      error: (...args) => errors.push(args),
+    })
     assert.deepEqual(owner.spawnOptions, { shell: true, detached: false })
     const stop = owner.own(wrapper)
     Object.defineProperty(process, 'platform', platform)
     await stop()
-    assert.deepEqual(signals, result ? ['SIGTERM', 0] : ['SIGTERM'])
+    assert.deepEqual(calls, [
+      [
+        'taskkill.exe',
+        ['/PID', '2000004325', '/T', '/F'],
+        { windowsHide: true, timeout: 5000 },
+      ],
+    ])
+    assert.equal(errors.length, result === 5 ? 1 : 0)
     await owner.close()
+    assert.equal(calls.length, 1, 'cleanup remains idempotent')
   })
 }
 
@@ -267,4 +304,23 @@ test('shutdown drains a child acquired by setup that was already in flight', asy
     [-2000000001, 0],
     [-2000000002, 'SIGTERM'],
   ])
+})
+
+test("Windows does not end the tree of a shell that has already exited: its PID may be another process's now", async (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  t.after(() => Object.defineProperty(process, 'platform', platform))
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+  const calls: unknown[] = []
+  t.mock.method(childProcess, 'execFile', ((...args: unknown[]) => {
+    calls.push(args.slice(0, 2))
+  }) as unknown as typeof childProcess.execFile)
+  const owner = new OwnedChildProcesses({ info() {}, error() {} })
+  const wrapper = child(2000004326)
+  owner.own(wrapper)
+  Object.defineProperty(process, 'platform', platform)
+  // The shell exits by itself, and its exit stops it.
+  Object.assign(wrapper, { exitCode: 0 })
+  wrapper.emit('exit', 0, null)
+  await owner.close()
+  assert.deepEqual(calls, [])
 })

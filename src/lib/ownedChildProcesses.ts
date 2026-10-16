@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'child_process'
+import childProcess from 'node:child_process'
 import type { Logger } from '../types.js'
 
 // A wrapper's exit does not imply its descendants exited. Keep ownership until
@@ -26,12 +27,13 @@ export class OwnedChildProcesses {
     const pid = child.pid
     let stopped: Promise<void> | undefined
     let refusedSince: number | undefined
+    // Signals the child's process group. Only POSIX has one: on Windows the
+    // tree is ended by taskkill (terminate, below).
     const signal = (name: NodeJS.Signals | 0): boolean => {
       // An asynchronous spawn failure has no PID and owns no process group.
       if (pid === undefined) return false
       try {
-        if (grouped) process.kill(-pid, name)
-        else if (!child.kill(name)) return false
+        process.kill(-pid, name)
         return true
       } catch (error) {
         const { code } = error as NodeJS.ErrnoException
@@ -45,6 +47,34 @@ export class OwnedChildProcesses {
       }
     }
     const terminate = async () => {
+      if (!grouped) {
+        // Killing cmd.exe alone leaves its stdio server running. Terminate the
+        // tree while the shell is still alive, before sending any direct signal.
+        // Once it has exited, its tree cannot be found by its PID, and the PID
+        // may already be another process's: taskkill /T would end that one.
+        const running = child.exitCode == null && child.signalCode == null
+        if (pid !== undefined && running) {
+          await new Promise<void>((resolve) => {
+            childProcess.execFile(
+              'taskkill.exe',
+              ['/PID', String(pid), '/T', '/F'],
+              { windowsHide: true, timeout: 5000 },
+              (error) => {
+                // taskkill returns 128 when the process has already exited.
+                if (error && error.code !== 128) {
+                  this.logger.error(
+                    `Failed to terminate child tree ${pid}:`,
+                    error,
+                  )
+                }
+                resolve()
+              },
+            )
+          })
+        }
+        this.children.delete(stop)
+        return
+      }
       if (signal('SIGTERM')) {
         const deadline = Date.now() + 5000
         while (signal(0)) {

@@ -94,10 +94,8 @@ events({
   arch: process.arch,
   groups,
   sha256: artifact.sha256,
-  resourceSoak:
-    process.platform !== 'win32' && process.env.SOAK_SKIP_RESOURCE !== '1',
-  scenarioSoak:
-    process.platform !== 'win32' && process.env.SOAK_SKIP_SCENARIOS !== '1',
+  resourceSoak: process.env.SOAK_SKIP_RESOURCE !== '1',
+  scenarioSoak: process.env.SOAK_SKIP_SCENARIOS !== '1',
 })
 writeFileSync(resolve(root, 'pid'), String(process.pid))
 // A group of test files reports each test as it ends, so it is judged by its
@@ -138,27 +136,25 @@ async function batteries() {
         GROUP_BUDGET,
       )
     }
-    if (process.platform !== 'win32') {
-      for (const old of [false, true]) {
-        if (commands.stopped) return
-        await attempt(
-          `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}`,
-          ['tests/clients/run-battery.mjs', 'node'],
-          6 * 60000,
-          {
-            BATTERY_REPORT: resolve(
-              root,
-              `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}.json`,
-            ),
-            ...(old
-              ? {
-                  BATTERY_SDK: 'prev-modelcontextprotocol-sdk',
-                  BATTERY_MODES: 'sse',
-                }
-              : {}),
-          },
-        )
-      }
+    for (const old of [false, true]) {
+      if (commands.stopped) return
+      await attempt(
+        `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}`,
+        ['tests/clients/run-battery.mjs', 'node'],
+        6 * 60000,
+        {
+          BATTERY_REPORT: resolve(
+            root,
+            `cycle-${cycle}-sdk-${old ? '1.4' : '1.30'}.json`,
+          ),
+          ...(old
+            ? {
+                BATTERY_SDK: 'prev-modelcontextprotocol-sdk',
+                BATTERY_MODES: 'sse',
+              }
+            : {}),
+        },
+      )
     }
     // Real servers once per cycle, where the lane has them (see the workflow).
     if (process.env.SUPERGATEWAY_REAL_SERVERS === '1' && !commands.stopped)
@@ -217,11 +213,7 @@ try {
 }
 deadline = Date.now() + seconds * 1000
 const jobs = commands.stopped ? [] : [batteries()]
-if (
-  !commands.stopped &&
-  process.platform !== 'win32' &&
-  process.env.SOAK_SKIP_RESOURCE !== '1'
-)
+if (!commands.stopped && process.env.SOAK_SKIP_RESOURCE !== '1')
   jobs.push(
     run(
       'resources',
@@ -234,11 +226,7 @@ if (
 // crashes and upstream restarts, with their own resource gates. The hosted
 // soak runs this on runners of its own (SOAK_SKIP_SCENARIOS there): beside the
 // test groups for whole phases it slowed them 2.5x on average and up to 11x.
-if (
-  !commands.stopped &&
-  process.platform !== 'win32' &&
-  process.env.SOAK_SKIP_SCENARIOS !== '1'
-)
+if (!commands.stopped && process.env.SOAK_SKIP_SCENARIOS !== '1')
   jobs.push(
     run(
       'scenarios',

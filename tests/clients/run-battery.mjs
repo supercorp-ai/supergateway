@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process'
 import net from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const DRIVER = process.argv[2]
 const BIN = process.argv[3]
@@ -34,16 +35,30 @@ const freePort = () =>
     })
   })
 
+// Windows has no signals between processes and no process groups: SIGTERM
+// there would end the gateway before it stops its servers. The gateway gets
+// it as its console would deliver it (tests/helpers/windows-console-signals.cjs),
+// and a gateway that will not stop has its tree ended by taskkill.
+const windows = process.platform === 'win32'
+const consoleSignals = fileURLToPath(
+  new URL('../helpers/windows-console-signals.cjs', import.meta.url),
+)
+
 async function launch(args) {
   for (let attempt = 1; attempt <= 4; attempt++) {
     const port = await freePort()
     const gw = spawn(
       process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
       [
+        ...(windows ? ['--require', consoleSignals] : []),
         process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
         ...args.map((a) => (a === '$PORT' ? String(port) : a)),
       ],
-      { stdio: 'pipe', detached: true, env: { ...process.env, BIG_LENGTH } },
+      {
+        stdio: windows ? ['pipe', 'pipe', 'pipe', 'ipc'] : 'pipe',
+        detached: !windows,
+        env: { ...process.env, BIG_LENGTH },
+      },
     )
     let out = ''
     gw.stdout.setEncoding('utf8').on('data', (c) => (out += c))
@@ -52,11 +67,19 @@ async function launch(args) {
     const closed = new Promise((resolve) => gw.once('close', resolve))
     const stop = async () => {
       // Stdio children own separate groups; allow the gateway to drain them.
-      if (alive()) gw.kill('SIGTERM')
+      if (alive()) {
+        if (windows && gw.connected) gw.send('SIGTERM')
+        else gw.kill('SIGTERM')
+      }
       await Promise.race([closed, delay(6500, undefined, { ref: false })])
       if (alive()) {
         try {
-          process.kill(-gw.pid, 'SIGKILL')
+          if (windows)
+            execFileSync('taskkill.exe', ['/PID', String(gw.pid), '/T', '/F'], {
+              stdio: 'ignore',
+              windowsHide: true,
+            })
+          else process.kill(-gw.pid, 'SIGKILL')
         } catch {}
         await closed
       }

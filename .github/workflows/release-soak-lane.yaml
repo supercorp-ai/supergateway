@@ -169,7 +169,7 @@ jobs:
   # runners of its own. Beside the test groups it starved them: in the
   # 4.1.0-rc.0 soak the groups ran 2.5x slower on average and up to 11x, and
   # timing-bound tests failed on macOS that pass alone. It keeps its own
-  # resource gates here, on both POSIX platforms.
+  # resource gates here, on Linux, Windows and (with a free macOS slot) macOS.
   scenarios:
     name: ${{ inputs.label }} / scenarios / Node 24 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -178,7 +178,7 @@ jobs:
       fail-fast: false
       matrix:
         # On macOS unless the phase's one macOS job is a Node lane above.
-        os: ${{ fromJSON((inputs.macos == 'node20' || inputs.macos == 'node26') && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
+        os: ${{ fromJSON((inputs.macos == 'node20' || inputs.macos == 'node26') && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     env:
       SOAK_DIRECTORY: .release/scenarios
     steps:

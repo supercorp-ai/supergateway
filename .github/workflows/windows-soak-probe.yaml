@@ -1,0 +1,55 @@
+name: Windows soak probe
+
+# Temporary: how far a Windows gateway's handles and memory move over a soak,
+# to set the Windows gates, and whether the SDK battery runs there.
+on:
+  push:
+    branches: [ci/windows-soak]
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: Windows ${{ matrix.soak }} soak, 20 minutes
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        soak: [release, scenarios]
+    env:
+      SUPERGATEWAY_SOAK_CONFIRMED: '1'
+      SOAK_SECONDS: '1200'
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - name: Soak
+        shell: bash
+        run: |
+          mkdir -p .release
+          SUPERGATEWAY_TEST_ENTRY="$PWD/dist/index.js" SOAK_REPORT="$PWD/.release/${{ matrix.soak }}.jsonl" \
+            node --import tsx --test scripts/soak-${{ matrix.soak }}.test.ts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-soak-${{ matrix.soak }}
+          path: .release/
+
+  battery:
+    name: Windows SDK battery
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - run: node tests/clients/run-battery.mjs node

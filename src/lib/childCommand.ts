@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'child_process'
+import crossSpawn from 'cross-spawn'
 
 /**
  * How to start an MCP server.
@@ -41,7 +42,23 @@ export function spawnCommand(
     ...(command.cwd ? { cwd: command.cwd } : {}),
   }
   if ('stdio' in command) return spawn(command.stdio, launch)
-  return spawn(command.command, command.args, { ...launch, shell: false })
+  const direct = { ...launch, shell: false }
+  if (process.platform !== 'win32')
+    return spawn(command.command, command.args, direct)
+  // `npx` on Windows is npx.cmd, a script only cmd.exe can run: Windows does
+  // not look for it without a shell, and Node refuses to start a .cmd itself.
+  // Run it as the MCP SDK's own client does, through cross-spawn's rules: a
+  // script found on PATH goes through cmd.exe with every argument escaped for
+  // it, so each still reaches the server as written. An executable starts as
+  // before, and a command that is not found fails as before.
+  const parsed = crossSpawn._parse(command.command, command.args, direct)
+  if (parsed.file === undefined)
+    return spawn(command.command, command.args, direct)
+  return spawn(
+    parsed.command,
+    parsed.args,
+    parsed.options,
+  ) as ChildProcessWithoutNullStreams
 }
 
 /** The command as the startup log shows it. */

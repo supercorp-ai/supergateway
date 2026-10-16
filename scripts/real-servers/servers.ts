@@ -111,14 +111,15 @@ export function npm(args: string[]) {
 
 /**
  * One word of a `--stdio` command line, quoted for the shell that runs it:
- * sh on POSIX, cmd.exe on Windows. cmd.exe takes a word in double quotes, and
- * has no way to escape one inside them, so such a word is refused.
+ * sh on POSIX, cmd.exe on Windows. Inside double quotes cmd.exe still reads
+ * `%` (variables) and cannot escape a `"`, so a word with either is refused.
  */
 export function shellWord(word: string) {
   if (/^[\w@./:=,-]+$/.test(word)) return word
   if (!windows) return `'${word.replace(/'/g, `'\\''`)}'`
-  if (/^[\w@./\\:=, -]+$/.test(word)) return `"${word}"`
-  throw new Error(`cannot quote ${JSON.stringify(word)} for cmd.exe`)
+  if (/["%\r\n]/.test(word))
+    throw new Error(`cannot quote ${JSON.stringify(word)} for cmd.exe`)
+  return `"${word}"`
 }
 
 const tool = (name: string, args: Record<string, unknown> = {}) =>
@@ -307,8 +308,10 @@ export function realServers(fixtures: { files: string; repo: string }) {
     {
       name: 'mcp-server-git (Python)',
       argv: ['uvx', 'mcp-server-git@2026.8.18'],
-      // git_show prints a Python object's repr, memory address included.
-      normalize: (json) => json.replace(/ at 0x[0-9a-f]+>/g, ' at <address>>'),
+      // git_show prints a Python object's repr, memory address included (in
+      // capitals on Windows).
+      normalize: (json) =>
+        json.replace(/ at 0x[0-9a-fA-F]+>/g, ' at <address>>'),
       steps: [
         tool('git_status', { repo_path: fixtures.repo }),
         tool('git_log', { repo_path: fixtures.repo, max_count: 5 }),

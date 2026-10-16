@@ -68,3 +68,4 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node .github/experiments/large-reply.mjs
+      - run: node .github/experiments/battery-split.mjs

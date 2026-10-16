@@ -9,12 +9,19 @@ import {
   rpc,
   unusedPort,
   nodeServer,
-  directServer,
 } from './helpers/gateway-process.js'
 
 // #177/GW-032: failures must terminate only the affected child transport.
 // Native ENOENT and OS pipe closure keep the error path independent of mocks.
 const peer = nodeServer('tests/helpers/fault-peer.mjs')
+// A Node server on Windows cannot close its stdin pipe: after
+// process.stdin.destroy(), closeSync(0) or closing the handle, with or without
+// a shell, the gateway's writes still succeed (measured on windows-latest,
+// Node 24). The gateway's handling of a failed write is tested there in
+// process (httpChildIoContainment, websocketGatewayCleanup, httpChildExit).
+const stdinCannotClose =
+  process.platform === 'win32' &&
+  'a Node server cannot close its stdin pipe on Windows'
 const call = (name: string) => ({
   jsonrpc: '2.0',
   id: 7,
@@ -97,20 +104,28 @@ for (const stateful of [true, false]) {
   for (const fault of [false, true]) {
     test(
       `${stateful ? 'stateful' : 'stateless'} HTTP isolates ${fault ? 'a child closing stdin' : 'an ordinary child input stream'}`,
-      { timeout: gatewayTimeout(15000) },
+      { timeout: gatewayTimeout(15000), skip: fault && stdinCannotClose },
       async (t) => {
         const control = await faultControl(t)
-        const { args, url } = directServer(
+        const port = await unusedPort()
+        const gateway = launchGateway(
           t,
-          'tests/helpers/fault-peer.mjs',
-          await unusedPort(),
-          stateful,
+          [
+            '--stdio',
+            peer,
+            '--outputTransport',
+            'streamableHttp',
+            '--port',
+            String(port),
+            ...(stateful ? ['--stateful'] : []),
+          ],
+          {
+            FAULT_INIT: !stateful && fault ? '1' : '0',
+            FAULT_CONTROL: control.url,
+          },
         )
-        const gateway = launchGateway(t, args, {
-          FAULT_INIT: !stateful && fault ? '1' : '0',
-          FAULT_CONTROL: control.url,
-        })
         await gateway.ready()
+        const url = `http://127.0.0.1:${port}/mcp`
         const healthy = await rpc(url, initialize())
         let healthyCalls = 0
         const healthySession =

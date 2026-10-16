@@ -9,8 +9,17 @@ import {
   launchGateway,
   requestTimeout,
   unusedPort,
-  directServer,
+  nodeServer,
 } from './helpers/gateway-process.js'
+
+// A Node server on Windows cannot close its stdin pipe: after
+// process.stdin.destroy(), closeSync(0) or closing the handle, with or without
+// a shell, the gateway's writes still succeed (measured on windows-latest,
+// Node 24). The gateway's handling of a failed write is tested there in
+// process (httpChildIoContainment, websocketGatewayCleanup, httpChildExit).
+const stdinCannotClose =
+  process.platform === 'win32' &&
+  'a Node server cannot close its stdin pipe on Windows'
 
 // An HTTP response ending is not a JSON-RPC reply. The SDK can keep a call
 // pending after EOF, so require an actual protocol error before its timeout.
@@ -18,31 +27,43 @@ for (const stateful of [true, false]) {
   for (const fault of ['spawn', 'stdin'] as const) {
     test(
       `${stateful ? 'stateful' : 'stateless'} SDK receives a protocol error on child ${fault} failure`,
-      { timeout: gatewayTimeout(15000) },
+      {
+        timeout: gatewayTimeout(15000),
+        skip: fault === 'stdin' && stdinCannotClose,
+      },
       async (t) => {
         const control = await faultControl(t)
-        const { args, url } = directServer(
+        const port = await unusedPort()
+        const gateway = launchGateway(
           t,
-          'tests/helpers/fault-peer.mjs',
-          await unusedPort(),
-          stateful,
+          [
+            '--stdio',
+            nodeServer('tests/helpers/fault-peer.mjs'),
+            '--outputTransport',
+            'streamableHttp',
+            '--port',
+            String(port),
+            ...(stateful ? ['--stateful'] : []),
+          ],
+          {
+            FAULT_CONTROL: control.url,
+            FAULT_INIT: !stateful && fault === 'stdin' ? '1' : '0',
+            ...(fault === 'spawn'
+              ? {
+                  FAIL_SPAWN_AT: '1',
+                  NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
+                }
+              : {}),
+          },
         )
-        const gateway = launchGateway(t, args, {
-          FAULT_CONTROL: control.url,
-          FAULT_INIT: !stateful && fault === 'stdin' ? '1' : '0',
-          ...(fault === 'spawn'
-            ? {
-                FAIL_SPAWN_AT: '1',
-                NODE_OPTIONS: `--require=${JSON.stringify(fileURLToPath(new URL('./helpers/native-spawn-failure.cjs', import.meta.url)))}`,
-              }
-            : {}),
-        })
         await gateway.ready()
         const client = new Client(
           { name: 'io-test', version: '1.0.0' },
           { capabilities: {} },
         )
-        const transport = new StreamableHTTPClientTransport(new URL(url))
+        const transport = new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${port}/mcp`),
+        )
         t.after(() => client.close())
         t.after(() => transport.close())
         const failed = (error: any) => {

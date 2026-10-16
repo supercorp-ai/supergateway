@@ -27,12 +27,13 @@ export class OwnedChildProcesses {
     const pid = child.pid
     let stopped: Promise<void> | undefined
     let refusedSince: number | undefined
+    // Signals the child's process group. Only POSIX has one: on Windows the
+    // tree is ended by taskkill (terminate, below).
     const signal = (name: NodeJS.Signals | 0): boolean => {
       // An asynchronous spawn failure has no PID and owns no process group.
       if (pid === undefined) return false
       try {
-        if (grouped) process.kill(-pid, name)
-        else if (!child.kill(name)) return false
+        process.kill(-pid, name)
         return true
       } catch (error) {
         const { code } = error as NodeJS.ErrnoException
@@ -49,7 +50,10 @@ export class OwnedChildProcesses {
       if (!grouped) {
         // Killing cmd.exe alone leaves its stdio server running. Terminate the
         // tree while the shell is still alive, before sending any direct signal.
-        if (pid !== undefined) {
+        // Once it has exited, its tree cannot be found by its PID, and the PID
+        // may already be another process's: taskkill /T would end that one.
+        const running = child.exitCode == null && child.signalCode == null
+        if (pid !== undefined && running) {
           await new Promise<void>((resolve) => {
             childProcess.execFile(
               'taskkill.exe',

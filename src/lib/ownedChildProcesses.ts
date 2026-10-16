@@ -51,7 +51,7 @@ export class OwnedChildProcesses {
         // tree while the shell is still alive, before sending any direct signal.
         // Once it has exited, its tree cannot be found by its PID, and the PID
         // may already be another process's: taskkill /T would end that one.
-        const running = child.exitCode === null && child.signalCode === null
+        const running = child.exitCode == null && child.signalCode == null
         if (pid !== undefined && running) {
           await new Promise<void>((resolve) => {
             childProcess.execFile(

@@ -87,3 +87,19 @@ jobs:
             cat matrix.txt; echo 'the matrix passed with only the shell killed'; exit 1
           fi
           grep -E '^(✔|✖)' matrix.txt | sort | uniq -c | sort -rn | head -80
+
+  launcher:
+    name: Windows config command found on PATH
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - shell: bash
+        run: node --import tsx --test --test-force-exit --test-name-pattern 'launcher script|run without a shell' tests/configFileE2e.test.ts

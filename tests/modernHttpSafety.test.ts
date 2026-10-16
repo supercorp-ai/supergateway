@@ -133,7 +133,7 @@ async function eventually(
   check: () => boolean,
   description: string | (() => string),
 ) {
-  for (const deadline = Date.now() + 7000; Date.now() < deadline; ) {
+  for (const deadline = Date.now() + 7000; Date.now() < deadline;) {
     if (check()) return
     await delay(15)
   }
@@ -469,7 +469,7 @@ for (const stateful of [true, false]) {
   for (const ending of ['disconnect', 'shutdown'] as const) {
     test(
       `${label}: modern ${ending} reaps a TERM-resistant child and descendant`,
-      { timeout: gatewayTimeout(20000), skip: process.platform === 'win32' },
+      { timeout: gatewayTimeout(20000) },
       async (t) => {
         const { url, trace, gateway } = await setup(t, stateful, 'stubborn')
         const controller = new AbortController()

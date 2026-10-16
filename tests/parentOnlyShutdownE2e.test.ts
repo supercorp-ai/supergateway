@@ -30,12 +30,8 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           'the actual peer is alive before shutdown',
         )
         // Separate safety net for the newly detached child group, after the
-        // assertion. Windows has no groups; there it ends the peer's tree.
-        reapAfter(
-          t,
-          b.pid,
-          process.platform === 'win32' ? 0 : processInfo(b.pid).group,
-        )
+        // assertion (on Windows, which has no groups, of the peer's tree).
+        reapAfter(t, b.pid, processInfo(b.pid).group)
         b.gateway.interrupt('SIGTERM') // Never signal the whole group for the assertion.
         const exit = await b.gateway.exited
         assert.equal(exit.code, 0)

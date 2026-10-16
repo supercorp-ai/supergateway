@@ -193,7 +193,28 @@ export function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * A process's parent, group and whether it is running (a zombie is not).
+ * Windows has no process groups: there `group` is 0, which reapAfter ignores.
+ */
 export function processInfo(pid: number) {
+  if (process.platform === 'win32') {
+    if (!isAlive(pid)) return { parent: 0, group: 0, alive: false }
+    const parent = execFileSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ErrorActionPreference = 'Stop'; (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
+      ],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+    ).trim()
+    // Ended between the two looks.
+    if (!parent) return { parent: 0, group: 0, alive: false }
+    return { parent: Number(parent), group: 0, alive: true }
+  }
   try {
     const row = execFileSync(
       'ps',

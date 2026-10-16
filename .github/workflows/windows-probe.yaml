@@ -46,3 +46,34 @@ jobs:
         with:
           node-version: '24'
       - run: node .github/experiments/stdin-close.mjs
+
+  matrix-can-fail:
+    name: Windows cleanup matrix fails without the tree kill
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - name: Kill only the shell, as before #335
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs'), f = 'dist/lib/ownedChildProcesses.js'
+          const s = fs.readFileSync(f, 'utf8')
+          const from = 'const running = child.exitCode == null && child.signalCode == null;'
+          if (!s.includes(from)) throw new Error('mutation site not found')
+          fs.writeFileSync(f, s.replace(from, 'child.kill(); const running = false;'))
+          "
+      - name: The matrix must fail
+        shell: bash
+        run: |
+          if node --import tsx --test --test-concurrency=1 --test-force-exit --test-reporter=spec tests/cleanupMatrixE2e.test.ts > matrix.txt 2>&1; then
+            cat matrix.txt; echo 'the matrix passed with only the shell killed'; exit 1
+          fi
+          grep -E '^(✔|✖)' matrix.txt | sort | uniq -c | sort -rn | head -80

@@ -78,9 +78,14 @@ test(
       'notice the dropped connection',
     )
 
-    // The session's child is stopped before its delayed reply can reach anyone.
+    // The session's child is stopped before its delayed reply can reach anyone:
+    // by SIGTERM, or on Windows by taskkill /F, which leaves exit code 1.
+    const stoppedLine =
+      process.platform === 'win32'
+        ? /Child exited \(session .*code=1, signal=null/
+        : /Child exited \(session .*signal=SIGTERM/
     await gateway.waitFor(
-      () => /Child exited \(session .*signal=SIGTERM/.test(gateway.output()),
+      () => stoppedLine.test(gateway.output()),
       'stop the departed session’s child',
     )
 

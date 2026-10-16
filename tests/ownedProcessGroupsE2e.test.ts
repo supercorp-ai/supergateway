@@ -19,7 +19,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   ] as const) {
     test(
       `${mode} cleans a TERM-resistant descendant after ${trigger}`,
-      { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const b = await auditClient(
           t,
@@ -67,7 +67,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
 for (const termination of ['DELETE', 'idle-expiry']) {
   test(
     `stateful ${termination} stops only its owned group and preserves a second session`,
-    { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(
@@ -99,11 +99,13 @@ for (const termination of ['DELETE', 'idle-expiry']) {
       }
       const affected = await open(1),
         healthy = await open(2)
-      assert.notEqual(
-        affected.group,
-        healthy.group,
-        'sessions own separate groups',
-      )
+      // Windows has no groups; there each session's tree is ended by its PID.
+      if (process.platform !== 'win32')
+        assert.notEqual(
+          affected.group,
+          healthy.group,
+          'sessions own separate groups',
+        )
       // A live GET keeps only the healthy session active throughout escalation.
       const abort = new AbortController()
       t.after(() => abort.abort())

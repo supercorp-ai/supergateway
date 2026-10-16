@@ -38,16 +38,34 @@ const { StreamableHTTPServerTransport } = await import(
 const canCloseStreams =
   typeof StreamableHTTPServerTransport.prototype.closeSSEStream === 'function'
 
+// Open descriptors; on Windows, open handles, which also count threads and
+// events, so they move by more than descriptors do on their own.
 const descriptors = (pid: number) =>
   process.platform === 'linux'
     ? readdirSync(`/proc/${pid}/fd`).length
-    : execFileSync('lsof', ['-p', String(pid), '-Ff'], { encoding: 'utf8' })
-        .split('\n')
-        .filter((line) => /^f\d/.test(line)).length
+    : process.platform === 'win32'
+      ? Number(
+          execFileSync(
+            'powershell.exe',
+            [
+              '-NoLogo',
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `(Get-Process -Id ${pid}).HandleCount`,
+            ],
+            { encoding: 'utf8', timeout: 30000, windowsHide: true },
+          ).trim(),
+        )
+      : execFileSync('lsof', ['-p', String(pid), '-Ff'], { encoding: 'utf8' })
+          .split('\n')
+          .filter((line) => /^f\d/.test(line)).length
+// Twenty leaked streams are twenty sockets or more, beyond either margin.
+const margin = process.platform === 'win32' ? 12 : 4
 
 test(
   'stateful HTTP closes a cancelled call’s stream, and later notifications still arrive',
-  { timeout: 60000, skip: process.platform === 'win32' },
+  { timeout: 60000 },
   async (t) => {
     const port = await unusedPort()
     const gateway = launchGateway(t, [
@@ -86,7 +104,7 @@ test(
     await delay(1000)
     if (canCloseStreams)
       assert.ok(
-        descriptors(gateway.child.pid!) <= before + 4,
+        descriptors(gateway.child.pid!) <= before + margin,
         'twenty cancelled calls left their streams open',
       )
     // Notifications ride the call in flight; a cancelled call is no longer one.
@@ -101,9 +119,8 @@ test(
 
 test('a cancel closes only a call still in flight, and works without closeSSEStream', async (t) => {
   const b = observeGateway(t)
-  const { stdioToStatefulStreamableHttp } = await import(
-    '../src/gateways/stdioToStatefulStreamableHttp.js'
-  )
+  const { stdioToStatefulStreamableHttp } =
+    await import('../src/gateways/stdioToStatefulStreamableHttp.js')
   await stdioToStatefulStreamableHttp({
     stdioCmd: 'controlled-peer',
     port: 0,

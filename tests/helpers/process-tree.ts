@@ -335,5 +335,11 @@ export function processUsage(
   }))
 }
 
-/** How far descriptors may grow over a soak before it is called a leak. */
-export const descriptorMargin = process.platform === 'win32' ? 8 : 8
+/**
+ * How far descriptors may grow over a soak before it is called a leak. On
+ * Windows every gateway, in every mode, settled at 234 handles from a fresh
+ * 225 and stayed there for 20 minutes of load (probe run 38884134053): a step
+ * on first use, from the threads Node starts when it needs them, not growth.
+ * A leak of one handle per connection passes 24 within minutes of a soak.
+ */
+export const descriptorMargin = process.platform === 'win32' ? 24 : 8

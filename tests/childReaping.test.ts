@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execSync } from 'node:child_process'
+import { commandLinesMatching } from './helpers/process-tree.js'
 import type { TestContext } from 'node:test'
 import {
   gatewayTimeout,
@@ -33,15 +33,12 @@ import {
 const peerWithMarker = (marker: string) =>
   `node tests/clients/battery-peer.mjs ${marker}`
 
+// The servers carrying `marker`, not the gateway: on every platform, and never
+// an empty list because the process table could not be read.
 function liveChildren(marker: string) {
-  const out = execSync(
-    `ps -eo pid,command | grep -F ${JSON.stringify(marker)} | grep -v grep || true`,
-    { encoding: 'utf8' },
+  return commandLinesMatching(marker).filter(
+    (line) => !/dist[\\/]index\.js/.test(line),
   )
-  return out
-    .split('\n')
-    .filter((line) => line.trim() && !line.includes('dist/index.js'))
-    .map((line) => line.trim())
 }
 
 const headers = (session?: string) => ({
@@ -131,7 +128,7 @@ test(
 
 test(
   'stateful session close reaps the child’s descendant process (#141)',
-  { timeout: 30000, skip: process.platform === 'win32' },
+  { timeout: 30000 },
   async (t) => {
     const { marker, url, sessions, gateway } = await openSessions(
       t,

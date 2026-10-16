@@ -146,6 +146,36 @@ export function descendantsOf(
 }
 
 /**
+ * The live processes whose command line contains `marker`, each as
+ * "<pid> <command line>". It throws when the process table cannot be read:
+ * an unreadable table must never pass for "nothing left running", which is
+ * how a `ps ... || true` hid every Windows leak behind an empty list.
+ */
+export function commandLinesMatching(marker: string): string[] {
+  const table =
+    process.platform === 'win32'
+      ? execFileSync(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }",
+          ],
+          { encoding: 'utf8', timeout: 30000, windowsHide: true },
+        )
+      : execFileSync('ps', ['-eo', 'pid=,command='], {
+          encoding: 'utf8',
+          timeout: 10000,
+        })
+  return table
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.includes(marker))
+}
+
+/**
  * Whether `pid` is a live process. On POSIX a zombie (exited, not reaped yet)
  * is not; Windows has no zombies to tell apart, and libuv answers signal 0 with
  * ESRCH once a process has exited even while handles to it remain open.

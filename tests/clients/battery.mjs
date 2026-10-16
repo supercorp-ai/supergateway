@@ -22,7 +22,12 @@ const PLAIN = 'plain-result'
 const BIG_LENGTH = Number(process.env.BIG_LENGTH ?? 1024 * 1024)
 
 const results = []
-const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+const record = (name, ok, detail = '') => {
+  results.push({ name, ok, detail })
+  // Each result as it comes, for finding the scenario a hang is in.
+  if (process.env.BATTERY_TRACE === '1')
+    process.stderr.write(`${ok ? 'ok' : 'FAIL'} ${name} ${detail}\n`)
+}
 
 const text = (res) => res?.content?.find((c) => c.type === 'text')?.text
 

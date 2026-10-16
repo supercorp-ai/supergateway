@@ -123,6 +123,11 @@ function launchGateway(
   }
 }
 const modernVersion = '2026-07-28'
+// Processes one retained server is: on Windows cmd.exe and the server under it
+// (`--stdio` runs through the shell, and cmd.exe has no exec), elsewhere the
+// server alone. Children are counted as every descendant, so that a wrapper's
+// leaked server is still one.
+const processesPerServer = process.platform === 'win32' ? 2 : 1
 test(
   'installed release candidate: calls, reconnects, cancellations and idle resource recovery',
   { timeout: (seconds + 500) * 1000 },
@@ -510,7 +515,7 @@ test(
           assert.ok(
             row.children <=
               (row.mode === 'continuation'
-                ? 64
+                ? 64 * processesPerServer
                 : baseline.find((item) => item.mode === row.mode)!.children),
             `${row.mode}: children failed to settle`,
           )

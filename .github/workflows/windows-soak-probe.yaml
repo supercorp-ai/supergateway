@@ -53,3 +53,5 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node tests/clients/run-battery.mjs node
+        env:
+          BATTERY_TRACE: '1'

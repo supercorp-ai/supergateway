@@ -148,6 +148,10 @@ for (const mode of MODES) {
     `${DRIVER} / ${mode}: ${rows.length - bad.length}/${rows.length} scenarios passed`,
   )
   for (const r of bad) console.log(`  FAIL ${r.name}: ${r.detail}`)
+  if (bad.length && process.env.BATTERY_TRACE === '1')
+    console.log(
+      `gateway log, last 4000 characters:\n${gateway.out().slice(-4000)}`,
+    )
   await gateway.stop()
 }
 

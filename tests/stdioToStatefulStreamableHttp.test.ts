@@ -11,12 +11,12 @@ const MCP_URL = `http://localhost:${PORT}/mcp`
 let gatewayProc: ChildProcess
 
 test.before(() => {
+  // The gateway itself, not `npm run start`: npm is npm.cmd on Windows, which
+  // spawn cannot start without a shell.
   gatewayProc = spawn(
-    'npm',
+    process.execPath,
     [
-      'run',
-      'start',
-      '--',
+      'dist/index.js',
       '--stdio',
       'node tests/helpers/mock-mcp-server.js stdio',
       '--outputTransport',

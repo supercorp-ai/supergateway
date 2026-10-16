@@ -145,7 +145,76 @@ export function descendantsOf(
   return [...found]
 }
 
+/**
+ * The live processes whose command line contains `marker`, each as
+ * "<pid> <command line>". It throws when the process table cannot be read:
+ * an unreadable table must never pass for "nothing left running", which is
+ * how a `ps ... || true` hid every Windows leak behind an empty list.
+ */
+export function commandLinesMatching(marker: string): string[] {
+  const table =
+    process.platform === 'win32'
+      ? execFileSync(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }",
+          ],
+          { encoding: 'utf8', timeout: 30000, windowsHide: true },
+        )
+      : execFileSync('ps', ['-eo', 'pid=,command='], {
+          encoding: 'utf8',
+          timeout: 10000,
+        })
+  return table
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.includes(marker))
+}
+
+/**
+ * Whether `pid` is a live process. On POSIX a zombie (exited, not reaped yet)
+ * is not; Windows has no zombies to tell apart, and libuv answers signal 0 with
+ * ESRCH once a process has exited even while handles to it remain open.
+ */
+export function isAlive(pid: number): boolean {
+  if (process.platform !== 'win32') return processInfo(pid).alive
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    // Another user's process: it is there.
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true
+    throw error
+  }
+}
+
+/**
+ * A process's parent, group and whether it is running (a zombie is not).
+ * Windows has no process groups: there `group` is 0, which reapAfter ignores.
+ */
 export function processInfo(pid: number) {
+  if (process.platform === 'win32') {
+    if (!isAlive(pid)) return { parent: 0, group: 0, alive: false }
+    const parent = execFileSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ErrorActionPreference = 'Stop'; (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
+      ],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+    ).trim()
+    // Ended between the two looks.
+    if (!parent) return { parent: 0, group: 0, alive: false }
+    return { parent: Number(parent), group: 0, alive: true }
+  }
   try {
     const row = execFileSync(
       'ps',
@@ -167,12 +236,8 @@ export function processInfo(pid: number) {
 }
 export async function stopped(pid: number) {
   const deadline = Date.now() + 7000
-  while (processInfo(pid).alive && Date.now() < deadline) await delay(25)
-  assert.equal(
-    processInfo(pid).alive,
-    false,
-    `owned peer ${pid} survived cleanup`,
-  )
+  while (isAlive(pid) && Date.now() < deadline) await delay(25)
+  assert.equal(isAlive(pid), false, `owned peer ${pid} survived cleanup`)
 }
 export function reapAfter(
   t: import('node:test').TestContext,
@@ -181,6 +246,18 @@ export function reapAfter(
 ) {
   // Runs AFTER the assertions; also cleans detached groups when a mutant fails.
   t.after(() => {
+    // Windows has no process groups: end the tree under the process instead.
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        })
+      } catch {
+        // Gone already.
+      }
+      return
+    }
     for (const target of [-group, pid]) {
       try {
         process.kill(target, 'SIGKILL')

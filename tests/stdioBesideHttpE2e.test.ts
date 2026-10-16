@@ -196,7 +196,8 @@ test(
     await holdSession(t, port)
     await stdioRpc(gateway, initialize())
     // The gateway alone, not its process group: what it stops, it stops itself.
-    process.kill(gateway.child.pid!, 'SIGTERM')
+    // On Windows, as its console would deliver it (see launchGateway).
+    gateway.interrupt('SIGTERM')
     assert.deepEqual(await exit(gateway), { code: 0, signal: null })
     assert.deepEqual(await leftBehind(gateway), [])
     const stats = await up.stats()

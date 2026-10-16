@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
+
+// A signal to the owner as its user would send it: on POSIX by kill(2), on
+// Windows as its console does (see signal-owner.mjs).
+const deliver = (owner: ChildProcess, signal: NodeJS.Signals) =>
+  process.platform === 'win32' ? owner.send(signal) : owner.kill(signal)
 
 for (const cleanup of [true, false]) {
   for (const shutdown of ['SIGINT', 'SIGTERM', 'SIGHUP', 'EOF'] as const) {
@@ -11,7 +16,7 @@ for (const cleanup of [true, false]) {
         const owner = spawn(
           process.execPath,
           ['tests/helpers/signal-owner.mjs', cleanup ? 'cleanup' : 'none'],
-          { stdio: 'pipe' },
+          { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] },
         )
         t.after(() => {
           if (owner.exitCode === null) owner.kill('SIGKILL')
@@ -29,7 +34,7 @@ for (const cleanup of [true, false]) {
         )
         await ready
         if (shutdown === 'EOF') owner.stdin.end()
-        else owner.kill(shutdown)
+        else deliver(owner, shutdown)
         assert.equal(await closed, 0)
         assert.equal(
           output.split('\n').filter((line) => line === 'owner cleanup').length,
@@ -54,7 +59,7 @@ for (const result of ['resolve', 'reject']) {
       const owner = spawn(
         process.execPath,
         ['tests/helpers/signal-owner.mjs', result],
-        { stdio: 'pipe' },
+        { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] },
       )
       t.after(() => {
         if (owner.exitCode === null) owner.kill('SIGKILL')
@@ -80,10 +85,10 @@ for (const result of ['resolve', 'reject']) {
       const closed = new Promise((resolve) => owner.once('close', resolve))
       await wait('owner ready')
       const cleaning = wait('owner cleanup')
-      owner.kill('SIGTERM')
+      deliver(owner, 'SIGTERM')
       await cleaning
-      owner.kill('SIGINT')
-      owner.kill('SIGHUP')
+      deliver(owner, 'SIGINT')
+      deliver(owner, 'SIGHUP')
       assert.equal(owner.exitCode, null, 'cleanup has not settled yet')
       assert.equal(await closed, result === 'resolve' ? 0 : 1)
       assert.match(output, /owner cleanup settled/)

@@ -82,8 +82,8 @@ const lifecycle = [
   'sessionRaceOrdersE2e',
   'httpDisconnectRegressionE2e',
 ]
-const groups =
-  process.platform === 'win32' ? [modern] : [modern, portable, lifecycle]
+// Every platform runs every group: the suite runs on Windows too since #335.
+const groups = [modern, portable, lifecycle]
 events({
   phase: 'start',
   seconds,

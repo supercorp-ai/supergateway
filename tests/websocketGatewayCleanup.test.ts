@@ -78,6 +78,8 @@ test('WebSocket gateway stops every connection’s child on shutdown, and a fail
   const spawned: Child[] = []
   t.mock.module('child_process', {
     namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
       spawn() {
         if (spawnFails) throw new Error('spawn failed')
         const child = new Child(`c${spawned.length}`)

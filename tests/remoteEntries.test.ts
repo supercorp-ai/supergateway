@@ -312,7 +312,7 @@ test(
     )
     const open = await up.stats()
     assert.equal(open.opened - open.closed, 2)
-    gateway.child.kill('SIGTERM')
+    gateway.interrupt('SIGTERM')
     assert.equal((await gateway.exited).code, 0)
     const after = await up.stats()
     assert.equal(after.closed, after.opened)

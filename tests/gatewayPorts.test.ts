@@ -18,6 +18,14 @@ test('gateway port allocation skips IPv6 listeners and previously issued ports',
     await new Promise<void>((resolve) => s.close(() => resolve()))
     return port
   }
+  // Whether the gateway's own bind (every interface, dual-stack) can share the
+  // port with that IPv6-only listener. Linux and macOS refuse; Windows allows
+  // it, and there the port is one the gateway could use after all.
+  const shared = await new Promise<boolean>((resolve) => {
+    const s = createServer()
+    s.once('error', () => resolve(false))
+    s.listen(occupiedPort, () => s.close(() => resolve(true)))
+  })
   const first = await free()
   let second = await free()
   while (second === first) second = await free()
@@ -50,6 +58,12 @@ test('gateway port allocation skips IPv6 listeners and previously issued ports',
     },
   )
   const { unusedPort } = await import('./helpers/gateway-process.js')
+  if (shared) {
+    assert.equal(await unusedPort(), occupiedPort)
+    assert.equal(await unusedPort(), first)
+    assert.deepEqual(candidates, [first, second])
+    return
+  }
   assert.equal(await unusedPort(), first)
   assert.equal(await unusedPort(), second)
   assert.deepEqual(candidates, [])

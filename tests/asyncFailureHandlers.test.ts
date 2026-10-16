@@ -105,6 +105,8 @@ test('a failing SSE delivery is logged and drops only that session', async (t) =
   const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
       spawn() {
         const child = new Child()
         children.push(child)
@@ -219,6 +221,8 @@ for (const [label, moduleId, gatewayName, args] of [
     const trackChild = observeChildSignals(t)
     t.mock.module('child_process', {
       namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
         spawn() {
           const child = new Child()
           children.push(child)

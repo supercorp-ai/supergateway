@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
   gatewayTimeout,
@@ -41,9 +40,8 @@ test(
       [
         '--expose-gc',
         '--import',
-        fileURLToPath(
-          new URL('./helpers/probe-retention.mjs', import.meta.url),
-        ),
+        // A URL: --import takes no Windows path (D:\\...).
+        new URL('./helpers/probe-retention.mjs', import.meta.url).href,
       ],
     )
     await gateway.ready()

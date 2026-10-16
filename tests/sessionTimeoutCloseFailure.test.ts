@@ -91,6 +91,8 @@ test('a failing transport close on session timeout is logged, not thrown', async
   const trackChild = observeChildSignals(t)
   t.mock.module('child_process', {
     namedExports: {
+      // On Windows the gateway ends a child's tree with taskkill.
+      execFile: trackChild.execFile,
       spawn() {
         const child = new Child()
         children.push(child)

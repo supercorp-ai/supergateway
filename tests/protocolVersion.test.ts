@@ -39,7 +39,7 @@ test.before(async () => {
 test.after(() => serverProc?.kill('SIGINT'))
 
 test('protocol version is passed', async () => {
-  const gatewayCmd = ['npm', 'run', 'start', '--', '--sse', MCP_URL]
+  const gatewayCmd = [process.execPath, 'dist/index.js', '--sse', MCP_URL]
 
   const transport = new StdioClientTransport({
     command: gatewayCmd[0],

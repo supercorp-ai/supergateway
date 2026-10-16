@@ -209,7 +209,7 @@ npx -y supergateway --config servers.json
 - **`${VAR}`**, `${VAR:-default}` and `${env:VAR}` are replaced from the environment in every value except a `stdio` command line, which the shell expands itself. A variable that isn't set is an error. `$$` is a literal `$`.
 - **Flags beside `--config`** may be the gateway's own (`--port`, `--host`, `--logLevel`, `--logFormat`, `--exitWithProcess`, `--healthEndpoint`, `--apiKey`, `--apiKeyFile`). They override the file, and the startup log says so. A server flag such as `--stateful` is refused, because it would be unclear which server it means.
 - With more than one server, each log line about a server starts with its name (`[git]`), and JSON logs give it a `server` field.
-- On Windows, `"command": "npx"` needs `npx.cmd`, as it does in Claude Desktop, since `command` runs without a shell. `stdio` runs through the shell.
+- On Windows, `"command": "npx"` works as it does in other clients: a command that is a script, such as `npx.cmd`, runs through `cmd.exe`, and each argument still reaches the server as written. `stdio` runs through the shell.
 - Comments and trailing commas are allowed (JSONC). Run `--checkConfig` after editing.
 
 A `url` server is served like a local one when it has an output other than stdio (see [Remote server → SSE, WS or Streamable HTTP](#remote-server--sse-ws-or-streamable-http)): `"outputTransport": "streamableHttp"`, for example.
@@ -481,6 +481,7 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributors
 
+- [@joshmouch](https://github.com/joshmouch)
 - [@akularefiner](https://github.com/akularefiner)
 - [@Cipppp](https://github.com/Cipppp)
 - [@alibek-sumup](https://github.com/alibek-sumup)

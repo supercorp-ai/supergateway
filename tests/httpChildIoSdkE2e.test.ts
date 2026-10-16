@@ -9,7 +9,17 @@ import {
   launchGateway,
   requestTimeout,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
+
+// A Node server on Windows cannot close its stdin pipe: after
+// process.stdin.destroy(), closeSync(0) or closing the handle, with or without
+// a shell, the gateway's writes still succeed (measured on windows-latest,
+// Node 24). The gateway's handling of a failed write is tested there in
+// process (httpChildIoContainment, websocketGatewayCleanup, httpChildExit).
+const stdinCannotClose =
+  process.platform === 'win32' &&
+  'a Node server cannot close its stdin pipe on Windows'
 
 // An HTTP response ending is not a JSON-RPC reply. The SDK can keep a call
 // pending after EOF, so require an actual protocol error before its timeout.
@@ -17,7 +27,10 @@ for (const stateful of [true, false]) {
   for (const fault of ['spawn', 'stdin'] as const) {
     test(
       `${stateful ? 'stateful' : 'stateless'} SDK receives a protocol error on child ${fault} failure`,
-      { timeout: gatewayTimeout(15000) },
+      {
+        timeout: gatewayTimeout(15000),
+        skip: fault === 'stdin' && stdinCannotClose,
+      },
       async (t) => {
         const control = await faultControl(t)
         const port = await unusedPort()
@@ -25,7 +38,7 @@ for (const stateful of [true, false]) {
           t,
           [
             '--stdio',
-            'exec node tests/helpers/fault-peer.mjs',
+            nodeServer('tests/helpers/fault-peer.mjs'),
             '--outputTransport',
             'streamableHttp',
             '--port',

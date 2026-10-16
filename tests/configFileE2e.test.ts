@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import type { Readable } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -414,6 +414,52 @@ test(
   },
 )
 
+// What `"command": "npx"` needs: a command found on PATH that is a script, not
+// an executable. On Windows that is npx.cmd, which only a shell can run, so a
+// client's config of `npx` worked there in every client but this gateway.
+// Arguments still reach the server exactly as written, cmd.exe's own
+// characters included.
+test(
+  '"command" finds a launcher script on PATH, as npx is, and passes its arguments as written',
+  options,
+  async (t) => {
+    const bin = mkdtempSync(join(tmpdir(), 'sg-bin-'))
+    t.after(() => rmSync(bin, { recursive: true, force: true }))
+    if (process.platform === 'win32')
+      writeFileSync(join(bin, 'envpeer.cmd'), `@"${node}" "${envPeer}" %*\r\n`)
+    else
+      writeFileSync(
+        join(bin, 'envpeer'),
+        `#!/bin/sh\nexec "${node}" "${envPeer}" "$@"\n`,
+        { mode: 0o755 },
+      )
+    // Windows spells it Path; the gateway's environment is a plain object.
+    const pathKey =
+      Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ??
+      'PATH'
+    const argv = ['a b', '"quoted"', '100%', 'x&y|z', '^caret', '$HOME', '*']
+    const { port } = await serve(
+      t,
+      {
+        mcpServers: {
+          peer: {
+            command: 'envpeer',
+            args: argv,
+            outputTransport: 'streamableHttp',
+          },
+        },
+      },
+      [],
+      { [pathKey]: `${bin}${delimiter}${process.env[pathKey]}` },
+    )
+    const { messages } = await rpc(
+      `http://127.0.0.1:${port}/peer/mcp`,
+      initialize(),
+    )
+    assert.deepEqual(instructions(messages[0]).argv, argv)
+  },
+)
+
 test('"stdio" runs in a shell, with "env" and "cwd"', options, async (t) => {
   const cwd = mkdtempSync(join(tmpdir(), 'sg-cwd-'))
   t.after(() => rmSync(cwd, { recursive: true, force: true }))
@@ -422,7 +468,8 @@ test('"stdio" runs in a shell, with "env" and "cwd"', options, async (t) => {
     {
       mcpServers: {
         peer: {
-          stdio: `"${node}" "${envPeer}" "$ENV_PEER_VALUE"`,
+          // The shell's own syntax: cmd.exe on Windows.
+          stdio: `"${node}" "${envPeer}" "${process.platform === 'win32' ? '%ENV_PEER_VALUE%' : '$ENV_PEER_VALUE'}"`,
           env: { ENV_PEER_VALUE: 'set' },
           cwd,
           outputTransport: 'streamableHttp',

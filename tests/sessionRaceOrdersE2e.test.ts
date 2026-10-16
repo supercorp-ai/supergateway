@@ -7,6 +7,7 @@ import {
   requestTimeout,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 import { pendingRpc, within } from './helpers/lifecycle-control.js'
 import { faultControl } from './helpers/fault-control.js'
@@ -33,7 +34,7 @@ for (const order of [
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           '--outputTransport',
           'streamableHttp',
           '--stateful',
@@ -84,7 +85,14 @@ for (const order of [
         // A faulting peer ignores SIGTERM while held, allowing us to witness a
         // real late write/exit after DELETE, rather than releasing a dead peer.
         barrier.response.end(order === 'delete-then-exit' ? 'exit' : 'release')
-        if (order === 'delete-then-reply')
+        // Windows ends the peer with taskkill /F, which it cannot ignore: its
+        // late reply or exit races the kill, and either way the peer is gone.
+        if (process.platform === 'win32')
+          await gateway.waitFor(
+            () => gateway.errors().includes('Child exited: code='),
+            'observe peer exit after DELETE',
+          )
+        else if (order === 'delete-then-reply')
           await control.wait('held-reply', aPid)
         else
           await gateway.waitFor(

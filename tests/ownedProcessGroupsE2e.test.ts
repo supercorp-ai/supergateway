@@ -8,6 +8,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
@@ -18,12 +19,12 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   ] as const) {
     test(
       `${mode} cleans a TERM-resistant descendant after ${trigger}`,
-      { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
+      { timeout: gatewayTimeout(15000) },
       async (t) => {
         const b = await auditClient(
           t,
           mode,
-          'exec node tests/helpers/fault-wrapper.mjs',
+          nodeServer('tests/helpers/fault-wrapper.mjs'),
           { FAULT_IGNORE_TERM: '1' },
         )
         const peer = processInfo(b.pid)
@@ -47,13 +48,13 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         } else {
           if (trigger === 'stdin-close') b.gateway.child.stdin.end()
           else {
-            b.gateway.child.kill('SIGTERM')
+            b.gateway.interrupt('SIGTERM')
             await b.gateway.waitFor(
               () => b.gateway.output().includes('Caught SIGTERM'),
               'start graceful shutdown',
             )
-            b.gateway.child.kill('SIGINT')
-            b.gateway.child.kill('SIGHUP')
+            b.gateway.interrupt('SIGINT')
+            b.gateway.interrupt('SIGHUP')
           }
           assert.equal((await b.gateway.exited).code, 0)
           await stopped(b.pid)
@@ -66,14 +67,14 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
 for (const termination of ['DELETE', 'idle-expiry']) {
   test(
     `stateful ${termination} stops only its owned group and preserves a second session`,
-    { timeout: gatewayTimeout(15000), skip: process.platform === 'win32' },
+    { timeout: gatewayTimeout(15000) },
     async (t) => {
       const port = await unusedPort()
       const gateway = launchGateway(
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-wrapper.mjs',
+          nodeServer('tests/helpers/fault-wrapper.mjs'),
           '--stateful',
           '--outputTransport',
           'streamableHttp',
@@ -98,11 +99,13 @@ for (const termination of ['DELETE', 'idle-expiry']) {
       }
       const affected = await open(1),
         healthy = await open(2)
-      assert.notEqual(
-        affected.group,
-        healthy.group,
-        'sessions own separate groups',
-      )
+      // Windows has no groups; there each session's tree is ended by its PID.
+      if (process.platform !== 'win32')
+        assert.notEqual(
+          affected.group,
+          healthy.group,
+          'sessions own separate groups',
+        )
       // A live GET keeps only the healthy session active throughout escalation.
       const abort = new AbortController()
       t.after(() => abort.abort())

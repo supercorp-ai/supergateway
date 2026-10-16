@@ -108,7 +108,7 @@ test(
       'the peer is alive before SIGTERM',
     )
     const closed = once(socket, 'close')
-    gateway.child.kill('SIGTERM') // Only the gateway: a process-group signal would mask missing cleanup.
+    gateway.interrupt('SIGTERM') // Only the gateway: a process-group signal would mask missing cleanup.
     assert.deepEqual(await gateway.exited, { code: 0, signal: null })
     await closed
     assert.equal(

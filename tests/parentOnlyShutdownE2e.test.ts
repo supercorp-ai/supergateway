@@ -1,22 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
-import { gatewayTimeout } from './helpers/gateway-process.js'
-import { alreadyGone } from './helpers/process-tree.js'
+import { gatewayTimeout, nodeServer } from './helpers/gateway-process.js'
+import { isAlive, processInfo, reapAfter } from './helpers/process-tree.js'
 
-function alive(pid: number) {
-  try {
-    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf8',
-    }).trim()
-    return state.length > 0 && !state.startsWith('Z')
-  } catch (error) {
-    if ((error as { status?: number }).status === 1) return false
-    throw error // Missing process inspection must never count as a clean reap.
-  }
-}
+// Live, and not a zombie: the shared check, which works on Windows too.
+const alive = isAlive
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   for (const wrapped of [false, true]) {
@@ -28,10 +18,10 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           t,
           mode,
           wrapped
-            ? 'exec node tests/helpers/fault-wrapper.mjs'
+            ? nodeServer('tests/helpers/fault-wrapper.mjs')
             : mode === 'stateless'
-              ? 'exec node tests/helpers/fault-peer.mjs'
-              : 'exec node tests/helpers/lifecycle-identity-peer.mjs',
+              ? nodeServer('tests/helpers/fault-peer.mjs')
+              : nodeServer('tests/helpers/lifecycle-identity-peer.mjs'),
         )
         assert.ok(Number.isInteger(b.pid) && b.pid > 0)
         assert.equal(
@@ -39,20 +29,10 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           true,
           'the actual peer is alive before shutdown',
         )
-        const group = Number(
-          execFileSync('ps', ['-o', 'pgid=', '-p', String(b.pid)], {
-            encoding: 'utf8',
-          }).trim(),
-        )
-        t.after(() => {
-          // Separate safety net for the newly detached child group, after the assertion.
-          try {
-            process.kill(-group, 'SIGKILL')
-          } catch (error) {
-            if (!alreadyGone(error)) throw error
-          }
-        })
-        b.gateway.child.kill('SIGTERM') // Never signal the whole group for the assertion.
+        // Separate safety net for the newly detached child group, after the
+        // assertion (on Windows, which has no groups, of the peer's tree).
+        reapAfter(t, b.pid, processInfo(b.pid).group)
+        b.gateway.interrupt('SIGTERM') // Never signal the whole group for the assertion.
         const exit = await b.gateway.exited
         assert.equal(exit.code, 0)
         const deadline = Date.now() + 1500

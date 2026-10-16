@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
-import { gatewayTimeout } from './helpers/gateway-process.js'
+import { gatewayTimeout, nodeServer } from './helpers/gateway-process.js'
 import { alreadyGone } from './helpers/process-tree.js'
 
 function alive(pid: number) {
@@ -28,10 +28,10 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
           t,
           mode,
           wrapped
-            ? 'exec node tests/helpers/fault-wrapper.mjs'
+            ? nodeServer('tests/helpers/fault-wrapper.mjs')
             : mode === 'stateless'
-              ? 'exec node tests/helpers/fault-peer.mjs'
-              : 'exec node tests/helpers/lifecycle-identity-peer.mjs',
+              ? nodeServer('tests/helpers/fault-peer.mjs')
+              : nodeServer('tests/helpers/lifecycle-identity-peer.mjs'),
         )
         assert.ok(Number.isInteger(b.pid) && b.pid > 0)
         assert.equal(

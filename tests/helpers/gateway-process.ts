@@ -330,6 +330,16 @@ export async function listening(port: number, host = 'localhost') {
 }
 
 export const peerCommand = 'node tests/helpers/mock-mcp-server.js stdio'
+
+/**
+ * The `--stdio` command line that runs `node <args>`. On POSIX it is prefixed
+ * with `exec`, so the server replaces the shell and is the gateway's own child,
+ * as the tests that signal it or read its pid expect. cmd.exe has no `exec`:
+ * on Windows the server runs beneath the shell, as it does for every Windows
+ * user, and a test that cares has to know that.
+ */
+export const nodeServer = (...args: string[]) =>
+  `${process.platform === 'win32' ? '' : 'exec '}node ${args.join(' ')}`
 export async function stdioRpc(
   gateway: ReturnType<typeof launchGateway>,
   message: { id: string | number; [key: string]: unknown },

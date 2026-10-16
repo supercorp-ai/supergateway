@@ -8,6 +8,7 @@ import {
   initialize,
   launchGateway,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 // Raw node:http lets the test stop reading the socket itself. Fetch/SDK clients
@@ -92,7 +93,7 @@ for (const paused of [false, true]) {
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           '--outputTransport',
           'sse',
           '--port',

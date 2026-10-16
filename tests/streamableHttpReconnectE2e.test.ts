@@ -7,6 +7,7 @@ import {
   peerCommand,
   stdioRpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 import { faultControl } from './helpers/fault-control.js'
 
@@ -70,7 +71,7 @@ test(
     const port = await unusedPort()
     const args = [
       '--stdio',
-      'exec node tests/helpers/fault-wrapper.mjs',
+      nodeServer('tests/helpers/fault-wrapper.mjs'),
       '--outputTransport',
       'streamableHttp',
       '--stateful',

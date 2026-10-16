@@ -8,6 +8,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
@@ -23,7 +24,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         const b = await auditClient(
           t,
           mode,
-          'exec node tests/helpers/fault-wrapper.mjs',
+          nodeServer('tests/helpers/fault-wrapper.mjs'),
           { FAULT_IGNORE_TERM: '1' },
         )
         const peer = processInfo(b.pid)
@@ -73,7 +74,7 @@ for (const termination of ['DELETE', 'idle-expiry']) {
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-wrapper.mjs',
+          nodeServer('tests/helpers/fault-wrapper.mjs'),
           '--stateful',
           '--outputTransport',
           'streamableHttp',

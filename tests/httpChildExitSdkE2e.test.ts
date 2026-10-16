@@ -10,6 +10,7 @@ import {
   requestTimeout,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 function sdk(t: TestContext, url: string) {
@@ -86,7 +87,7 @@ for (const stateful of [false, true]) {
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           '--outputTransport',
           'streamableHttp',
           '--port',
@@ -154,7 +155,7 @@ test(
     const port = await unusedPort()
     const gateway = launchGateway(t, [
       '--stdio',
-      'exec node tests/helpers/exit-init-peer.mjs',
+      nodeServer('tests/helpers/exit-init-peer.mjs'),
       '--outputTransport',
       'streamableHttp',
       '--port',
@@ -176,7 +177,7 @@ for (const stateful of [false, true]) {
       const port = await unusedPort()
       const gateway = launchGateway(t, [
         '--stdio',
-        'exec node tests/helpers/exit-init-peer.mjs reply-exit',
+        nodeServer('tests/helpers/exit-init-peer.mjs', 'reply-exit'),
         '--outputTransport',
         'streamableHttp',
         '--port',

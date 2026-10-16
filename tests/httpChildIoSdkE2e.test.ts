@@ -9,6 +9,7 @@ import {
   launchGateway,
   requestTimeout,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 // An HTTP response ending is not a JSON-RPC reply. The SDK can keep a call
@@ -25,7 +26,7 @@ for (const stateful of [true, false]) {
           t,
           [
             '--stdio',
-            'exec node tests/helpers/fault-peer.mjs',
+            nodeServer('tests/helpers/fault-peer.mjs'),
             '--outputTransport',
             'streamableHttp',
             '--port',

@@ -10,6 +10,7 @@ import {
   requestTimeout,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 function alive(pid: number) {
@@ -41,7 +42,7 @@ async function setup(
     t,
     [
       '--stdio',
-      'exec node tests/helpers/stateless-lifetime-peer.mjs',
+      nodeServer('tests/helpers/stateless-lifetime-peer.mjs'),
       '--outputTransport',
       'streamableHttp',
       '--port',

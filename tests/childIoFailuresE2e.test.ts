@@ -8,11 +8,12 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 // #177/GW-032: failures must terminate only the affected child transport.
 // Native ENOENT and OS pipe closure keep the error path independent of mocks.
-const peer = 'exec node tests/helpers/fault-peer.mjs'
+const peer = nodeServer('tests/helpers/fault-peer.mjs')
 const call = (name: string) => ({
   jsonrpc: '2.0',
   id: 7,

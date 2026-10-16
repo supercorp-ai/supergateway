@@ -7,6 +7,7 @@ import {
   requestTimeout,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 import { pendingRpc, within } from './helpers/lifecycle-control.js'
 import { faultControl } from './helpers/fault-control.js'
@@ -33,7 +34,7 @@ for (const order of [
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           '--outputTransport',
           'streamableHttp',
           '--stateful',

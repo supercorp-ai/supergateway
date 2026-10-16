@@ -10,6 +10,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 // GW-033. A client that stops reading must hold its own child, the way pipe()
@@ -294,7 +295,7 @@ for (const [mode, { args, open }] of Object.entries(modes)) {
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           ...args,
           '--port',
           String(port),

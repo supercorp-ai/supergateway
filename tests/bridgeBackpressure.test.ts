@@ -8,6 +8,7 @@ import {
   initialize,
   launchGateway,
   unusedPort,
+  nodeServer,
 } from './helpers/gateway-process.js'
 
 // GW-033 for the bridges. A stdio client of `--sse` or `--streamableHttp`
@@ -40,7 +41,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
         t,
         [
           '--stdio',
-          'exec node tests/helpers/fault-peer.mjs',
+          nodeServer('tests/helpers/fault-peer.mjs'),
           ...upstream,
           '--port',
           String(port),

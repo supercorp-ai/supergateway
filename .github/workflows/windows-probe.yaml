@@ -1,0 +1,36 @@
+name: Windows full suite (probe)
+
+# Temporary: what the full suite does on Windows, before it joins tests.yaml.
+on:
+  push:
+    branches: [ci/windows-everything]
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: Full suite on Node ${{ matrix.node }} / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24']
+    env:
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run build
+      - name: Every test file
+        shell: bash
+        run: node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml 'tests/**/*.test.ts'
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-suite-node${{ matrix.node }}
+          path: junit.xml

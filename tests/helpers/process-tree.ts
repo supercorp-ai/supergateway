@@ -29,6 +29,40 @@ const clockTolerance = 2000n
 const ticksFrom = (unixMs: number) =>
   (BigInt(Math.floor(unixMs)) - clockTolerance) * 10000n + ticksAtUnixEpoch
 
+/**
+ * A process-table read, with one stall retried. A query that timed out
+ * observed nothing, which is not evidence about any process, and failing on
+ * it blames whatever ran then: soak run 35395011603 lost a healthy campaign at
+ * cycle 32 when a protocol test died of `spawnSync powershell.exe ETIMEDOUT`,
+ * and 4.2.1-rc.1's 25-hour soak lost its Windows scenarios lane two hours in
+ * to one stalled resource sample. PowerShell cold-starts for every query on
+ * Windows, thousands of chances per lane to be unlucky, so one stall is
+ * retried before it is believed. A second timeout still throws: an unreadable
+ * table must never pass as a clean one.
+ */
+function retriedOnce<T>(read: () => T): T {
+  try {
+    return read()
+  } catch (error) {
+    const timedOut =
+      (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ||
+      /ETIMEDOUT/.test(String((error as Error)?.message ?? ''))
+    if (!timedOut) throw error
+    return read()
+  }
+}
+
+/** A PowerShell command's output, with one stall retried (see retriedOnce). */
+function powershell(command: string): string {
+  return retriedOnce(() =>
+    execFileSync(
+      'powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+    ),
+  )
+}
+
 export function descendantsOf(
   pid: number,
   {
@@ -67,24 +101,7 @@ export function descendantsOf(
           options,
         )
       : query('ps', ['-eo', 'pid=,ppid='], options)
-  // A query that timed out observed nothing. That is not evidence about the
-  // process tree, and the leak check runs after *every* test, so failing on it
-  // blames whichever test happened to be in front of it — soak run
-  // 35395011603 lost a healthy campaign at cycle 32 when a protocol test died
-  // of `spawnSync powershell.exe ETIMEDOUT`. PowerShell cold-starts once per
-  // test on Windows, which is roughly a thousand chances per lane to be
-  // unlucky, so one stall is retried before it is believed. A second timeout
-  // still throws: an unreadable table must never pass as a clean one.
-  const timedOut = (error: unknown) =>
-    (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ||
-    /ETIMEDOUT/.test(String((error as Error)?.message ?? ''))
-  let table: string
-  try {
-    table = read()
-  } catch (error) {
-    if (!timedOut(error)) throw error
-    table = read()
-  }
+  const table = retriedOnce(read)
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
   const created = new Map<number, bigint>()
@@ -155,16 +172,8 @@ export function descendantsOf(
 export function commandLinesMatching(marker: string): string[] {
   const table =
     process.platform === 'win32'
-      ? execFileSync(
-          'powershell.exe',
-          [
-            '-NoLogo',
-            '-NoProfile',
-            '-NonInteractive',
-            '-Command',
-            "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }",
-          ],
-          { encoding: 'utf8', timeout: 30000, windowsHide: true },
+      ? powershell(
+          "$ErrorActionPreference = 'Stop'; Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }",
         )
       : execFileSync('ps', ['-eo', 'pid=,command='], {
           encoding: 'utf8',
@@ -201,16 +210,8 @@ export function isAlive(pid: number): boolean {
 export function processInfo(pid: number) {
   if (process.platform === 'win32') {
     if (!isAlive(pid)) return { parent: 0, group: 0, alive: false }
-    const parent = execFileSync(
-      'powershell.exe',
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `$ErrorActionPreference = 'Stop'; (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
-      ],
-      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+    const parent = powershell(
+      `$ErrorActionPreference = 'Stop'; (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
     ).trim()
     // Ended between the two looks.
     if (!parent) return { parent: 0, group: 0, alive: false }
@@ -293,16 +294,8 @@ export function processUsage(
 ): { rssKiB: number; descriptors: number }[] {
   if (process.platform === 'win32') {
     const rows = new Map(
-      execFileSync(
-        'powershell.exe',
-        [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `$ErrorActionPreference = 'Stop'; Get-Process -Id ${pids.join(',')} | ForEach-Object { '{0} {1} {2}' -f $_.Id, $_.WorkingSet64, $_.HandleCount }`,
-        ],
-        { encoding: 'utf8', timeout: 30000, windowsHide: true },
+      powershell(
+        `$ErrorActionPreference = 'Stop'; Get-Process -Id ${pids.join(',')} | ForEach-Object { '{0} {1} {2}' -f $_.Id, $_.WorkingSet64, $_.HandleCount }`,
       )
         .trim()
         .split(/\r?\n/)

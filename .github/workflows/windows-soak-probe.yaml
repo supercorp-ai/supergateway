@@ -67,4 +67,4 @@ jobs:
           node-version: '24'
       - run: npm ci
       - run: npm run build
-      - run: node .github/experiments/sdk-large.mjs
+      - run: node .github/experiments/sdk-sequence.mjs

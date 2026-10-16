@@ -1,5 +1,6 @@
-// Temporary: the SDK client asking a Windows gateway for a large result, with
-// the gateway's debug log, to see where the reply stops.
+// Temporary: which call before it makes a Windows gateway's large result time
+// out for the SDK client, as in the battery (tools/list, plain, separators,
+// unicode, then large).
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -15,8 +16,16 @@ const free = () =>
     })
   })
 
-for (const size of [65536, 131072, 262144, 524288]) {
-  for (const mode of ['stateless', 'stateful']) {
+const prefixes = [
+  [],
+  ['tools/list'],
+  ['plain'],
+  ['separators'],
+  ['unicode'],
+  ['tools/list', 'plain', 'separators', 'unicode'],
+]
+for (const mode of ['stateless', 'stateful']) {
+  for (const prefix of prefixes) {
     const port = await free()
     const gw = spawn(
       process.execPath,
@@ -32,7 +41,7 @@ for (const size of [65536, 131072, 262144, 524288]) {
         'debug',
         ...(mode === 'stateful' ? ['--stateful'] : []),
       ],
-      { env: { ...process.env, BIG_LENGTH: String(size) } },
+      { env: { ...process.env, BIG_LENGTH: '524288' } },
     )
     let log = ''
     gw.stdout.on('data', (c) => (log += c))
@@ -46,25 +55,33 @@ for (const size of [65536, 131072, 262144, 524288]) {
     let outcome
     try {
       await client.connect(transport)
+      for (const step of prefix)
+        if (step === 'tools/list') await client.listTools()
+        else await client.callTool({ name: step, arguments: {} })
+      const before = log.length
       const res = await client.callTool(
         { name: 'large', arguments: {} },
         undefined,
         { timeout: 15000 },
-      )
+      ).catch((e) => {
+        console.log(
+          log
+            .slice(before)
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => line.slice(0, 200))
+            .slice(0, 40)
+            .join('\n'),
+        )
+        throw e
+      })
       outcome = `ok, ${res.content[0].text.length} characters`
     } catch (e) {
       outcome = `failed: ${e.message}`
     }
-    console.log(`${mode} ${size}: ${outcome} in ${Date.now() - started} ms`)
-    if (outcome.startsWith('failed'))
-      console.log(
-        log
-          .split('\n')
-          .filter((line) => !/^\s*$/.test(line))
-          .map((line) => line.slice(0, 200))
-          .slice(-30)
-          .join('\n'),
-      )
+    console.log(
+      `${mode} after [${prefix.join(', ')}]: ${outcome} in ${Date.now() - started} ms`,
+    )
     await client.close().catch(() => {})
     gw.kill()
     await delay(500)

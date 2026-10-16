@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { isAlive } from './helpers/process-tree.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import { faultControl } from './helpers/fault-control.js'
 import {
@@ -13,18 +13,8 @@ import {
   nodeServer,
 } from './helpers/gateway-process.js'
 
-function alive(pid: number) {
-  try {
-    return !execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf8',
-    })
-      .trim()
-      .startsWith('Z')
-  } catch (error) {
-    if ((error as { status: number }).status === 1) return false
-    throw error
-  }
-}
+// Live, and not a zombie: the shared check, which works on Windows too.
+const alive = isAlive
 // How long a peer may take to be gone is the host's business, as every other
 // wait here is: a build under emulation is given the same slack for this one.
 async function stopped(pid: number, ms = requestTimeout(2500)) {

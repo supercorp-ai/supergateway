@@ -4,19 +4,10 @@ import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
 import { gatewayTimeout, nodeServer } from './helpers/gateway-process.js'
-import { alreadyGone } from './helpers/process-tree.js'
+import { alreadyGone, isAlive } from './helpers/process-tree.js'
 
-function alive(pid: number) {
-  try {
-    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf8',
-    }).trim()
-    return state.length > 0 && !state.startsWith('Z')
-  } catch (error) {
-    if ((error as { status?: number }).status === 1) return false
-    throw error // Missing process inspection must never count as a clean reap.
-  }
-}
+// Live, and not a zombie: the shared check, which works on Windows too.
+const alive = isAlive
 
 for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
   for (const wrapped of [false, true]) {

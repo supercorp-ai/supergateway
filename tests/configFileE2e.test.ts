@@ -422,7 +422,8 @@ test('"stdio" runs in a shell, with "env" and "cwd"', options, async (t) => {
     {
       mcpServers: {
         peer: {
-          stdio: `"${node}" "${envPeer}" "$ENV_PEER_VALUE"`,
+          // The shell's own syntax: cmd.exe on Windows.
+          stdio: `"${node}" "${envPeer}" "${process.platform === 'win32' ? '%ENV_PEER_VALUE%' : '$ENV_PEER_VALUE'}"`,
           env: { ENV_PEER_VALUE: 'set' },
           cwd,
           outputTransport: 'streamableHttp',

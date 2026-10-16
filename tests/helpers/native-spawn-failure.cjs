@@ -15,7 +15,8 @@ const executable = (() => {
     return false
   }
 })()
-if (process.argv[1]?.endsWith('/dist/index.js') || executable) {
+// Either separator: on Windows argv[1] is D:\...\dist\index.js.
+if (/[\\/]dist[\\/]index\.js$/.test(process.argv[1] ?? '') || executable) {
   const original = cp.spawn
   let spawned = 0
   cp.spawn = function (...args) {

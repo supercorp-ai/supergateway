@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.1-rc.1
+
+Windows fixes. Nothing changes on Linux or macOS.
+
+- **Windows: a stopped server no longer keeps running.** Every `--stdio` server on Windows runs under `cmd.exe`, and stopping a session, a client or the gateway ended only the shell, leaving the server behind: one per session or connection since 4.1.0. Now the server's whole process tree is ended (#335, by @joshmouch).
+- **Windows: `"command": "npx"` in a config file starts.** A command that is a script, as `npx` is (`npx.cmd`), now runs through `cmd.exe`, the way other MCP clients run it, and each argument still reaches the server exactly as written. Before, `npx` was not found, and `npx.cmd` was refused by Node.
+- Tests: the whole suite, the standalone executable's tests, the cross-client battery and every part of the soak now run on Windows too. A new test ends every kind of session on every output in every way, and requires that no server is left running.
+
 ## 4.2.0
 
 Upgrading from 4.1.0. No breaking changes: everything new is behind a new flag or a config file, and a 4.1.0 command line runs as it did.

@@ -797,7 +797,7 @@ for (const withHealthAndCors of [true, false]) {
       // Signal the CLI itself so it performs graceful child/socket cleanup.
       // The test's process-group cleanup is only a final safety net.
       for (const socket of sockets) socket.close()
-      gateway.child.kill('SIGTERM')
+      gateway.interrupt('SIGTERM')
       assert.equal((await gateway.exited).code, 0)
     },
   )

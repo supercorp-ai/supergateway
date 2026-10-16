@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { connect, createServer } from 'node:net'
 import { randomInt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -83,6 +84,10 @@ export function gatewayCommand(args: string[], nodeArgs: string[] = []) {
 
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
+const consoleSignals = pathToFileURL(
+  fileURLToPath(new URL('./windows-console-signals.mjs', import.meta.url)),
+).href
+
 export function launchGateway(
   t: TestContext,
   args: string[],
@@ -90,9 +95,14 @@ export function launchGateway(
   nodeArgs: string[] = [],
 ) {
   const grouped = process.platform !== 'win32'
-  const { command, argv, nodeOptions } = gatewayCommand(args, nodeArgs)
+  const windows = process.platform === 'win32'
+  const { command, argv, nodeOptions } = gatewayCommand(
+    args,
+    windows ? [...nodeArgs, '--import', consoleSignals] : nodeArgs,
+  )
   const child = spawn(command, argv, {
-    stdio: 'pipe',
+    // On Windows a channel for the signals its console would deliver.
+    stdio: windows ? ['pipe', 'pipe', 'pipe', 'ipc'] : 'pipe',
     detached: grouped,
     env: {
       ...process.env,
@@ -103,7 +113,7 @@ export function launchGateway(
           .join(' '),
       }),
     },
-  })
+  }) as ChildProcessWithoutNullStreams
   let output = ''
   let errors = ''
   // A readiness failure reports whatever was captured, and "nothing at all" is
@@ -141,6 +151,11 @@ export function launchGateway(
     () => ({ code: null, signal: null }),
   )
   const signal = (name: NodeJS.Signals) => {
+    // Windows: anything short of a kill reaches the gateway the console's way.
+    if (windows && name !== 'SIGKILL' && child.connected) {
+      child.send(name)
+      return
+    }
     try {
       if (grouped && child.pid) process.kill(-child.pid, name)
       else child.kill(name)
@@ -151,6 +166,19 @@ export function launchGateway(
       // test failed, and treating EPERM as fatal made cleanup racy.
       const code = (error as NodeJS.ErrnoException).code
       if (code !== 'ESRCH' && code !== 'EPERM') throw error
+    }
+  }
+  // A signal to the gateway alone, as its user sends one to stop it: kill(2) on
+  // POSIX, and on Windows what its console raises (windows-console-signals.mjs).
+  const interrupt = (name: NodeJS.Signals) => {
+    if (!windows) return signal_(name)
+    if (child.connected) child.send(name)
+  }
+  const signal_ = (name: NodeJS.Signals) => {
+    try {
+      child.kill(name)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
     }
   }
   watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`, spawnedAt)
@@ -251,6 +279,7 @@ export function launchGateway(
     child,
     exited,
     signal,
+    interrupt,
     dispose,
     waitFor,
     // Callers that count descendants need this to date the walk once the

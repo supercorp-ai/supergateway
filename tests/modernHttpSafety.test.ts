@@ -494,7 +494,7 @@ for (const stateful of [true, false]) {
         assert.ok(alive(pid))
         assert.ok(alive(descendant))
         if (ending === 'disconnect') controller.abort()
-        else gateway.child.kill('SIGTERM')
+        else gateway.interrupt('SIGTERM')
         await stopped(pid)
         await stopped(descendant)
         if (ending === 'disconnect') {

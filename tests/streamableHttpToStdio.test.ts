@@ -43,7 +43,12 @@ test.before(async () => {
 test.after(() => serverProc?.kill('SIGINT'))
 
 test('streamableHttpToStdio listTools and callTool', async () => {
-  const gatewayCmd = ['npm', 'run', 'start', '--', '--streamableHttp', MCP_URL]
+  const gatewayCmd = [
+    process.execPath,
+    'dist/index.js',
+    '--streamableHttp',
+    MCP_URL,
+  ]
 
   const transport = new StdioClientTransport({
     command: gatewayCmd[0],

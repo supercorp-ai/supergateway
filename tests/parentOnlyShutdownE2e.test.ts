@@ -52,7 +52,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
             if (!alreadyGone(error)) throw error
           }
         })
-        b.gateway.child.kill('SIGTERM') // Never signal the whole group for the assertion.
+        b.gateway.interrupt('SIGTERM') // Never signal the whole group for the assertion.
         const exit = await b.gateway.exited
         assert.equal(exit.code, 0)
         const deadline = Date.now() + 1500

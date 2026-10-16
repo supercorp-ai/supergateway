@@ -429,7 +429,7 @@ test("shutdown stops every entry's children", options, async (t) => {
     }
   }
   assert.deepEqual(pids.map(alive), [true, true])
-  gateway.child.kill('SIGTERM')
+  gateway.interrupt('SIGTERM')
   const { code } = await gateway.exited
   // map: clean exit, every entry's child gone
   assert.equal(code, 0)

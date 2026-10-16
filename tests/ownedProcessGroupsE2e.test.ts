@@ -48,13 +48,13 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         } else {
           if (trigger === 'stdin-close') b.gateway.child.stdin.end()
           else {
-            b.gateway.child.kill('SIGTERM')
+            b.gateway.interrupt('SIGTERM')
             await b.gateway.waitFor(
               () => b.gateway.output().includes('Caught SIGTERM'),
               'start graceful shutdown',
             )
-            b.gateway.child.kill('SIGINT')
-            b.gateway.child.kill('SIGHUP')
+            b.gateway.interrupt('SIGINT')
+            b.gateway.interrupt('SIGHUP')
           }
           assert.equal((await b.gateway.exited).code, 0)
           await stopped(b.pid)

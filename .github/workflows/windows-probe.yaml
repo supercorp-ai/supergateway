@@ -35,3 +35,14 @@ jobs:
         with:
           name: windows-suite-node${{ matrix.node }}-shard${{ matrix.shard }}
           path: junit.xml
+
+  stdin-close:
+    name: Windows stdin-close experiment
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node .github/experiments/stdin-close.mjs

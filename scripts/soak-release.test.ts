@@ -562,7 +562,7 @@ test(
       )
       assert.ok(
         row.descriptors <= baseline[index].descriptors + descriptorMargin,
-        `${row.mode}: descriptor growth`,
+        `${row.mode}: descriptor growth (${row.descriptors}, baseline ${baseline[index].descriptors}, margin ${descriptorMargin})`,
       )
       const reference = warmPeak(index)
       if (reference !== undefined)
@@ -592,7 +592,7 @@ test(
     assert.ok(
       continuationRow.descriptors <=
         baseline[continuationIndex].descriptors + descriptorMargin,
-      'continuation: descriptor growth',
+      `continuation: descriptor growth (${continuationRow.descriptors}, baseline ${baseline[continuationIndex].descriptors}, margin ${descriptorMargin})`,
     )
     const continuationReference = warmPeak(continuationIndex)
     if (continuationReference !== undefined)

@@ -515,7 +515,7 @@ test(
       assert.equal(row.children, 0, `${row.mode}: children left behind`)
       assert.ok(
         row.descriptors <= baseline[index].descriptors + descriptorMargin,
-        `${row.mode}: descriptor growth`,
+        `${row.mode}: descriptor growth (${row.descriptors}, baseline ${baseline[index].descriptors}, margin ${descriptorMargin})`,
       )
     }
     // RSS: each gateway's settled final against the warm-up envelope, the

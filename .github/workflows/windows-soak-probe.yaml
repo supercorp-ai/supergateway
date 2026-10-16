@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .release
-          SUPERGATEWAY_TEST_ENTRY="$PWD/dist/index.js" SOAK_REPORT="$PWD/.release/${{ matrix.soak }}.jsonl" \
+          SUPERGATEWAY_TEST_ENTRY=dist/index.js SOAK_REPORT=.release/${{ matrix.soak }}.jsonl \
             node --import tsx --test scripts/soak-${{ matrix.soak }}.test.ts
       - if: always()
         uses: actions/upload-artifact@v4

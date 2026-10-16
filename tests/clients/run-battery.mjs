@@ -96,6 +96,34 @@ async function launch(args) {
   throw new Error('gateway never started')
 }
 
+// The driver runs while this process keeps reading the gateway's output. A
+// synchronous run would stop that: the gateway logs each message in full, and
+// on Windows, where a process writes to a pipe synchronously, a 512 KB result
+// left unread there stalls the gateway before it can send the reply.
+function driver(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: { ...process.env, BIG_LENGTH },
+      stdio: ['ignore', 'pipe', 'inherit'],
+    })
+    let stdout = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk))
+    const timer = setTimeout(() => child.kill(), 120000)
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      clearTimeout(timer)
+      if (code === 0) resolve(stdout)
+      else
+        reject(
+          Object.assign(
+            new Error(`driver exited with ${signal ?? `code ${code}`}`),
+            { stdout },
+          ),
+        )
+    })
+  })
+}
+
 const MODES = (process.env.BATTERY_MODES ?? 'stateful,stateless,sse').split(',')
 const report = []
 let failures = 0
@@ -116,20 +144,12 @@ for (const mode of MODES) {
 
   let rows
   try {
-    const out =
+    const out = await driver(
+      DRIVER === 'node' ? 'node' : BIN,
       DRIVER === 'node'
-        ? execFileSync('node', ['tests/clients/battery.mjs', url, kind], {
-            encoding: 'utf8',
-            timeout: 120000,
-            maxBuffer: 64 * 1024 * 1024,
-            env: { ...process.env, BIG_LENGTH },
-          })
-        : execFileSync(BIN, [url, kind], {
-            encoding: 'utf8',
-            timeout: 120000,
-            maxBuffer: 64 * 1024 * 1024,
-            env: { ...process.env, BIG_LENGTH },
-          })
+        ? ['tests/clients/battery.mjs', url, kind]
+        : [url, kind],
+    )
     rows = JSON.parse(out.trim().split('\n').pop())
   } catch (e) {
     rows = [

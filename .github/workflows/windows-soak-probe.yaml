@@ -36,10 +36,14 @@ jobs:
           SUPERGATEWAY_TEST_ENTRY=dist/index.js SOAK_REPORT=.release/${{ matrix.soak }}.jsonl \
             node --import tsx --test scripts/soak-${{ matrix.soak }}.test.ts
       - if: always()
+        shell: bash
+        run: ls -la .release || true
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-soak-${{ matrix.soak }}
           path: .release/
+          include-hidden-files: true
 
   battery:
     name: Windows SDK battery
@@ -56,15 +60,3 @@ jobs:
         env:
           BATTERY_TRACE: '1'
 
-  large-reply:
-    name: Windows large reply over Streamable HTTP
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - run: npm ci
-      - run: npm run build
-      - run: node .github/experiments/sdk-sequence.mjs

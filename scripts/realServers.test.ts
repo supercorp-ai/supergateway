@@ -4,7 +4,8 @@
 //
 //   SUPERGATEWAY_REAL_SERVERS=1 node --import tsx --test scripts/realServers.test.ts
 //
-// POSIX only: the servers are started through a shell command line.
+// On every platform: through the gateway each server's command line runs in
+// its shell, sh or cmd.exe, as `--stdio` does for users.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
@@ -24,19 +25,16 @@ import {
   prepareFixtures,
   realServers,
   installedCommand,
+  shellWord,
   type RealServer,
 } from './real-servers/servers.js'
 
 globalThis.WebSocket ??= WebSocket as unknown as typeof globalThis.WebSocket
 
-const enabled =
-  process.env.SUPERGATEWAY_REAL_SERVERS === '1' && process.platform !== 'win32'
+const enabled = process.env.SUPERGATEWAY_REAL_SERVERS === '1'
 const entry = process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js'
 // First use of a pinned server downloads it; later ones start from the cache.
 const CALL = { timeout: 120000 }
-
-const shellWord = (word: string) =>
-  /^[\w@./:=,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
 
 /** Everything a client can observe about a server, then each step's answer. */
 async function observe(transport: Transport, server: RealServer) {
@@ -185,7 +183,7 @@ for (const server of realServers(fixtures)) {
   test(
     `${server.name} answers identically through every gateway path`,
     {
-      skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1 (POSIX)',
+      skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1',
       timeout: 20 * 60000,
     },
     async (t) => {

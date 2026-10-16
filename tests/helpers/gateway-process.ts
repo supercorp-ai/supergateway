@@ -1,5 +1,10 @@
 import { fileURLToPath } from 'node:url'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  type StdioOptions,
+} from 'node:child_process'
 import { connect, createServer } from 'node:net'
 import { randomInt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -88,6 +93,37 @@ const consoleSignals = fileURLToPath(
   new URL('./windows-console-signals.cjs', import.meta.url),
 )
 
+/**
+ * How to start a gateway that will be stopped the way its user stops one. On
+ * POSIX: its own process group, which a teardown can end whole. On Windows,
+ * where one process "signalling" another terminates it before it can stop its
+ * servers: the preload and IPC channel through which `interruptGateway`
+ * delivers a signal as the console would (windows-console-signals.cjs).
+ */
+export const signalledGateway =
+  process.platform === 'win32'
+    ? {
+        nodeArgs: ['--require', consoleSignals],
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'] as StdioOptions,
+        detached: false,
+      }
+    : {
+        nodeArgs: [] as string[],
+        stdio: 'pipe' as StdioOptions,
+        detached: true,
+      }
+
+/** A signal to a gateway started with `signalledGateway`, to it alone. */
+export function interruptGateway(child: ChildProcess, name: NodeJS.Signals) {
+  if (process.platform !== 'win32') {
+    try {
+      child.kill(name)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+  } else if (child.connected) child.send(name)
+}
+
 export function launchGateway(
   t: TestContext,
   args: string[],
@@ -96,19 +132,23 @@ export function launchGateway(
 ) {
   const grouped = process.platform !== 'win32'
   const windows = process.platform === 'win32'
-  const { command, argv, nodeOptions } = gatewayCommand(
-    args,
-    windows ? [...nodeArgs, '--require', consoleSignals] : nodeArgs,
-  )
+  const { command, argv, nodeOptions } = gatewayCommand(args, [
+    ...nodeArgs,
+    ...signalledGateway.nodeArgs,
+  ])
   const child = spawn(command, argv, {
-    // On Windows a channel for the signals its console would deliver.
-    stdio: windows ? ['pipe', 'pipe', 'pipe', 'ipc'] : 'pipe',
-    detached: grouped,
+    stdio: signalledGateway.stdio,
+    detached: signalledGateway.detached,
     env: {
       ...process.env,
       ...env,
+      // The executable's preloads join the test's own NODE_OPTIONS, if it set
+      // any, rather than replace them.
       ...(nodeOptions && {
-        NODE_OPTIONS: [process.env.NODE_OPTIONS, nodeOptions]
+        NODE_OPTIONS: [
+          env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS,
+          nodeOptions,
+        ]
           .filter(Boolean)
           .join(' '),
       }),
@@ -168,19 +208,8 @@ export function launchGateway(
       if (code !== 'ESRCH' && code !== 'EPERM') throw error
     }
   }
-  // A signal to the gateway alone, as its user sends one to stop it: kill(2) on
-  // POSIX, and on Windows what its console raises (windows-console-signals.mjs).
-  const interrupt = (name: NodeJS.Signals) => {
-    if (!windows) return signal_(name)
-    if (child.connected) child.send(name)
-  }
-  const signal_ = (name: NodeJS.Signals) => {
-    try {
-      child.kill(name)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-    }
-  }
+  // A signal to the gateway alone, as its user sends one to stop it.
+  const interrupt = (name: NodeJS.Signals) => interruptGateway(child, name)
   watchGateway(child.pid, `gateway ${args.slice(0, 2).join(' ')}`, spawnedAt)
   t.after(async () => {
     forgetGateway(child.pid)

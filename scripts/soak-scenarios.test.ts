@@ -14,8 +14,8 @@
 //   mid-call in every mode.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync, readdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -34,8 +34,17 @@ import {
   LoggingMessageNotificationSchema,
   ProgressNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { unusedPort } from '../tests/helpers/gateway-process.js'
-import { descendantsOf, processInfo } from '../tests/helpers/process-tree.js'
+import {
+  interruptGateway,
+  signalledGateway,
+  unusedPort,
+} from '../tests/helpers/gateway-process.js'
+import {
+  descendantsOf,
+  descriptorMargin,
+  processInfo,
+  processUsage,
+} from '../tests/helpers/process-tree.js'
 
 globalThis.WebSocket ??= WebSocket as unknown as typeof globalThis.WebSocket
 
@@ -69,10 +78,19 @@ function gateway(t: TestContext, port: number, output: string[]) {
   const start = async () => {
     spawnedAt = Date.now()
     tail = ''
+    // Stopped as its user stops it, on Windows too (see signalledGateway).
     child = spawn(
       process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
-      [entry!, '--stdio', PEER, '--port', String(port), ...output],
-      { stdio: 'pipe', detached: true },
+      [
+        ...signalledGateway.nodeArgs,
+        entry!,
+        '--stdio',
+        PEER,
+        '--port',
+        String(port),
+        ...output,
+      ],
+      { stdio: signalledGateway.stdio, detached: signalledGateway.detached },
     )
     for (const stream of [child.stdout!, child.stderr!])
       stream.setEncoding('utf8').on('data', (chunk: string) => {
@@ -92,7 +110,7 @@ function gateway(t: TestContext, port: number, output: string[]) {
     if (child.exitCode !== null || child.signalCode !== null) return
     const owned = descendantsOf(child.pid!, { since: spawnedAt })
     const exited = once(child, 'exit')
-    child.kill('SIGTERM')
+    interruptGateway(child, 'SIGTERM')
     await Promise.race([exited, delay(7000)])
     if (child.exitCode === null && child.signalCode === null)
       child.kill('SIGKILL')
@@ -119,18 +137,7 @@ function gateway(t: TestContext, port: number, output: string[]) {
 }
 
 function usage(pid: number) {
-  const rssKiB = Number(
-    execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], {
-      encoding: 'utf8',
-    }).trim(),
-  )
-  const descriptors =
-    process.platform === 'linux'
-      ? readdirSync(`/proc/${pid}/fd`).length
-      : execFileSync('lsof', ['-p', String(pid), '-Ff'], { encoding: 'utf8' })
-          .split('\n')
-          .filter((line) => /^f\d/.test(line)).length
-  return { rssKiB, descriptors }
+  return processUsage([pid])[0]
 }
 
 // A client that answers sampling and records log messages.
@@ -507,8 +514,8 @@ test(
       if (row.mode.startsWith('bridge-')) continue
       assert.equal(row.children, 0, `${row.mode}: children left behind`)
       assert.ok(
-        row.descriptors <= baseline[index].descriptors + 8,
-        `${row.mode}: descriptor growth`,
+        row.descriptors <= baseline[index].descriptors + descriptorMargin,
+        `${row.mode}: descriptor growth (${row.descriptors}, baseline ${baseline[index].descriptors}, margin ${descriptorMargin})`,
       )
     }
     // RSS: each gateway's settled final against the warm-up envelope, the

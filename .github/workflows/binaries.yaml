@@ -82,6 +82,9 @@ jobs:
         env:
           SUPERGATEWAY_TEST_PYTHON: python
           SUPERGATEWAY_REQUIRE_PYTHON: '1'
+          # As in tests.yaml: a first start on a Windows runner can take
+          # seconds more. Read only when set to a positive number.
+          SUPERGATEWAY_TEST_READY_TIMEOUT: ${{ runner.os == 'Windows' && '30000' || '' }}
         run: node scripts/test-binary.mjs ".binary/${{ matrix.target }}/supergateway$([ '${{ runner.os }}' = Windows ] && echo .exe)"
       # The tests above need Node to run, so they cannot show the executable
       # does not. These run it where Node is not on PATH at all.

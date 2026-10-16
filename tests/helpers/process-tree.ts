@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 
 /**
  * Live descendants of a process, by walking the ppid table.
@@ -279,3 +280,74 @@ export function reapAfter(
  */
 export const alreadyGone = (error: unknown) =>
   ['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')
+
+/**
+ * Resident memory and open descriptors of each of `pids`, for the resource
+ * soaks. Windows has neither ps nor lsof: there the working set, and the open
+ * handle count, which also counts the process's threads, events and other
+ * kernel objects, so it moves more than descriptors do; `descriptorMargin`
+ * is the growth each platform's gates allow. One query covers every PID.
+ */
+export function processUsage(
+  pids: number[],
+): { rssKiB: number; descriptors: number }[] {
+  if (process.platform === 'win32') {
+    const rows = new Map(
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'; Get-Process -Id ${pids.join(',')} | ForEach-Object { '{0} {1} {2}' -f $_.Id, $_.WorkingSet64, $_.HandleCount }`,
+        ],
+        { encoding: 'utf8', timeout: 30000, windowsHide: true },
+      )
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/).map(Number))
+        .map(([pid, bytes, handles]) => [
+          pid,
+          { rssKiB: Math.round(bytes / 1024), descriptors: handles },
+        ]),
+    )
+    return pids.map((pid) => {
+      const row = rows.get(pid)
+      assert.ok(row, `process ${pid} is not running`)
+      return row
+    })
+  }
+  return pids.map((pid) => ({
+    rssKiB: Number(
+      execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], {
+        encoding: 'utf8',
+      }).trim(),
+    ),
+    descriptors:
+      process.platform === 'linux'
+        ? readdirSync(`/proc/${pid}/fd`).length
+        : execFileSync('lsof', ['-p', String(pid), '-Ff'], {
+            encoding: 'utf8',
+          })
+            .split('\n')
+            .filter((line) => /^f\d/.test(line)).length,
+  }))
+}
+
+/**
+ * How far descriptors may grow over a soak before it is called a leak. On
+ * Windows every gateway, in every mode, settled at 234 handles from a fresh
+ * 225 and stayed there for 20 minutes of load (probe run 38884134053): a step
+ * on first use, from the threads Node starts when it needs them, not growth.
+ * A leak of one handle per connection passes 24 within minutes of a soak.
+ */
+export const descriptorMargin = process.platform === 'win32' ? 24 : 8
+
+/**
+ * Processes one stdio server is: on Windows cmd.exe and the server under it
+ * (`--stdio` runs through the shell, and cmd.exe has no `exec`), elsewhere the
+ * server alone once its shell has exec'd it. Budgets that count descendants
+ * are budgets of servers times this.
+ */
+export const processesPerServer = process.platform === 'win32' ? 2 : 1

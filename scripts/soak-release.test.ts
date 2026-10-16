@@ -4,8 +4,8 @@
 // node --import tsx --test scripts/soak-release.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
-import { readdirSync, appendFileSync, mkdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { once } from 'node:events'
@@ -13,9 +13,21 @@ import { WebSocket } from 'ws'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { requestTimeout, unusedPort } from '../tests/helpers/gateway-process.js'
+import {
+  interruptGateway,
+  nodeServer,
+  requestTimeout,
+  signalledGateway,
+  unusedPort,
+} from '../tests/helpers/gateway-process.js'
 import type { TestContext } from 'node:test'
-import { descendantsOf } from '../tests/helpers/process-tree.js'
+import {
+  descendantsOf,
+  descriptorMargin,
+  processInfo,
+  processesPerServer,
+  processUsage,
+} from '../tests/helpers/process-tree.js'
 
 assert.equal(
   process.env.SUPERGATEWAY_SOAK_CONFIRMED,
@@ -48,13 +60,22 @@ function launchGateway(
 ) {
   // Dates the descendant walk once this gateway has exited; see descendantsOf.
   const spawnedAt = Date.now()
+  // Stopped as its user stops it, on Windows too (see signalledGateway).
   const child = spawn(
     process.env.SUPERGATEWAY_TEST_NODE ?? process.execPath,
-    [process.env.SUPERGATEWAY_TEST_ENTRY!, ...args],
-    { stdio: 'pipe', detached: true, env: { ...process.env, ...env } },
+    [
+      ...signalledGateway.nodeArgs,
+      process.env.SUPERGATEWAY_TEST_ENTRY!,
+      ...args,
+    ],
+    {
+      stdio: signalledGateway.stdio,
+      detached: signalledGateway.detached,
+      env: { ...process.env, ...env },
+    },
   )
   let tail = ''
-  for (const stream of [child.stdout, child.stderr])
+  for (const stream of [child.stdout!, child.stderr!])
     stream.setEncoding('utf8').on('data', (chunk) => {
       tail = (tail + chunk).slice(-65536)
     })
@@ -68,13 +89,12 @@ function launchGateway(
     (closing ??= (async () => {
       const owned = descendantsOf(child.pid!, { since: spawnedAt })
       if (child.exitCode === null && child.signalCode === null)
-        child.kill('SIGTERM')
+        interruptGateway(child, 'SIGTERM')
       await Promise.race([exited, delay(7000, undefined, { ref: false })])
       if (child.exitCode === null && child.signalCode === null)
         child.kill('SIGKILL')
       await exited
       for (const pid of owned) {
-        const { processInfo } = await import('../tests/helpers/process-tree.js')
         assert.equal(
           processInfo(pid).alive,
           false,
@@ -127,7 +147,7 @@ test(
         [
           '--stdio',
           mode === 'continuation'
-            ? 'exec node tests/helpers/signed-continuation-peer.mjs'
+            ? nodeServer('tests/helpers/signed-continuation-peer.mjs')
             : mode === 'modern'
               ? 'node tests/helpers/modern-bridge-peer.mjs'
               : 'node tests/helpers/mock-mcp-server.js stdio',
@@ -147,22 +167,13 @@ test(
       })
     }
     function sample(phase: string, round: number) {
-      const rows = gateways.map(({ mode, gateway }) => {
+      const usage = processUsage(
+        gateways.map(({ gateway }) => gateway.child.pid!),
+      )
+      const rows = gateways.map(({ mode, gateway }, index) => {
         const pid = gateway.child.pid!
-        const rssKiB = Number(
-          execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], {
-            encoding: 'utf8',
-          }).trim(),
-        )
+        const { rssKiB, descriptors } = usage[index]
         assert.ok(rssKiB > 0)
-        const descriptors =
-          process.platform === 'linux'
-            ? readdirSync(`/proc/${pid}/fd`).length
-            : execFileSync('lsof', ['-p', String(pid), '-Ff'], {
-                encoding: 'utf8',
-              })
-                .split('\n')
-                .filter((line) => /^f\d/.test(line)).length
         return {
           mode,
           pid,
@@ -500,7 +511,8 @@ test(
           assert.ok(
             row.children <=
               (row.mode === 'continuation'
-                ? 64
+                ? // Every descendant is counted, so a wrapper's leaked server is too.
+                  64 * processesPerServer
                 : baseline.find((item) => item.mode === row.mode)!.children),
             `${row.mode}: children failed to settle`,
           )
@@ -546,8 +558,8 @@ test(
         row.mode === 'sse' || row.mode === 'ws' ? baseline[index].children : 0,
       )
       assert.ok(
-        row.descriptors <= baseline[index].descriptors + 8,
-        `${row.mode}: descriptor growth`,
+        row.descriptors <= baseline[index].descriptors + descriptorMargin,
+        `${row.mode}: descriptor growth (${row.descriptors}, baseline ${baseline[index].descriptors}, margin ${descriptorMargin})`,
       )
       const reference = warmPeak(index)
       if (reference !== undefined)
@@ -576,8 +588,8 @@ test(
     )
     assert.ok(
       continuationRow.descriptors <=
-        baseline[continuationIndex].descriptors + 8,
-      'continuation: descriptor growth',
+        baseline[continuationIndex].descriptors + descriptorMargin,
+      `continuation: descriptor growth (${continuationRow.descriptors}, baseline ${baseline[continuationIndex].descriptors}, margin ${descriptorMargin})`,
     )
     const continuationReference = warmPeak(continuationIndex)
     if (continuationReference !== undefined)

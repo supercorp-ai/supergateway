@@ -142,6 +142,9 @@ async def main() -> None:
             subs = getattr(inner, "exceptions", None) or []
         record("connect", False, detail[:140])
 
+    # UTF-8 whatever the platform's default: a pipe on Windows is cp1252,
+    # which cannot hold the Unicode the scenarios carry.
+    sys.stdout.reconfigure(encoding="utf-8")
     print(json.dumps(results, ensure_ascii=False))
 
 

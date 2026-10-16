@@ -11,7 +11,8 @@
 //
 // Only after user confirmation: SUPERGATEWAY_SOAK_CONFIRMED=1 SOAK_SECONDS=600
 // SUPERGATEWAY_TEST_ENTRY=/.../dist/index.js SOAK_BATTERY_PYTHON=/.../pybattery
-// SOAK_BATTERY_GO=/.../go-battery SOAK_BATTERY_RUBY=/.../rbbattery
+// SOAK_BATTERY_GO=/.../go-battery SOAK_BATTERY_RUBY=/.../rbbattery (each an
+// executable, or a JSON array such as ["python","tests/clients/battery.py"])
 // node scripts/soak-languages.mjs
 import assert from 'node:assert/strict'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -41,6 +42,9 @@ for (const [driver, binary] of drivers)
     binary,
     `SOAK_BATTERY_${driver.toUpperCase()} must name the ${driver} driver`,
   )
+// An executable, or a JSON array of a program and its first arguments:
+// Windows runs a script through its interpreter, having no #! line to read.
+const command = (value) => (value.startsWith('[') ? JSON.parse(value) : [value])
 const root = resolve(process.env.SOAK_DIRECTORY ?? '.release/languages')
 mkdirSync(root, { recursive: true })
 const started = Date.now()
@@ -79,7 +83,7 @@ try {
       await commands
         .run(
           `cycle-${cycle}-${driver}`,
-          ['tests/clients/run-battery.mjs', driver, binary],
+          ['tests/clients/run-battery.mjs', driver, ...command(binary)],
           6 * 60000,
           { BATTERY_REPORT: resolve(root, `cycle-${cycle}-${driver}.json`) },
         )

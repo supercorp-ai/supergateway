@@ -586,6 +586,21 @@ test(
       0,
       'idle continuation children survived expiry',
     )
+    // The last children's handles close just after they exit: on Windows, about
+    // seven per retained server (cmd.exe and the server, their process and pipe
+    // handles). 4.2.1-rc.1's first 25-hour canary sampled the moment the last
+    // ones left and read 265 against 219, where the sample before, with eight
+    // processes still there, had also read 265. Judge once they have closed;
+    // a leak is still there 30 seconds on.
+    const settleDeadline = Date.now() + 30000
+    while (
+      continuationRow.descriptors >
+        baseline[continuationIndex].descriptors + descriptorMargin &&
+      Date.now() < settleDeadline
+    ) {
+      await delay(5000)
+      continuationRow = sample('continuation-settle', round)[continuationIndex]
+    }
     assert.ok(
       continuationRow.descriptors <=
         baseline[continuationIndex].descriptors + descriptorMargin,

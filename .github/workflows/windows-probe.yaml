@@ -36,16 +36,26 @@ jobs:
           name: windows-suite-node${{ matrix.node }}-shard${{ matrix.shard }}
           path: junit.xml
 
-  stdin-close:
-    name: Windows stdin-close experiment
+  compat:
+    name: Windows compat on Node ${{ matrix.node }}
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    env:
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      - run: node .github/experiments/stdin-close.mjs
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - name: Run npm scripts with bash
+        run: npm config set script-shell "C:\Program Files\Git\bin\bash.exe"
+      - name: Run the version-portable suite
+        run: npm run test:compat
 
   matrix-can-fail:
     name: Windows cleanup matrix fails without the tree kill

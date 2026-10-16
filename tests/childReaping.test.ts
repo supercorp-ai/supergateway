@@ -33,11 +33,12 @@ import {
 const peerWithMarker = (marker: string) =>
   `node tests/clients/battery-peer.mjs ${marker}`
 
-// The servers carrying `marker`, not the gateway: on every platform, and never
-// an empty list because the process table could not be read.
-function liveChildren(marker: string) {
+// The servers carrying `marker`, not the gateway (`gatewayPid`), whatever it
+// runs as: on every platform, and never an empty list because the process
+// table could not be read.
+function liveChildren(marker: string, gatewayPid: number) {
   return commandLinesMatching(marker).filter(
-    (line) => !/dist[\\/]index\.js/.test(line),
+    (line) => Number(line.trim().split(/\s+/)[0]) !== gatewayPid,
   )
 }
 
@@ -104,7 +105,7 @@ test(
   'stateful HTTP reaps a session’s child on explicit DELETE',
   { timeout: gatewayTimeout(30000) },
   async (t) => {
-    const { marker, url, sessions } = await openSessions(
+    const { marker, url, sessions, gateway } = await openSessions(
       t,
       ['--outputTransport', 'streamableHttp', '--stateful'],
       3,
@@ -119,7 +120,7 @@ test(
     }
     await settle()
     assert.deepEqual(
-      liveChildren(marker),
+      liveChildren(marker, gateway.child.pid!),
       [],
       'no child may outlive the session that spawned it',
     )
@@ -139,7 +140,7 @@ test(
     assert.equal(sessions.length, 1)
     const grandchild = `${marker}-grandchild`
     await gateway.waitFor(
-      () => liveChildren(grandchild).length === 1,
+      () => liveChildren(grandchild, gateway.child.pid!).length === 1,
       'spawn a real MCP descendant',
     )
     const ended = await fetch(url, {
@@ -151,7 +152,7 @@ test(
     await ended.text()
     await settle()
     assert.deepEqual(
-      liveChildren(grandchild),
+      liveChildren(grandchild, gateway.child.pid!),
       [],
       'closing the session must terminate the whole process group',
     )
@@ -162,7 +163,7 @@ test(
   'stateful HTTP reaps an idle session’s child when --sessionTimeout is set',
   { timeout: gatewayTimeout(30000) },
   async (t) => {
-    const { marker } = await openSessions(
+    const { marker, gateway } = await openSessions(
       t,
       [
         '--outputTransport',
@@ -175,7 +176,7 @@ test(
     )
     await settle()
     assert.deepEqual(
-      liveChildren(marker),
+      liveChildren(marker, gateway.child.pid!),
       [],
       'the idle timer must reap every child it was given',
     )
@@ -192,17 +193,17 @@ test(
   'stateful HTTP preserves sessions between responses when idle expiry is disabled',
   { timeout: gatewayTimeout(30000) },
   async (t) => {
-    const { marker, url, sessions } = await openSessions(
+    const { marker, url, sessions, gateway } = await openSessions(
       t,
       ['--outputTransport', 'streamableHttp', '--stateful'],
       3,
     )
     assert.equal(sessions.length, 3)
-    const original = liveChildren(marker)
+    const original = liveChildren(marker, gateway.child.pid!)
     assert.ok(original.length >= 3)
     await settle()
     assert.deepEqual(
-      liveChildren(marker),
+      liveChildren(marker, gateway.child.pid!),
       original,
       'response completion must not destroy a live session’s child',
     )
@@ -229,14 +230,14 @@ test(
   'stateless HTTP reaps the child it spawned for a completed request (#108)',
   { timeout: gatewayTimeout(30000) },
   async (t) => {
-    const { marker } = await openSessions(
+    const { marker, gateway } = await openSessions(
       t,
       ['--outputTransport', 'streamableHttp'],
       3,
     )
     await settle()
     assert.deepEqual(
-      liveChildren(marker),
+      liveChildren(marker, gateway.child.pid!),
       [],
       'one completed request must not leave a process behind',
     )

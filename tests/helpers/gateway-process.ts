@@ -1,4 +1,4 @@
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { connect, createServer } from 'node:net'
 import { randomInt } from 'node:crypto'
@@ -84,9 +84,9 @@ export function gatewayCommand(args: string[], nodeArgs: string[] = []) {
 
 // Launch the actual compiled CLI. A separate process group also lets teardown
 // reap the shell and stdio MCP child, even when an assertion fails.
-const consoleSignals = pathToFileURL(
-  fileURLToPath(new URL('./windows-console-signals.mjs', import.meta.url)),
-).href
+const consoleSignals = fileURLToPath(
+  new URL('./windows-console-signals.cjs', import.meta.url),
+)
 
 export function launchGateway(
   t: TestContext,
@@ -98,7 +98,7 @@ export function launchGateway(
   const windows = process.platform === 'win32'
   const { command, argv, nodeOptions } = gatewayCommand(
     args,
-    windows ? [...nodeArgs, '--import', consoleSignals] : nodeArgs,
+    windows ? [...nodeArgs, '--require', consoleSignals] : nodeArgs,
   )
   const child = spawn(command, argv, {
     // On Windows a channel for the signals its console would deliver.

@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   suite:
-    name: Full suite ${{ matrix.shard }}/8 on Node ${{ matrix.node }} / windows-latest
+    name: Windows probe ${{ matrix.shard }}/4 on Node ${{ matrix.node }} / windows-latest
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         node: ['24']
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     env:
       SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
     steps:
@@ -29,7 +29,7 @@ jobs:
       - run: npm run build
       - name: Every test file
         shell: bash
-        run: node --import tsx --test --test-concurrency=1 --test-force-exit --test-timeout=240000 --test-shard=${{ matrix.shard }}/8 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml 'tests/**/*.test.ts'
+        run: node --import tsx --test --test-concurrency=1 --test-force-exit --test-timeout=240000 --test-shard=${{ matrix.shard }}/4 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml $(if [ -s .github/windows-probe-files.txt ]; then cat .github/windows-probe-files.txt; else echo 'tests/**/*.test.ts'; fi)
       - if: always()
         uses: actions/upload-artifact@v4
         with:

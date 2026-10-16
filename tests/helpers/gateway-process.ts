@@ -142,8 +142,13 @@ export function launchGateway(
     env: {
       ...process.env,
       ...env,
+      // The executable's preloads join the test's own NODE_OPTIONS, if it set
+      // any, rather than replace them.
       ...(nodeOptions && {
-        NODE_OPTIONS: [process.env.NODE_OPTIONS, nodeOptions]
+        NODE_OPTIONS: [
+          env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS,
+          nodeOptions,
+        ]
           .filter(Boolean)
           .join(' '),
       }),

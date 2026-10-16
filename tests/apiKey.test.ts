@@ -491,7 +491,9 @@ const stateless = modes[2]
 
 function keyFile(t: TestContext, content: string) {
   const directory = mkdtempSync(join(tmpdir(), 'api-key-'))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  t.after(() =>
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10 }),
+  )
   const path = join(directory, 'keys')
   writeFileSync(path, content)
   return path

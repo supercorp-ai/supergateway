@@ -72,7 +72,9 @@ for (const mode of MODES) {
       await gateway.ready()
 
       const config = mkdtempSync(join(tmpdir(), 'supergateway-claude-'))
-      t.after(() => rmSync(config, { recursive: true, force: true }))
+      t.after(() =>
+        rmSync(config, { recursive: true, force: true, maxRetries: 10 }),
+      )
       const env = { ...process.env, CLAUDE_CONFIG_DIR: config }
       const claude = (args: string[]) =>
         execFileSync('claude', args, { env, encoding: 'utf8', timeout: 90000 })

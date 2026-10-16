@@ -35,7 +35,7 @@ type Gateway = ReturnType<typeof launchGateway>
 // A config file in a fresh directory, removed when the test ends.
 const writeConfig = (t: TestContext, value: unknown, name = 'servers.json') => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-config-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const path = join(dir, name)
   writeFileSync(
     path,
@@ -286,7 +286,7 @@ test('--checkConfig without --config is an error', options, async (t) => {
 
 test('a config file that cannot be read is an error', options, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-config-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const file = join(dir, 'missing.json')
   const result = await outcome(launchGateway(t, ['--config', file]))
   assert.deepEqual(result, {
@@ -384,7 +384,7 @@ test(
   options,
   async (t) => {
     const cwd = mkdtempSync(join(tmpdir(), 'sg-cwd-'))
-    t.after(() => rmSync(cwd, { recursive: true, force: true }))
+    t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 10 }))
     const { port } = await serve(
       t,
       {
@@ -424,7 +424,7 @@ test(
   options,
   async (t) => {
     const bin = mkdtempSync(join(tmpdir(), 'sg-bin-'))
-    t.after(() => rmSync(bin, { recursive: true, force: true }))
+    t.after(() => rmSync(bin, { recursive: true, force: true, maxRetries: 10 }))
     if (process.platform === 'win32')
       writeFileSync(join(bin, 'envpeer.cmd'), `@"${node}" "${envPeer}" %*\r\n`)
     else
@@ -462,7 +462,7 @@ test(
 
 test('"stdio" runs in a shell, with "env" and "cwd"', options, async (t) => {
   const cwd = mkdtempSync(join(tmpdir(), 'sg-cwd-'))
-  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  t.after(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 10 }))
   const { port } = await serve(
     t,
     {

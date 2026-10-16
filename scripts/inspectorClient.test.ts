@@ -27,6 +27,13 @@ import {
 const enabled = process.env.SUPERGATEWAY_REAL_SERVERS === '1'
 const entry = process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js'
 const INSPECTOR = '@modelcontextprotocol/inspector@2.8.0'
+// The Inspector's own `engines`: it supports Node 22.19 and later. On Node 20
+// npm 10 cannot even install it (its resolver crashes on the Inspector's peer
+// dependencies, as in 4.2.1-rc.1's canary), and nobody runs it there. The
+// gateway on Node 20 still serves the same real servers to the SDK client
+// (realServers.test.ts).
+const [major, minor] = process.versions.node.split('.').map(Number)
+const inspectorRuns = major > 22 || (major === 22 && minor >= 19)
 
 // Installed once per machine; later runs start from it.
 function installInspector() {
@@ -210,7 +217,10 @@ const PATHS: Array<{
 test(
   'the Inspector CLI sees server-everything identically through every gateway path',
   {
-    skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1',
+    skip:
+      (!enabled && 'set SUPERGATEWAY_REAL_SERVERS=1') ||
+      (!inspectorRuns &&
+        `the Inspector requires Node 22.19 or later, not ${process.version}`),
     timeout: 20 * 60000,
   },
   async (t) => {

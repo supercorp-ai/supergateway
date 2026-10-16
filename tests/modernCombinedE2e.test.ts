@@ -53,7 +53,7 @@ const legacy = {
 
 const scratch = (t: TestContext) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-modern-combined-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   return dir
 }
 

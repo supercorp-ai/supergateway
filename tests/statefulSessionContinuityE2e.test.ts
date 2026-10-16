@@ -152,10 +152,15 @@ test(
   'an open GET stream prevents idle expiry and a new request cancels pending expiry',
   { timeout: gatewayTimeout(20000) },
   async (t) => {
-    const b = await setup(t, 1200)
+    // The idle timeout and the waits past it scale together with the runner,
+    // as requestTimeout does: a soak lane with the resource soak beside it took
+    // longer than 1.2 s to reopen the stream below, and the session expired.
+    const idle = requestTimeout(1200)
+    const pastIdle = idle + requestTimeout(500)
+    const b = await setup(t, idle)
     const a = await b.open()
     const held = await b.stream(a.session)
-    await delay(1700)
+    await delay(pastIdle)
     await b.step(a)
     await held.abort()
     await b.gateway.waitFor(
@@ -164,7 +169,7 @@ test(
     )
     await delay(300)
     const renewed = await b.stream(a.session)
-    await delay(1700)
+    await delay(pastIdle)
     await b.step(a)
     await renewed.abort()
     await b.gateway.waitFor(

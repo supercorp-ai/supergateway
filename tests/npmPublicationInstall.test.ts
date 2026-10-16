@@ -28,7 +28,9 @@ test(
   { timeout: 60000 },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'npm-publication-'))
-    t.after(() => rmSync(root, { recursive: true, force: true }))
+    t.after(() =>
+      rmSync(root, { recursive: true, force: true, maxRetries: 10 }),
+    )
     const source = join(root, 'source')
     const output = join(root, 'output')
     mkdirSync(source)

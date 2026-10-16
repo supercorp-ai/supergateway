@@ -51,7 +51,7 @@ it has every lane.
   and require the same answers as a direct stdio connection. The MCP
   Inspector's CLI does the same against server-everything
   (`scripts/inspectorClient.test.ts`), including as the stdio client of both
-  bridges. The workflow runs both once before the clock starts, so a registry
+  bridges, on the Node versions the Inspector supports (22.19 and later). The workflow runs both once before the clock starts, so a registry
   outage fails fast.
 - A job of its own on each platform runs sustained scenarios
   (`scripts/soak-scenarios.test.ts`):

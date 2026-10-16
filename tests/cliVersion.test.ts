@@ -15,7 +15,9 @@ test('CLI version belongs to the installed gateway with hoisted dependencies', (
   // Keep copied code in the project so subprocess coverage loaders can follow it.
   mkdirSync(resolve('.release'), { recursive: true })
   const fixture = mkdtempSync(resolve('.release/gateway-version-'))
-  t.after(() => rmSync(fixture, { recursive: true, force: true }))
+  t.after(() =>
+    rmSync(fixture, { recursive: true, force: true, maxRetries: 10 }),
+  )
   const installed = join(fixture, 'gateway')
   mkdirSync(installed)
   cpSync(resolve('dist'), join(installed, 'dist'), { recursive: true })

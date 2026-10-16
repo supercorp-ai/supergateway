@@ -59,7 +59,7 @@ const remote = async (t: TestContext) => {
 
 const writeConfig = (t: TestContext, value: unknown) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-remote-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const path = join(dir, 'servers.json')
   writeFileSync(path, JSON.stringify(value, null, 2))
   return path

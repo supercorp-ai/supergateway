@@ -47,7 +47,9 @@ async function setup(
     ],
     { ...env, CONTINUATION_TRACE: tracePath },
   )
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  t.after(() =>
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10 }),
+  )
   await gateway.ready()
   const trace = (): Event[] => {
     try {

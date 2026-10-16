@@ -14,7 +14,11 @@ test(
   },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'soak-fail-fast-'))
-    t.after(() => rmSync(root, { recursive: true, force: true }))
+    t.after(() =>
+      // Retried: on Windows a child just stopped may still be releasing a file
+      // in it (ENOTEMPTY), as on main's run for 4.2.1-rc.1.
+      rmSync(root, { recursive: true, force: true, maxRetries: 10 }),
+    )
     const events: any[] = []
     const group = createSoakCommandGroup({
       root,
@@ -69,7 +73,7 @@ test(
 
 test('a timed-out soak command fails instead of allowing another cycle', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-timeout-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -90,7 +94,7 @@ test('a timed-out soak command fails instead of allowing another cycle', async (
 // took four times as long as usual, with every test passing as it went.
 test('a command that keeps reporting may take longer than it may stay silent', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-slow-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -122,7 +126,7 @@ test('a command that keeps reporting may take longer than it may stay silent', a
 
 test('a command that goes silent is stopped as stuck, and the failure says so', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-stuck-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -156,7 +160,7 @@ test('a command that goes silent is stopped as stuck, and the failure says so', 
 
 test('a command that never says anything is stuck from the start', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-mute-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const group = createSoakCommandGroup({ root, events() {}, env: process.env })
   t.after(() => group.cancel('test cleanup'))
   const started = Date.now()
@@ -172,7 +176,7 @@ test('a command that never says anything is stuck from the start', async (t) => 
 
 test('a command that never stops reporting is stopped at its cap', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-endless-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -197,7 +201,7 @@ test('a command that never stops reporting is stopped at its cap', async (t) => 
 
 test('successful soak commands complete without cancelling the group', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-success-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const group = createSoakCommandGroup({ root, events() {}, env: process.env })
   await Promise.all([
     group.run('one', ['-e', 'console.log(42)'], 5000),
@@ -213,7 +217,7 @@ test('successful soak commands complete without cancelling the group', async (t)
 // 35270724649 indistinguishable from the one that genuinely failed.
 test('a runner-cancelled command is reported as cancelled, not as a failure', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-cancelled-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -254,7 +258,7 @@ test('a runner-cancelled command is reported as cancelled, not as a failure', as
 
 test('a genuine failure is never reported as an external cancellation', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-genuine-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,
@@ -276,7 +280,7 @@ test('a genuine failure is never reported as an external cancellation', async (t
 
 test('with keepGoing a failed soak command is recorded and everything else runs on', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'soak-keep-going-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   const events: any[] = []
   const group = createSoakCommandGroup({
     root,

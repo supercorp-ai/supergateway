@@ -61,8 +61,12 @@ it has every lane.
 - A separate Ubuntu job runs the Python and Go SDK and Ruby client batteries
   (`tests/clients/`) over every output transport for the whole phase
   (`scripts/soak-languages.mjs`).
-- Windows runs the portable protocol and continuation checks, including fixture
-  child cleanup. It does not claim the POSIX RSS, descriptor or process-group tests.
+- Windows runs every test group the other platforms run, the lifecycle group
+  (shutdown, child exits, stale replies, session races) included, with each
+  server's tree ended by `taskkill` as the gateway does there. It does not yet
+  run the resource soak or the sustained scenarios: their RSS and descriptor
+  gates are measured with `ps` and `lsof`, and a Windows handle count, which
+  also counts threads and events, needs gates of its own.
 
 The canary uses 60 seconds of active load, **plus** the finite five-minute
 continuation test and cleanup. It usually takes more than ten minutes. Each long

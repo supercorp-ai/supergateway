@@ -9,18 +9,22 @@
 // client every other test uses: one process per call, the legacy protocol era
 // an ad-hoc run negotiates, and its own argument handling. As a stdio client it
 // also launches both bridges, the way an MCP host does. It has no WebSocket
-// transport. POSIX only, like the real servers.
+// transport. On every platform, like the real servers.
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
-import { realServers, installedCommand } from './real-servers/servers.js'
+import {
+  installedCommand,
+  npm,
+  realServers,
+  shellWord,
+} from './real-servers/servers.js'
 
-const enabled =
-  process.env.SUPERGATEWAY_REAL_SERVERS === '1' && process.platform !== 'win32'
+const enabled = process.env.SUPERGATEWAY_REAL_SERVERS === '1'
 const entry = process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js'
 const INSPECTOR = '@modelcontextprotocol/inspector@2.8.0'
 
@@ -32,11 +36,7 @@ function installInspector() {
     'node_modules/@modelcontextprotocol/inspector/clients/launcher/build/index.js',
   )
   if (!existsSync(bin))
-    execFileSync(
-      'npm',
-      ['install', '--prefix', root, '--no-audit', '--no-fund', INSPECTOR],
-      { stdio: 'ignore', timeout: 5 * 60000 },
-    )
+    npm(['install', '--prefix', root, '--no-audit', '--no-fund', INSPECTOR])
   return bin
 }
 
@@ -126,9 +126,6 @@ async function observe(
   return JSON.parse(normalize?.(json) ?? json) as Record<string, object>
 }
 
-const shellWord = (word: string) =>
-  /^[\w@./:=,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
-
 const gatewayFor = async (t: TestContext, argv: string[], output: string[]) => {
   const port = await unusedPort()
   const gateway = launchGateway(t, [
@@ -213,7 +210,7 @@ const PATHS: Array<{
 test(
   'the Inspector CLI sees server-everything identically through every gateway path',
   {
-    skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1 (POSIX)',
+    skip: !enabled && 'set SUPERGATEWAY_REAL_SERVERS=1',
     timeout: 20 * 60000,
   },
   async (t) => {

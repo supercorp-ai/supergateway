@@ -41,19 +41,20 @@ it has every lane.
 - Since 4.0.0 they also cover what the bridges relay from the upstream server
   (notifications, sampling, roots, elicitation) and cancel, one child per
   WebSocket connection, resources and prompts, and the stateless handshake.
-- POSIX lanes also exercise legacy transports, shutdown and SDK 1.30/1.4 clients.
-- POSIX resource tests keep six gateways alive: SSE, WebSocket, legacy stateful
+- Every lane also exercises legacy transports, shutdown and SDK 1.30/1.4 clients.
+- Every lane's resource test keeps six gateways alive: SSE, WebSocket, legacy stateful
   and stateless HTTP, modern HTTP, and modern signed continuations. They check
   call results, reconnects, cancellation, Unicode and sustained continuation
   churn. One legacy stateful session stays open throughout active load.
-- POSIX lanes also run six real MCP servers, pinned from npm and PyPI
+- Every lane also runs six real MCP servers, pinned from npm and PyPI
   (`scripts/real-servers/servers.ts`), through every gateway path each cycle,
   and require the same answers as a direct stdio connection. The MCP
   Inspector's CLI does the same against server-everything
   (`scripts/inspectorClient.test.ts`), including as the stdio client of both
   bridges. The workflow runs both once before the clock starts, so a registry
   outage fails fast.
-- POSIX lanes also run sustained scenarios (`scripts/soak-scenarios.test.ts`):
+- A job of its own on each platform runs sustained scenarios
+  (`scripts/soak-scenarios.test.ts`):
   long-lived SSE and Streamable HTTP bridges relaying logs, progress and
   sampling, cancelling calls, carrying 4 MB replies and surviving upstream
   restarts; busy and idle WebSocket clients side by side; and servers crashing
@@ -61,12 +62,12 @@ it has every lane.
 - A separate Ubuntu job runs the Python and Go SDK and Ruby client batteries
   (`tests/clients/`) over every output transport for the whole phase
   (`scripts/soak-languages.mjs`).
-- Windows runs every test group the other platforms run, the lifecycle group
-  (shutdown, child exits, stale replies, session races) included, with each
-  server's tree ended by `taskkill` as the gateway does there. It does not yet
-  run the resource soak or the sustained scenarios: their RSS and descriptor
-  gates are measured with `ps` and `lsof`, and a Windows handle count, which
-  also counts threads and events, needs gates of its own.
+- Windows runs everything the other platforms run. Each server's tree is ended
+  by `taskkill`, as the gateway does there; a server starts under cmd.exe, as
+  `--stdio` starts one for Windows users; gateways are stopped by the signal
+  their console would raise; and the resource gates read the working set and
+  the open-handle count, which allows 24 handles of growth, not 8 (see
+  `descriptorMargin` in `tests/helpers/process-tree.ts`).
 
 The canary uses 60 seconds of active load, **plus** the finite five-minute
 continuation test and cleanup. It usually takes more than ten minutes. Each long

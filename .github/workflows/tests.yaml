@@ -208,10 +208,21 @@ jobs:
   # event is refused by the Python and Go clients, accepted by TypeScript, and
   # capped at 16 MiB by Rust — four SDKs, four answers. That is GW-023, a
   # specification gap rather than a regression, and not this job's business.
+  #
+  # Windows too: a client there reaches a gateway whose servers run under
+  # cmd.exe, and whose pipes are written synchronously.
   python-client:
-    name: Cross-client battery
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Cross-client battery${{ matrix.os == 'windows-latest' && ' / windows-latest' || '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 25 || 15 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    # The same commands on both: Windows runs them in Git Bash.
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -249,16 +260,14 @@ jobs:
           # imports, and the build refuses to proceed without them. `tidy` keeps
           # the version pinned on the line above and only fills in the sums.
           go mod tidy
-          go build -o "$RUNNER_TEMP/go-battery" .
+          go build -o "$RUNNER_TEMP/go-battery$([ "$RUNNER_OS" = Windows ] && echo .exe)" .
       - name: Conformance battery — Node
         timeout-minutes: 6
         run: node tests/clients/run-battery.mjs node
       - name: Conformance battery — Python
         timeout-minutes: 6
-        run: |
-          printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
-          chmod +x "$RUNNER_TEMP/pybattery"
-          node tests/clients/run-battery.mjs python "$RUNNER_TEMP/pybattery"
+        # The interpreter and the script, not a #! wrapper, which Windows cannot run.
+        run: node tests/clients/run-battery.mjs python python tests/clients/battery.py
       # The battery tests Python clients; this is the other direction (#85): a
       # Python MCP server behind the stateless gateway, which must initialize
       # each per-request child itself.
@@ -268,10 +277,10 @@ jobs:
           TS_NODE_TRANSPILE_ONLY: 'true'
           SUPERGATEWAY_TEST_PYTHON: python
           SUPERGATEWAY_REQUIRE_PYTHON: '1'
-        run: node --test --experimental-loader ts-node/esm tests/pythonServerStateless.test.ts
+        run: node --import tsx --test tests/pythonServerStateless.test.ts
       - name: Conformance battery — Go
         timeout-minutes: 6
-        run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery"
+        run: node tests/clients/run-battery.mjs go "$RUNNER_TEMP/go-battery$([ "$RUNNER_OS" = Windows ] && echo .exe)"
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -283,10 +292,7 @@ jobs:
         run: gem install ruby-mcp-client -v 2.1.0
       - name: Conformance battery — Ruby
         timeout-minutes: 6
-        run: |
-          printf '#!/bin/sh\nexec ruby "%s/tests/clients/battery.rb" "$@"\n' "$PWD" > "$RUNNER_TEMP/rbbattery"
-          chmod +x "$RUNNER_TEMP/rbbattery"
-          node tests/clients/run-battery.mjs ruby "$RUNNER_TEMP/rbbattery"
+        run: node tests/clients/run-battery.mjs ruby ruby tests/clients/battery.rb
 
   # The gateway's behaviour *is* the SDK's behaviour, and the lockfile pins one
   # version while `^1.18.2` lets consumers resolve anything up to the latest.

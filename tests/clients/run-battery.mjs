@@ -1,9 +1,11 @@
 // Runs one battery driver against every output transport and fails the process
 // if any scenario fails.
 //
-// Usage: node tests/clients/run-battery.mjs <driver> [binary]
+// Usage: node tests/clients/run-battery.mjs <driver> [command...]
 //   driver: node | python | go | ruby
-//   binary: executable for the non-node drivers
+//   command: how to run the non-node drivers: an executable, or a program and
+//     its first arguments (`python tests/clients/battery.py`), which is how
+//     Windows runs a script, having no #! line to read
 //
 // The gateway is launched with a retry, because asking the OS for a free port
 // and then handing it to a child leaves a window in which something else can
@@ -17,7 +19,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const DRIVER = process.argv[2]
-const BIN = process.argv[3]
+const COMMAND = process.argv.slice(3)
 const PEER = process.env.BATTERY_PEER ?? 'node tests/clients/battery-peer.mjs'
 
 // Deliberately below the smallest limit any SDK imposes on a single SSE event
@@ -144,12 +146,11 @@ for (const mode of MODES) {
 
   let rows
   try {
-    const out = await driver(
-      DRIVER === 'node' ? 'node' : BIN,
-      DRIVER === 'node'
-        ? ['tests/clients/battery.mjs', url, kind]
-        : [url, kind],
-    )
+    const out = await driver(DRIVER === 'node' ? 'node' : COMMAND[0], [
+      ...(DRIVER === 'node' ? ['tests/clients/battery.mjs'] : COMMAND.slice(1)),
+      url,
+      kind,
+    ])
     rows = JSON.parse(out.trim().split('\n').pop())
   } catch (e) {
     rows = [

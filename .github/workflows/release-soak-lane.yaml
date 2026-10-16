@@ -66,9 +66,10 @@ jobs:
       # Group and request timeouts follow it through gatewayTimeout() and
       # requestTimeout().
       SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
-      # Real, pinned MCP servers from npm and PyPI (scripts/realServers.test.ts).
-      # POSIX only: the servers start through a shell command line.
-      SUPERGATEWAY_REAL_SERVERS: ${{ matrix.os != 'windows-latest' && '1' || '' }}
+      # Real, pinned MCP servers from npm and PyPI (scripts/realServers.test.ts),
+      # on every platform: through the gateway each starts in its shell, sh or
+      # cmd.exe.
+      SUPERGATEWAY_REAL_SERVERS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,13 +83,11 @@ jobs:
       - name: Install exact published RC and verify its digest
         run: npm exec -- node scripts/install-soak-artifact.mjs
       - name: Set up uv for the Python servers
-        if: matrix.os != 'windows-latest'
         uses: astral-sh/setup-uv@v6
       # Downloads and caches the pinned servers and Inspector before the clock
       # starts, and fails fast if a registry is down or a server misbehaves
       # rather than after hours of soak.
       - name: Real servers and the Inspector agree through every gateway path
-        if: matrix.os != 'windows-latest'
         timeout-minutes: 45
         run: node --import tsx --test --test-concurrency=1 scripts/realServers.test.ts scripts/inspectorClient.test.ts
       - name: Exercise published RC
@@ -110,11 +109,19 @@ jobs:
   # whole phase, through every output transport. The toolchains and client
   # versions are the ones the cross-client CI job pins (tests.yaml).
   languages:
-    name: ${{ inputs.label }} / Python, Go and Ruby clients / ubuntu-latest
-    runs-on: ubuntu-latest
+    name: ${{ inputs.label }} / Python, Go and Ruby clients / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     env:
       SOAK_DIRECTORY: .release/languages
+    # The same commands on both: Windows runs them in Git Bash.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -140,27 +147,25 @@ jobs:
           go mod init battery
           go get github.com/modelcontextprotocol/go-sdk@v0.2.0
           go mod tidy
-          go build -o "$RUNNER_TEMP/go-battery" .
+          go build -o "$RUNNER_TEMP/go-battery$([ "$RUNNER_OS" = Windows ] && echo .exe)" .
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
       - name: Install the Ruby MCP client
         run: gem install ruby-mcp-client -v 2.1.0
+      # Each driver as its interpreter and script, not a #! wrapper, which
+      # Windows cannot run.
       - name: Exercise published RC with the Python, Go and Ruby clients
-        run: |
-          printf '#!/bin/sh\nexec python "%s/tests/clients/battery.py" "$@"\n' "$PWD" > "$RUNNER_TEMP/pybattery"
-          printf '#!/bin/sh\nexec ruby "%s/tests/clients/battery.rb" "$@"\n' "$PWD" > "$RUNNER_TEMP/rbbattery"
-          chmod +x "$RUNNER_TEMP/pybattery" "$RUNNER_TEMP/rbbattery"
-          node scripts/soak-languages.mjs
+        run: node scripts/soak-languages.mjs
         env:
-          SOAK_BATTERY_PYTHON: ${{ runner.temp }}/pybattery
-          SOAK_BATTERY_GO: ${{ runner.temp }}/go-battery
-          SOAK_BATTERY_RUBY: ${{ runner.temp }}/rbbattery
+          SOAK_BATTERY_PYTHON: '["python", "tests/clients/battery.py"]'
+          SOAK_BATTERY_GO: ${{ runner.temp }}/go-battery${{ runner.os == 'Windows' && '.exe' || '' }}
+          SOAK_BATTERY_RUBY: '["ruby", "tests/clients/battery.rb"]'
       - name: Preserve results, including failures
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soak-${{ inputs.label }}-languages
+          name: soak-${{ inputs.label }}-languages-${{ matrix.os }}
           path: .release/languages/
           retention-days: 14
           if-no-files-found: warn

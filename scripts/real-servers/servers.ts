@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 /**
@@ -52,7 +52,9 @@ export function installedCommand(argv: string[]): string[] {
   const install = (command: string, commandArgs: string[]) =>
     execFileSync(command, commandArgs, { stdio: 'ignore', timeout: 5 * 60000 })
   if (runner === 'uvx') {
-    const bin = join(root, 'bin', name)
+    // A Windows venv keeps its programs in Scripts\, as .exe files.
+    const [scripts, exe] = windows ? ['Scripts', '.exe'] : ['bin', '']
+    const bin = join(root, scripts, `${name}${exe}`)
     if (!existsSync(bin)) {
       install('uv', ['venv', '--quiet', root])
       install('uv', [
@@ -61,7 +63,7 @@ export function installedCommand(argv: string[]): string[] {
           'install',
           '--quiet',
           '--python',
-          join(root, 'bin', 'python'),
+          join(root, scripts, `python${exe}`),
         ],
         `${name}==${spec.slice(at + 1)}`,
       ])
@@ -70,17 +72,53 @@ export function installedCommand(argv: string[]): string[] {
   }
   const dir = join(root, 'node_modules', name)
   if (!existsSync(join(dir, 'package.json')))
-    install('npm', [
-      'install',
-      '--prefix',
-      root,
-      '--no-audit',
-      '--no-fund',
-      spec,
-    ])
+    npm(['install', '--prefix', root, '--no-audit', '--no-fund', spec])
   const { bin } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const main = typeof bin === 'string' ? bin : Object.values(bin)[0]
   return [process.execPath, join(dir, main as string), ...args]
+}
+
+const windows = process.platform === 'win32'
+
+/**
+ * Runs npm. Not by name: on Windows that is npm.cmd, which only a shell runs.
+ * Node ships npm's own script beside itself (lib/node_modules on POSIX,
+ * node_modules on Windows), and runs it the same way everywhere.
+ */
+export function npm(args: string[]) {
+  const cli = windows
+    ? join(
+        dirname(process.execPath),
+        'node_modules',
+        'npm',
+        'bin',
+        'npm-cli.js',
+      )
+    : join(
+        dirname(process.execPath),
+        '..',
+        'lib',
+        'node_modules',
+        'npm',
+        'bin',
+        'npm-cli.js',
+      )
+  execFileSync(process.execPath, [cli, ...args], {
+    stdio: 'ignore',
+    timeout: 5 * 60000,
+  })
+}
+
+/**
+ * One word of a `--stdio` command line, quoted for the shell that runs it:
+ * sh on POSIX, cmd.exe on Windows. cmd.exe takes a word in double quotes, and
+ * has no way to escape one inside them, so such a word is refused.
+ */
+export function shellWord(word: string) {
+  if (/^[\w@./:=,-]+$/.test(word)) return word
+  if (!windows) return `'${word.replace(/'/g, `'\\''`)}'`
+  if (/^[\w@./\\:=, -]+$/.test(word)) return `"${word}"`
+  throw new Error(`cannot quote ${JSON.stringify(word)} for cmd.exe`)
 }
 
 const tool = (name: string, args: Record<string, unknown> = {}) =>

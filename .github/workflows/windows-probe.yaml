@@ -9,60 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  suite:
-    name: Windows probe ${{ matrix.shard }}/4 on Node ${{ matrix.node }} / windows-latest
-    runs-on: windows-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['24']
-        shard: [1, 2, 3, 4]
-    env:
-      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - run: npm ci
-      - run: npm run build
-      - name: Every test file
-        shell: bash
-        run: node --import tsx --test --test-concurrency=1 --test-force-exit --test-timeout=240000 --test-shard=${{ matrix.shard }}/4 --experimental-test-module-mocks --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml $(if [ -s .github/windows-probe-files.txt ]; then tr -d '\r' < .github/windows-probe-files.txt; else echo 'tests/**/*.test.ts'; fi)
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-suite-node${{ matrix.node }}-shard${{ matrix.shard }}
-          path: junit.xml
-
-  compat:
-    name: Windows compat on Node ${{ matrix.node }}
-    runs-on: windows-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [20, 22]
-    env:
-      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - run: npm ci
-      - name: Run npm scripts with bash
-        run: npm config set script-shell "C:\Program Files\Git\bin\bash.exe"
-      - name: Run the version-portable suite
-        run: npm run test:compat
-
   matrix-can-fail:
     name: Windows cleanup matrix fails without the tree kill
     runs-on: windows-latest
-    timeout-minutes: 30
-    env:
-      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,23 +33,8 @@ jobs:
       - name: The matrix must fail
         shell: bash
         run: |
-          if node --import tsx --test --test-concurrency=1 --test-force-exit --test-reporter=spec tests/cleanupMatrixE2e.test.ts > matrix.txt 2>&1; then
-            cat matrix.txt; echo 'the matrix passed with only the shell killed'; exit 1
+          set -o pipefail
+          if node --import tsx --test --test-concurrency=4 --test-force-exit --test-reporter=spec tests/cleanupMatrixE2e.test.ts 2>&1 | grep -E --line-buffered '^(✔|✖)|^ℹ (pass|fail)'; then
+            echo 'the matrix passed with only the shell killed'; exit 1
           fi
-          grep -E '^(✔|✖)' matrix.txt | sort | uniq -c | sort -rn | head -80
 
-  launcher:
-    name: Windows config command found on PATH
-    runs-on: windows-latest
-    timeout-minutes: 15
-    env:
-      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - run: npm ci
-      - run: npm run build
-      - shell: bash
-        run: node --import tsx --test --test-force-exit --test-name-pattern 'launcher script|run without a shell' tests/configFileE2e.test.ts

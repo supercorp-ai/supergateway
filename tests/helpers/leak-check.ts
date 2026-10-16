@@ -1,5 +1,5 @@
 import { afterEach } from 'node:test'
-import { descendantsOf } from './process-tree.js'
+import { descendantsOf, processesPerServer } from './process-tree.js'
 
 /**
  * A process-accumulation check that every test gets for free.
@@ -25,7 +25,9 @@ import { descendantsOf } from './process-tree.js'
  * The budget is per gateway, not per test, and deliberately loose: this is here
  * to catch unbounded growth, not to pin an exact count.
  */
-const BUDGET = Number(process.env.SUPERGATEWAY_CHILD_BUDGET ?? 8)
+// In servers; a Windows server is two processes (see processesPerServer).
+const BUDGET =
+  Number(process.env.SUPERGATEWAY_CHILD_BUDGET ?? 8) * processesPerServer
 
 const watched = new Map<number, { label: string; startedAt: number }>()
 
@@ -56,7 +58,7 @@ afterEach(() => {
   watched.clear()
   if (offenders.length)
     throw Error(
-      `Processes accumulated beyond the budget of ${BUDGET}:\n  ${offenders.join('\n  ')}\n` +
+      `Processes accumulated beyond the budget of ${BUDGET} (${BUDGET / processesPerServer} servers):\n  ${offenders.join('\n  ')}\n` +
         'Raise SUPERGATEWAY_CHILD_BUDGET only if the growth is genuinely expected.',
     )
 })

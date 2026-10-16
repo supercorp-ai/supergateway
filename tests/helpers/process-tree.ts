@@ -343,3 +343,11 @@ export function processUsage(
  * A leak of one handle per connection passes 24 within minutes of a soak.
  */
 export const descriptorMargin = process.platform === 'win32' ? 24 : 8
+
+/**
+ * Processes one stdio server is: on Windows cmd.exe and the server under it
+ * (`--stdio` runs through the shell, and cmd.exe has no `exec`), elsewhere the
+ * server alone once its shell has exec'd it. Budgets that count descendants
+ * are budgets of servers times this.
+ */
+export const processesPerServer = process.platform === 'win32' ? 2 : 1

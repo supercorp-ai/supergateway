@@ -55,3 +55,16 @@ jobs:
       - run: node tests/clients/run-battery.mjs node
         env:
           BATTERY_TRACE: '1'
+
+  large-reply:
+    name: Windows large reply over Streamable HTTP
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - run: node .github/experiments/large-reply.mjs

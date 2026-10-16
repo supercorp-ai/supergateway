@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { processInfo, stopped, reapAfter } from './helpers/process-tree.js'
+import {
+  isAlive,
+  processInfo,
+  stopped,
+  reapAfter,
+} from './helpers/process-tree.js'
 import { auditClient } from './helpers/audit-client.js'
 import {
   gatewayTimeout,
@@ -89,7 +94,9 @@ for (const termination of ['DELETE', 'idle-expiry']) {
       const open = async (id: number) => {
         const result = await rpc(url, initialize(id))
         const pid = Number(result.messages[0].result.serverInfo.version)
-        const group = processInfo(pid).group
+        // Windows has no groups, and reading the process table there takes
+        // longer than these sessions' 500 ms timeout.
+        const group = process.platform === 'win32' ? 0 : processInfo(pid).group
         reapAfter(t, pid, group)
         return {
           pid,
@@ -128,7 +135,7 @@ for (const termination of ['DELETE', 'idle-expiry']) {
         await response.text()
       }
       await stopped(affected.pid)
-      assert.equal(processInfo(healthy.pid).alive, true)
+      assert.equal(isAlive(healthy.pid), true)
       const identity = await rpc(
         url,
         {

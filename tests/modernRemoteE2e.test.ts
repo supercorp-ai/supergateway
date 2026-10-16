@@ -228,7 +228,9 @@ test(
   options,
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'modern-remote-'))
-    t.after(() => rmSync(directory, { recursive: true, force: true }))
+    t.after(() =>
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10 }),
+    )
     const tracePath = join(directory, 'trace.jsonl')
     const remote = await remoteGateway(
       t,

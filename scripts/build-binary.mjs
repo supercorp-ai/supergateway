@@ -64,7 +64,7 @@ if (target.startsWith('undefined')) {
 }
 
 const work = join(repository, '.binary', target)
-rmSync(work, { recursive: true, force: true })
+rmSync(work, { recursive: true, force: true, maxRetries: 10 })
 mkdirSync(work, { recursive: true })
 // COPYFILE_DISABLE keeps macOS tar from adding ._ metadata files.
 const run = (command, args) =>

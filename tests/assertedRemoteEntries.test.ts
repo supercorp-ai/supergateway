@@ -19,7 +19,7 @@ const options = { timeout: gatewayTimeout(30000) }
 const serve = async (t: TestContext, config: Record<string, unknown>) => {
   const port = await unusedPort()
   const dir = mkdtempSync(join(tmpdir(), 'sg-asserted-remote-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const file = join(dir, 'servers.json')
   writeFileSync(file, JSON.stringify({ port, ...config }, null, 2))
   const gateway = launchGateway(t, ['--config', file, '--logFormat', 'json'])

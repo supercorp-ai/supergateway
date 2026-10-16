@@ -451,5 +451,5 @@ for await (const line of readline.createInterface({input: process.stdin})) {
   }
   if (process.env.SUPERGATEWAY_KEEP_PACKAGE === '1')
     console.log(`Retained package installation: ${temporary}`)
-  else rmSync(temporary, { recursive: true, force: true })
+  else rmSync(temporary, { recursive: true, force: true, maxRetries: 10 })
 }

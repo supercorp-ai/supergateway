@@ -216,7 +216,7 @@ test('each bridge lists its tool settings at start', options, async (t) => {
 
 const writeConfig = (t: TestContext, value: unknown) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-tools-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const path = join(dir, 'servers.json')
   writeFileSync(path, JSON.stringify(value, null, 2))
   return path
@@ -340,7 +340,9 @@ for (const stateful of [false, true])
     options,
     async (t) => {
       const dir = mkdtempSync(join(tmpdir(), 'sg-tools-modern-'))
-      t.after(() => rmSync(dir, { recursive: true, force: true }))
+      t.after(() =>
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10 }),
+      )
       const tracePath = join(dir, 'trace.jsonl')
       const port = await unusedPort()
       const gateway = launchGateway(

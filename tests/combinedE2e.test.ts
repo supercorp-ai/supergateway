@@ -62,7 +62,7 @@ const remote = async (t: TestContext) => {
 
 const serve = async (t: TestContext, config: Record<string, unknown>) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-combined-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const file = join(dir, 'servers.json')
   const port = await unusedPort()
   writeFileSync(file, JSON.stringify({ port, ...config }, null, 2))
@@ -480,7 +480,7 @@ const stdioClient = async (t: TestContext, file: string) => {
 
 const writeConfig = (t: TestContext, config: Record<string, unknown>) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-combined-stdio-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const file = join(dir, 'servers.json')
   writeFileSync(file, JSON.stringify(config, null, 2))
   return file
@@ -675,7 +675,13 @@ test(
   options,
   async (t) => {
     const pidFile = join(mkdtempSync(join(tmpdir(), 'sg-lingers-')), 'pid')
-    t.after(() => rmSync(join(pidFile, '..'), { recursive: true, force: true }))
+    t.after(() =>
+      rmSync(join(pidFile, '..'), {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+      }),
+    )
     const file = writeConfig(t, {
       mcpServers: {
         all: {

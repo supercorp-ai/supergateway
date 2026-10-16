@@ -34,7 +34,9 @@ async function until(
 async function setup(t: TestContext, stateful: boolean) {
   const directory = mkdtempSync(join(tmpdir(), 'rc1-lifetime-'))
   const tracePath = join(directory, 'trace.jsonl')
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  t.after(() =>
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10 }),
+  )
   const port = await unusedPort()
   const gateway = launchGateway(
     t,

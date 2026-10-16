@@ -81,7 +81,7 @@ const pidDirectory = (t: TestContext) => {
         } catch {
           // Gone in between.
         }
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
   })
   return dir
 }

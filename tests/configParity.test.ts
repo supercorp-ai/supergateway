@@ -269,7 +269,9 @@ for (const item of cases) {
       ])
       assert.deepEqual(exit, { code: 0, signal: null })
       const dir = mkdtempSync(join(tmpdir(), 'sg-parity-'))
-      t.after(() => rmSync(dir, { recursive: true, force: true }))
+      t.after(() =>
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10 }),
+      )
       const file = join(dir, 'config.json')
       writeFileSync(file, printer.output())
       assert.doesNotMatch(printer.output(), /<redacted>/)

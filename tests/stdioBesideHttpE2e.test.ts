@@ -59,7 +59,7 @@ const launch = async (
   early?: unknown,
 ) => {
   const dir = mkdtempSync(join(tmpdir(), 'sg-beside-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }))
   const file = join(dir, 'servers.json')
   const port = await unusedPort()
   writeFileSync(

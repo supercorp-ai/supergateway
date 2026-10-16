@@ -53,7 +53,7 @@ for (const shell of [true, false]) {
         unrelated.stdin.destroy()
         unrelated.stdout.destroy()
         unrelated.stderr.destroy()
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
       })
       serverPid = await new Promise<number>((resolve, reject) => {
         let output = ''

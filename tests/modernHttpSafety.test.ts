@@ -51,7 +51,9 @@ async function setup(
     { ...env, MODERN_TRACE: tracePath, MODERN_WIRE: '1' },
     nodeArgs,
   )
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  t.after(() =>
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10 }),
+  )
   await gateway.ready()
   const trace = () => {
     try {

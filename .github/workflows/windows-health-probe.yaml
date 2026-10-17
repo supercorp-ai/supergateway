@@ -19,14 +19,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workload: [scenarios, languages]
+        workload: [exercise]
     defaults:
       run:
         shell: bash
     env:
       SUPERGATEWAY_SOAK_CONFIRMED: '1'
       SOAK_SECONDS: '9000'
-      SUPERGATEWAY_TEST_ENTRY: dist/index.js
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,6 +33,14 @@ jobs:
           node-version: '24'
       - run: npm ci --no-audit --no-fund
       - run: npm run build
+      - if: matrix.workload == 'exercise'
+        name: Install exact published RC and verify its digest
+        run: npm exec -- node scripts/install-soak-artifact.mjs
+        env:
+          SOAK_PACKAGE_VERSION: 4.2.1-rc.1
+          SOAK_PACKAGE_SHA256: a27956327b6016692f03e2cf8df4b1405b00ee4296cd1cc55f4b2fe57c2ef756
+      - if: matrix.workload == 'exercise'
+        uses: astral-sh/setup-uv@v6
       - if: matrix.workload == 'languages'
         uses: actions/setup-python@v5
         with:
@@ -81,10 +88,12 @@ jobs:
           ( while true; do sample; sleep 60; done ) &
           sampler=$!
           status=0
-          if [ '${{ matrix.workload }}' = scenarios ]; then
-            node --import tsx --test scripts/soak-scenarios.test.ts > .release/workload.log 2>&1 || status=$?
+          if [ '${{ matrix.workload }}' = exercise ]; then
+            SOAK_DIRECTORY=.release/overnight SOAK_SKIP_SCENARIOS=1 SUPERGATEWAY_REAL_SERVERS=1 SUPERGATEWAY_TEST_READY_TIMEOUT=30000 SOAK_PACKAGE_VERSION=4.2.1-rc.1 SOAK_PACKAGE_SHA256=a27956327b6016692f03e2cf8df4b1405b00ee4296cd1cc55f4b2fe57c2ef756 node scripts/overnight-release.mjs > .release/workload.log 2>&1 || status=$?
+          elif [ '${{ matrix.workload }}' = scenarios ]; then
+            SUPERGATEWAY_TEST_ENTRY=dist/index.js node --import tsx --test scripts/soak-scenarios.test.ts > .release/workload.log 2>&1 || status=$?
           else
-            node scripts/soak-languages.mjs > .release/workload.log 2>&1 || status=$?
+            SUPERGATEWAY_TEST_ENTRY=dist/index.js node scripts/soak-languages.mjs > .release/workload.log 2>&1 || status=$?
           fi
           kill $sampler 2>/dev/null
           sample

@@ -1,0 +1,24 @@
+name: Windows idle runner probe
+
+# Temporary: whether a Windows hosted runner doing nothing survives past five
+# hours. Every Windows job of a soak phase lost its runner 4 h 55 min in, while
+# probes of the same workloads showed no growth in memory, processes or handles.
+on:
+  push:
+    branches: [probe/windows-runner-health]
+
+permissions:
+  contents: read
+
+jobs:
+  idle:
+    name: Windows idle for 5 h 15 min
+    runs-on: windows-latest
+    timeout-minutes: 340
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Heartbeat every five minutes
+        run: |
+          for i in $(seq 1 63); do echo "alive $i $(date -u +%H:%M:%S)"; sleep 300; done

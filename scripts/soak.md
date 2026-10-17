@@ -18,11 +18,17 @@ request's macOS checks wait for it. `macos: fewer` runs three: Node 20 and
 Node 26, and the scenarios on Node 24. It leaves out macOS on Node 22 and 24;
 Linux and Windows still run all four Node versions.
 
-A failure costs only what failed. Within a phase, a failed command is recorded
-and everything else runs on to the phase's deadline; a failed lane does not
-cancel the other lanes; and each phase runs after the one before it whether or
-not that one passed, as long as the canary did. The `verdict` job fails the
-campaign if any phase failed and names them.
+The first failure ends the campaign. A failed command stops its lane, and the
+lane's last step cancels the whole run, so nobody waits out hours of a campaign
+that can no longer pass. Each lane uploads its results before that, so the
+failure's evidence is kept.
+
+With `keep_going: true` a failure costs only what failed instead, for when the
+hours after it are worth more than the time: within a phase, a failed command
+is recorded and everything else runs on to the phase's deadline; a failed lane
+does not cancel the other lanes; and each phase runs after the one before it
+whether or not that one passed, as long as the canary did. The `verdict` job
+fails the campaign if any phase failed and names them.
 
 `gh run rerun <run id> --failed` does not rerun only the failed lanes. GitHub
 reruns a failed job and everything that waits for it, and each phase waits for

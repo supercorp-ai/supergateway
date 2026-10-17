@@ -31,9 +31,16 @@ const events = (event) => {
   console.log(JSON.stringify(row))
 }
 const env = { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry }
-// A failure is recorded and the phase runs on to its deadline (keepGoing):
-// one flaky command no longer throws away the rest of the phase's hours.
-const commands = createSoakCommandGroup({ root, events, env, keepGoing: true })
+// The first failure stops the lane, and the workflow then cancels the run, so
+// nobody waits out a phase that has already failed. With SOAK_KEEP_GOING=1
+// (the soak workflow's `keep_going`) a failure is recorded and the phase runs
+// on to its deadline instead, for the hours of evidence after it.
+const commands = createSoakCommandGroup({
+  root,
+  events,
+  env,
+  keepGoing: process.env.SOAK_KEEP_GOING === '1',
+})
 const { run } = commands
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.once(signal, () => commands.cancel(signal, true))

@@ -17,9 +17,15 @@ on:
         type: choice
         options: [all, fewer, one]
         default: all
+      keep_going:
+        description: Keep every lane running to its phase's end after a failure, for hours of evidence. Off, the first failure stops its lane and cancels the run.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  # The lanes cancel the run at the first failed job (release-soak-lane.yaml).
+  actions: write
 
 jobs:
   canary:
@@ -28,6 +34,7 @@ jobs:
       seconds: 60
       label: canary
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node26' || inputs.macos }}
 
   # Five-hour phases. A hosted job runs at most six hours
@@ -44,6 +51,7 @@ jobs:
       seconds: 18000
       label: hours-0-to-5
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node20' || inputs.macos }}
 
   # With `macos: one` the phases take turns at the one macOS job: Node 26,
@@ -65,6 +73,7 @@ jobs:
       seconds: 18000
       label: hours-5-to-10
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node26' || inputs.macos }}
 
   third:
@@ -75,6 +84,7 @@ jobs:
       seconds: 18000
       label: hours-10-to-15
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'scenarios' || inputs.macos }}
 
   fourth:
@@ -85,6 +95,7 @@ jobs:
       seconds: 18000
       label: hours-15-to-20
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node20' || inputs.macos }}
 
   fifth:
@@ -95,6 +106,7 @@ jobs:
       seconds: 18000
       label: hours-20-to-25
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node26' || inputs.macos }}
 
   sixth:
@@ -105,6 +117,7 @@ jobs:
       seconds: 18000
       label: hours-25-to-30
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'scenarios' || inputs.macos }}
 
   seventh:
@@ -115,6 +128,7 @@ jobs:
       seconds: 18000
       label: hours-30-to-35
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node20' || inputs.macos }}
 
   eighth:
@@ -125,6 +139,7 @@ jobs:
       seconds: 18000
       label: hours-35-to-40
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node26' || inputs.macos }}
 
   ninth:
@@ -135,6 +150,7 @@ jobs:
       seconds: 18000
       label: hours-40-to-45
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'scenarios' || inputs.macos }}
 
   tenth:
@@ -145,6 +161,7 @@ jobs:
       seconds: 10800
       label: hours-45-to-48
       sha256: ${{ inputs.sha256 }}
+      keep_going: ${{ inputs.keep_going }}
       macos: ${{ inputs.macos == 'one' && 'node20' || inputs.macos }}
 
   # Phases do not depend on each other's success, so the campaign's result

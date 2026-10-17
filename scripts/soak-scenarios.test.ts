@@ -39,6 +39,23 @@ import {
   signalledGateway,
   unusedPort,
 } from '../tests/helpers/gateway-process.js'
+
+// Probe only: every gateway's whole log, each line cut to 300 characters, to
+// SOAK_GATEWAY_LOG_DIR, timestamped.
+import { appendFileSync as appendLog } from 'node:fs'
+const fullLog = (pid: number, label: string, chunk: string) => {
+  const dir = process.env.SOAK_GATEWAY_LOG_DIR
+  if (!dir) return
+  const now = new Date().toISOString().slice(11, 23)
+  appendLog(
+    `${dir}/${pid}-${label.replace(/[^\w-]+/g, '_').slice(0, 60)}.log`,
+    chunk
+      .split('\n')
+      .filter((line) => line)
+      .map((line) => `${now} ${line.slice(0, 300)}\n`)
+      .join(''),
+  )
+}
 import {
   descendantsOf,
   descriptorMargin,
@@ -95,6 +112,7 @@ function gateway(t: TestContext, port: number, output: string[]) {
     for (const stream of [child.stdout!, child.stderr!])
       stream.setEncoding('utf8').on('data', (chunk: string) => {
         tail = (tail + chunk).slice(-65536)
+        fullLog(child.pid!, output.join('-') || 'sse', chunk)
         for (const line of chunk.split('\n'))
           if (/error|failed|ECONN|EPIPE|stale|timed out/i.test(line))
             errors = [...errors, line.slice(0, 500)].slice(-50)

@@ -1,0 +1,64 @@
+name: Windows forensic soak probe
+
+# Temporary: the soak's Windows scenarios and exercise workloads for a full
+# five-hour phase, with every gateway's whole log kept, to catch a server left
+# behind (scenarios, phase one) or a session's server dying (exercise, phase
+# two) in the act.
+on:
+  push:
+    branches: [probe/windows-taskkill]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Windows ${{ matrix.workload }} ${{ matrix.copy }}, 5 hours, full gateway logs
+    runs-on: windows-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { workload: scenarios, copy: a }
+          - { workload: scenarios, copy: b }
+          - { workload: scenarios, copy: c }
+          - { workload: exercise, copy: a }
+          - { workload: exercise, copy: b }
+    defaults:
+      run:
+        shell: bash
+    env:
+      SUPERGATEWAY_SOAK_CONFIRMED: '1'
+      SOAK_SECONDS: '18000'
+      SUPERGATEWAY_TEST_READY_TIMEOUT: '30000'
+      SOAK_PACKAGE_VERSION: 4.2.1-rc.1
+      SOAK_PACKAGE_SHA256: a27956327b6016692f03e2cf8df4b1405b00ee4296cd1cc55f4b2fe57c2ef756
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.workload == 'exercise' && '20' || '24' }}
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Install exact published RC and verify its digest
+        run: npm exec -- node scripts/install-soak-artifact.mjs
+      - if: matrix.workload == 'exercise'
+        uses: astral-sh/setup-uv@v6
+      - name: Workload with full gateway logs
+        run: |
+          mkdir -p .release/gateways
+          export SOAK_GATEWAY_LOG_DIR="$(cygpath -w "$PWD/.release/gateways")"
+          if [ '${{ matrix.workload }}' = exercise ]; then
+            SOAK_DIRECTORY=.release/overnight SOAK_SKIP_SCENARIOS=1 SUPERGATEWAY_REAL_SERVERS=1 node scripts/overnight-release.mjs > .release/workload.log 2>&1 || status=$?
+          else
+            SOAK_REPORT=.release/scenarios.jsonl node --import tsx --test scripts/soak-scenarios.test.ts > .release/workload.log 2>&1 || status=$?
+          fi
+          tail -30 .release/workload.log
+          exit ${status:-0}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-forensic-${{ matrix.workload }}-${{ matrix.copy }}
+          path: .release/
+          include-hidden-files: true

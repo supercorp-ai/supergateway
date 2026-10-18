@@ -20,6 +20,7 @@ import {
   signalledGateway,
   unusedPort,
 } from '../tests/helpers/gateway-process.js'
+import { fullGatewayLog } from '../tests/helpers/full-gateway-log.js'
 import type { TestContext } from 'node:test'
 import {
   descendantsOf,
@@ -78,6 +79,7 @@ function launchGateway(
   for (const stream of [child.stdout!, child.stderr!])
     stream.setEncoding('utf8').on('data', (chunk) => {
       tail = (tail + chunk).slice(-65536)
+      fullGatewayLog(child.pid!, args.join('-'), chunk)
     })
   const exited = new Promise<void>((resolve, reject) => {
     child.once('error', reject)

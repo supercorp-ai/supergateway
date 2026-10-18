@@ -60,6 +60,8 @@ jobs:
         exclude: ${{ fromJSON(inputs.macos == 'fewer' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || inputs.macos == 'node20' && '[{"os":"macos-latest","node":22},{"os":"macos-latest","node":24},{"os":"macos-latest","node":26}]' || inputs.macos == 'node26' && '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":22},{"os":"macos-latest","node":24}]' || inputs.macos == 'scenarios' && '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":22},{"os":"macos-latest","node":24},{"os":"macos-latest","node":26}]' || '[{"os":"macos-latest","node":0}]') }}
     env:
       SOAK_DIRECTORY: .release/overnight
+      # Every gateway's whole log, uploaded with the lane's results.
+      SOAK_GATEWAY_LOG_DIR: ${{ github.workspace }}/.release/overnight/gateways
       # The scenario soak has runners of its own (the scenarios job below).
       SOAK_SKIP_SCENARIOS: '1'
       # Both 4.0.0 soaks died to a Windows gateway that was still running and
@@ -208,6 +210,7 @@ jobs:
         os: ${{ fromJSON((inputs.macos == 'node20' || inputs.macos == 'node26') && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     env:
       SOAK_DIRECTORY: .release/scenarios
+      SOAK_GATEWAY_LOG_DIR: ${{ github.workspace }}/.release/scenarios/gateways
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

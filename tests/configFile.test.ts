@@ -441,11 +441,7 @@ test('the route paths are normalised like the command line', () => {
 
 test('"cors" is true, false, or a list of origins', () => {
   assert.equal(entryOf(file({ a: { ...local, cors: true } })).cors, true)
-  assert.equal(
-    'cors' in entryOf(file({ a: { ...local, cors: false } })),
-    false,
-    'false is the same as leaving it out',
-  )
+  assert.equal(entryOf(file({ a: { ...local, cors: false } })).cors, false)
   assert.deepEqual(
     entryOf(file({ a: { ...local, cors: ['https://a.example', '/b$/'] } }))
       .cors,

@@ -11,7 +11,7 @@ export interface EndpointOptions {
   ssePath?: string
   messagePath?: string
   streamableHttpPath?: string
-  cors?: true | string[]
+  cors?: boolean | string[]
   healthEndpoint?: string[]
   healthCheck?: HealthCheck
   toolPrefix?: string

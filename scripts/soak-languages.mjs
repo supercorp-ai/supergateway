@@ -58,7 +58,7 @@ const commands = createSoakCommandGroup({
   root,
   events,
   env: { ...process.env, SUPERGATEWAY_TEST_ENTRY: entry },
-  keepGoing: true,
+  keepGoing: process.env.SOAK_KEEP_GOING === '1',
 })
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.once(signal, () => commands.cancel(signal, true))
@@ -73,8 +73,8 @@ events({
 })
 let cycle = 0
 let error
-// A failed driver is recorded and the cycle goes on (keepGoing); only
-// cancellation stops it.
+// A failed driver stops the soak, unless SOAK_KEEP_GOING=1 (keep_going): then
+// it is recorded and the cycle goes on, and only cancellation stops it.
 const failures = []
 try {
   // Always complete one full cycle, even in a short harness canary.

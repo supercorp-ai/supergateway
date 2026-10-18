@@ -29,8 +29,13 @@ on:
       - 'package-lock.json'
       - '.github/workflows/binaries.yaml'
 
+# Fail fast across the whole run: a job that fails cancels the rest of the
+# run (its last step), rather than leaving an hour of other jobs to finish on
+# a run nobody will merge or promote. Cancelling needs `actions: write`; on a
+# pull request from a fork the token cannot, and the run finishes as before.
 permissions:
   contents: read
+  actions: write
 
 env:
   # The release tag: the release's own, or v<version> when run by hand.
@@ -117,6 +122,12 @@ jobs:
           name: supergateway-${{ matrix.target }}
           path: .binary/supergateway-${{ matrix.target }}.${{ matrix.archive }}
           if-no-files-found: error
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # Alpine has no GitHub runner, and JavaScript actions cannot run inside an
   # Alpine container on arm64, so these build and test in a plain docker run.
@@ -158,6 +169,12 @@ jobs:
           name: supergateway-${{ matrix.target }}
           path: .binary/supergateway-${{ matrix.target }}.tar.gz
           if-no-files-found: error
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   release:
     name: Attach to the release

@@ -18,9 +18,18 @@ on:
       macos:
         type: string
         default: all
+      # See release-soak.yaml: false stops a lane at its first failure.
+      keep_going:
+        type: boolean
+        default: false
 
+# Fail fast across the whole run: a job that fails cancels the rest of the
+# run (its last step), rather than leaving an hour of other jobs to finish on
+# a run nobody will merge or promote. Cancelling needs `actions: write`; on a
+# pull request from a fork the token cannot, and the run finishes as before.
 permissions:
   contents: read
+  actions: write
 
 # Shared by both jobs, so a release still bumps the version in one place here.
 env:
@@ -28,6 +37,7 @@ env:
   SOAK_SECONDS: ${{ inputs.seconds }}
   SOAK_PACKAGE_VERSION: 4.2.1-rc.1
   SOAK_PACKAGE_SHA256: ${{ inputs.sha256 }}
+  SOAK_KEEP_GOING: ${{ inputs.keep_going && '1' || '' }}
 
 jobs:
   exercise:
@@ -103,6 +113,12 @@ jobs:
             .release/public-soak/artifact.json
           retention-days: 14
           if-no-files-found: warn
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # The exercise lanes run only the Node battery driver. This job keeps the
   # Python and Go SDKs and the Ruby client talking to the same candidate for the
@@ -169,6 +185,12 @@ jobs:
           path: .release/languages/
           retention-days: 14
           if-no-files-found: warn
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # The scenario soak (scripts/soak-scenarios.test.ts) for the whole phase, on
   # runners of its own. Beside the test groups it starved them: in the
@@ -211,3 +233,9 @@ jobs:
           path: .release/scenarios/
           retention-days: 14
           if-no-files-found: warn
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}

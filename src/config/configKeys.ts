@@ -16,7 +16,7 @@ import {
 import { paths, routePath } from './configPaths.js'
 import type { HealthCheck } from '../lib/serverHealth.js'
 
-// How one setting's value is read and checked; undefined leaves it unset.
+// How one setting's value is read and checked.
 type Reader<T> = (value: unknown, path: (string | number)[], fail: Fail) => T
 type Readers<T> = { [K in keyof T]-?: Reader<T[K]> }
 
@@ -148,8 +148,7 @@ export function readSettings<T>(
   // Never empty, so not a `for` loop with a zero-iteration case.
   Object.entries<Reader<unknown>>(readers).forEach(([key, read]) => {
     if (!(key in raw) || skip.includes(key)) return
-    const value = read(raw[key], [...path, key], fail)
-    if (value !== undefined) settings[key] = value
+    settings[key] = read(raw[key], [...path, key], fail)
   })
   return settings as T
 }

@@ -18,8 +18,11 @@ for (const shell of [true, false]) {
         payload,
         'console.log(process.pid); setInterval(() => {}, 1000)',
       )
+      const info: string[] = []
       const logger = {
-        info() {},
+        info(message: string) {
+          info.push(message)
+        },
         error(...args: unknown[]) {
           assert.fail(String(args))
         },
@@ -87,6 +90,16 @@ for (const shell of [true, false]) {
       assert.doesNotThrow(
         () => process.kill(unrelated.pid!, 0),
         'unrelated server stays alive',
+      )
+      // What taskkill reported ending is logged, the server itself included:
+      // real taskkill output, in the form the gateway reads.
+      assert.ok(
+        info.some(
+          (line) =>
+            line.startsWith(`Ended server tree ${server.pid}: `) &&
+            line.includes(` ${serverPid}<`),
+        ),
+        info.join('\n'),
       )
     },
   )

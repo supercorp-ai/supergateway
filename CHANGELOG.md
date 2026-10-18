@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.2.1-rc.2
+
+Two config-file fixes, on every platform, and a Windows diagnostic.
+
+- **`"cors": false` on a server is honoured.** With `cors` set at the top level, a server set to `false` still answered browsers from any origin, and `--printConfig` left the setting out (#345, by @wunsir).
+- **An empty `"apiKey"` list is refused.** On a server, `"apiKey": []` replaced a top-level key and served that server to anyone; every other empty key source was already refused. A file with one now stops at startup and `--checkConfig`, naming the line. To leave one server without a key, set `apiKey` on the servers that need one instead of at the top level (#347).
+- Windows: when a server is stopped, the gateway logs each process taskkill reports ending, and logs an error if one of them is outside that server's process tree. This is to diagnose a rare soak incident in which a server ended mid-request.
+- Tests and the soak: every gateway's whole log is kept with the soak's results; the first failure stops a CI run; a stalled Windows process-table read is retried; several timing-sensitive tests wait longer on a busy runner.
+
 ## 4.2.1-rc.1
 
 Windows fixes. Nothing changes on Linux or macOS.

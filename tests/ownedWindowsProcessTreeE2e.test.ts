@@ -97,7 +97,7 @@ for (const shell of [true, false]) {
         info.some(
           (line) =>
             line.startsWith(`Ended server tree ${server.pid}: `) &&
-            line.includes(` ${serverPid}<`.trimStart()),
+            line.includes(` ${serverPid}<`),
         ),
         info.join('\n'),
       )

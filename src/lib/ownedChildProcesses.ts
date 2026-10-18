@@ -59,7 +59,7 @@ export class OwnedChildProcesses {
               'taskkill.exe',
               ['/PID', String(pid), '/T', '/F'],
               { windowsHide: true, timeout: 5000 },
-              (error) => {
+              (error, stdout) => {
                 // taskkill returns 128 when the process has already exited.
                 if (error && error.code !== 128) {
                   this.logger.error(
@@ -67,6 +67,7 @@ export class OwnedChildProcesses {
                     error,
                   )
                 }
+                this.reportEnded(pid, String(stdout))
                 resolve()
               },
             )
@@ -94,6 +95,35 @@ export class OwnedChildProcesses {
       void stop()
     })
     return stop
+  }
+
+  /**
+   * What taskkill ended for the tree of server `pid`, one line per stop: each
+   * process as `PID<parent`. A process whose parent is neither that server
+   * nor another process taskkill ended with it was not in its tree. Windows
+   * reuses a process ID quickly, and taskkill lists a tree before it ends it,
+   * so under heavy churn it can end a process that took a freed ID: that is
+   * logged as an error, naming the process.
+   */
+  private reportEnded(pid: number, stdout: string) {
+    const ended = [
+      ...stdout.matchAll(/PID (\d+) \(child process of PID (\d+)\)/g),
+    ].map(([, process, parent]) => ({
+      process: Number(process),
+      parent: Number(parent),
+    }))
+    if (!ended.length) return
+    this.logger.info(
+      `Ended server tree ${pid}: ${ended.map(({ process, parent }) => `${process}<${parent}`).join(' ')}`,
+    )
+    const tree = new Set([pid, ...ended.map(({ process }) => process)])
+    const outside = ended.filter(
+      ({ process, parent }) => process !== pid && !tree.has(parent),
+    )
+    for (const { process, parent } of outside)
+      this.logger.error(
+        `Ending server tree ${pid} also ended process ${process}, whose parent ${parent} is outside it`,
+      )
   }
 
   /**

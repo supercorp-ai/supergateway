@@ -67,7 +67,7 @@ export class OwnedChildProcesses {
                     error,
                   )
                 }
-                this.reportEnded(pid, String(stdout ?? ''))
+                this.reportEnded(pid, String(stdout))
                 resolve()
               },
             )

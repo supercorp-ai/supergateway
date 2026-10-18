@@ -478,6 +478,13 @@ test('"apiKey" is a key or a list of keys', () => {
     entryError({ ...local, apiKey }, 'apiKey', 'Expected a non-empty string')
 })
 
+test('an empty "apiKey" list is refused: it would leave the server open', () => {
+  const message =
+    'An empty list accepts no key, so the server would be open to anyone. Give at least one key, or leave "apiKey" out. To serve one server without a key, set "apiKey" on the servers that need one instead of at the top level'
+  entryError({ ...local, apiKey: [] }, 'apiKey', message)
+  topError('apiKey', [], message)
+})
+
 test('the other URL settings are read with their types checked', () => {
   const entry = entryOf(
     file({

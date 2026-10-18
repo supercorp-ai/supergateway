@@ -232,6 +232,28 @@ test(
 )
 
 test(
+  'a server with an empty "apiKey" list is not served open: the file is refused',
+  options,
+  async (t) => {
+    const file = writeConfig(t, {
+      apiKey: ['k1'],
+      mcpServers: { tools: { stdio: 'node server.js', apiKey: [] } },
+    })
+    for (const args of [['--checkConfig'], []]) {
+      const result = await outcome(
+        launchGateway(t, ['--config', file, ...args]),
+      )
+      assert.equal(result.code, 1)
+      assert.match(
+        result.stderr,
+        /Error: .*:\d+:\d+: mcpServers\.tools\.apiKey: An empty list accepts no key/,
+      )
+      assert.equal(result.stdout, '', 'nothing started')
+    }
+  },
+)
+
+test(
   '--printConfig without a server fails as the command line does',
   options,
   async (t) => {

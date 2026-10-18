@@ -57,10 +57,17 @@ export const ENDPOINT_READERS: Readers<EndpointOptions> = {
   // An empty list is a real choice: none of the server's tools.
   tools: (value, path, fail) =>
     strings(value, path, fail, 'a list of tool names'),
-  apiKey: (value, path, fail) =>
-    typeof value === 'string'
-      ? [text(value, path, fail)]
-      : strings(value, path, fail, 'a key or a list of keys'),
+  // An empty list would lock nothing, as an empty --apiKey or key file would.
+  apiKey: (value, path, fail) => {
+    if (typeof value === 'string') return [text(value, path, fail)]
+    const keys = strings(value, path, fail, 'a key or a list of keys')
+    if (keys.length === 0)
+      fail(
+        path,
+        'An empty list accepts no key, so the server would be open to anyone. Give at least one key, or leave "apiKey" out. To serve one server without a key, set "apiKey" on the servers that need one instead of at the top level',
+      )
+    return keys
+  },
   apiKeyFile: text,
   stateful: boolean,
   sessionTimeout: (value, path, fail) => integer(value, path, fail, 1),

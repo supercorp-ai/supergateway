@@ -117,11 +117,13 @@ export class OwnedChildProcesses {
       `Ended server tree ${pid}: ${ended.map(({ process, parent }) => `${process}<${parent}`).join(' ')}`,
     )
     const tree = new Set([pid, ...ended.map(({ process }) => process)])
-    for (const { process, parent } of ended)
-      if (process !== pid && !tree.has(parent))
-        this.logger.error(
-          `Ending server tree ${pid} also ended process ${process}, whose parent ${parent} is outside it`,
-        )
+    const outside = ended.filter(
+      ({ process, parent }) => process !== pid && !tree.has(parent),
+    )
+    for (const { process, parent } of outside)
+      this.logger.error(
+        `Ending server tree ${pid} also ended process ${process}, whose parent ${parent} is outside it`,
+      )
   }
 
   /**

@@ -39,6 +39,7 @@ import {
   signalledGateway,
   unusedPort,
 } from '../tests/helpers/gateway-process.js'
+import { fullGatewayLog } from '../tests/helpers/full-gateway-log.js'
 import {
   descendantsOf,
   descriptorMargin,
@@ -95,6 +96,7 @@ function gateway(t: TestContext, port: number, output: string[]) {
     for (const stream of [child.stdout!, child.stderr!])
       stream.setEncoding('utf8').on('data', (chunk: string) => {
         tail = (tail + chunk).slice(-65536)
+        fullGatewayLog(child.pid!, output.join('-') || 'sse', chunk)
         for (const line of chunk.split('\n'))
           if (/error|failed|ECONN|EPIPE|stale|timed out/i.test(line))
             errors = [...errors, line.slice(0, 500)].slice(-50)

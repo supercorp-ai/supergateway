@@ -1,3 +1,4 @@
+import { requestTimeout } from './gateway-process.js'
 import { createServer, type ServerResponse } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
@@ -25,7 +26,13 @@ export async function faultControl(t: TestContext) {
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`
-  const wait = async (kind: string, pid?: number, ms = 5000) => {
+  // Scaled like every request budget: on a loaded Windows soak runner a
+  // wrapper and its server took longer than 5 s to report in.
+  const wait = async (
+    kind: string,
+    pid?: number,
+    ms = requestTimeout(5000),
+  ) => {
     const deadline = Date.now() + ms
     while (Date.now() < deadline) {
       const event = events.find(

@@ -233,6 +233,54 @@ test('a group that keeps refusing is reported once, after a second', async (t) =
   await owner.close()
 })
 
+// taskkill reports each process it ends; the gateway logs them, and names any
+// whose parent is outside the server's tree (a freed process ID taken by
+// another process between taskkill listing the tree and ending it).
+const SUCCESS = (pid: number, parent: number) =>
+  `SUCCESS: The process with PID ${pid} (child process of PID ${parent}) has been terminated.\r\n`
+for (const [label, stdout, expected] of [
+  [
+    'its own tree',
+    SUCCESS(8000, 2000004330) + SUCCESS(2000004330, 900),
+    {
+      info: ['Ended server tree 2000004330: 8000<2000004330 2000004330<900'],
+      errors: [],
+    },
+  ],
+  [
+    'a process outside it',
+    SUCCESS(8000, 2000004330) + SUCCESS(8100, 7777) + SUCCESS(2000004330, 900),
+    {
+      info: [
+        'Ended server tree 2000004330: 8000<2000004330 8100<7777 2000004330<900',
+      ],
+      errors: [
+        'Ending server tree 2000004330 also ended process 8100, whose parent 7777 is outside it',
+      ],
+    },
+  ],
+  ['nothing it could report', '', { info: [], errors: [] }],
+] as const) {
+  test(`Windows logs what taskkill ended: ${label}`, async (t) => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    t.after(() => Object.defineProperty(process, 'platform', platform))
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    const info: string[] = []
+    const errors: string[] = []
+    t.mock.method(childProcess, 'execFile', ((...args: unknown[]) => {
+      ;(args.at(-1) as (error: null, stdout: string) => void)(null, stdout)
+    }) as unknown as typeof childProcess.execFile)
+    const owner = new OwnedChildProcesses({
+      info: (message: string) => info.push(message),
+      error: (message: string) => errors.push(message),
+    })
+    const stop = owner.own(child(2000004330))
+    Object.defineProperty(process, 'platform', platform)
+    await stop()
+    assert.deepEqual({ info, errors }, expected)
+  })
+}
+
 for (const result of [undefined, 128, 5]) {
   test(`Windows terminates the owned process tree (taskkill result ${result})`, async (t) => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!

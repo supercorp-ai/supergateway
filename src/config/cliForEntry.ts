@@ -73,7 +73,7 @@ export function cliForEntry(
   else for (const name of tools ?? []) flag('tools', name)
   const cors = pick('cors')
   if (cors === true) args.push('--cors')
-  else for (const origin of cors ?? []) flag('cors', origin)
+  else if (cors) for (const origin of cors) flag('cors', origin)
   for (const [name, value] of Object.entries(pick('headers') ?? {}))
     flag('header', `${name}: ${value}`)
   flag('oauth2Bearer', pick('oauth2Bearer'))

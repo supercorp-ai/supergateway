@@ -145,8 +145,9 @@ test(
     const file = writeConfig(t, {
       port: 8000,
       apiKey: 'file-key',
+      cors: true,
       mcpServers: {
-        tools: { ...mock, env: { API_TOKEN: 't', LEVEL: '2' } },
+        tools: { ...mock, cors: false, env: { API_TOKEN: 't', LEVEL: '2' } },
         remote: { url: 'http://127.0.0.1:1/mcp?k=abc', type: 'http' },
       },
     })
@@ -157,9 +158,11 @@ test(
     assert.deepEqual(JSON.parse(result.stdout), {
       port: 9001,
       apiKey: ['<redacted>'],
+      cors: true,
       mcpServers: {
         tools: {
           ...mock,
+          cors: false,
           // Every env value and every URL's query, whatever is in it.
           env: { API_TOKEN: '<redacted>', LEVEL: '<redacted>' },
         },
@@ -703,6 +706,50 @@ test(
     }
   },
 )
+
+for (const { label, cors, allowedOrigin } of [
+  { label: 'all origins', cors: true, allowedOrigin: '*' },
+  {
+    label: 'an origin list',
+    cors: ['https://client.example'],
+    allowedOrigin: 'https://client.example',
+  },
+  { label: 'no CORS default', cors: undefined, allowedOrigin: null },
+]) {
+  test(
+    `cors: false disables CORS for one entry with ${label}`,
+    options,
+    async (t) => {
+      const { port } = await serve(t, {
+        cors,
+        mcpServers: {
+          private: { ...mock, cors: false },
+          inherited: mock,
+        },
+      })
+      for (const [name, expectedOrigin] of [
+        ['private', null],
+        ['inherited', allowedOrigin],
+      ] as const) {
+        const response = await fetch(`http://127.0.0.1:${port}/${name}/sse`, {
+          method: 'OPTIONS',
+          headers: {
+            Origin: 'https://client.example',
+            'Access-Control-Request-Method': 'GET',
+          },
+          signal: AbortSignal.timeout(requestTimeout(5000)),
+        })
+        await response.body?.cancel()
+        assert.ok(response.ok, name)
+        assert.equal(
+          response.headers.get('access-control-allow-origin'),
+          expectedOrigin,
+          name,
+        )
+      }
+    },
+  )
+}
 
 test('a disabled second entry leaves one to run', options, async (t) => {
   const { port } = await serve(t, {

@@ -44,10 +44,8 @@ export const ENDPOINT_READERS: Readers<EndpointOptions> = {
   ssePath: routePath,
   messagePath: routePath,
   streamableHttpPath: routePath,
-  // `false` is the default, so it sets nothing.
   cors: (value, path, fail) => {
-    if (value === true) return true
-    if (value === false) return undefined
+    if (typeof value === 'boolean') return value
     return strings(value, path, fail, 'true, false, or a list of origins')
   },
   healthEndpoint: paths,

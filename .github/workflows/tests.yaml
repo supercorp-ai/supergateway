@@ -188,9 +188,12 @@ jobs:
       # The version measured with locally, so a red gate can be reproduced.
       # 0.0.53 did not count what runs while a test file loads, which 3.0.x
       # does: the two disagreed on a module only its own test loads.
+      # 4.x measures in an isolated copy of the repository, which has no
+      # dist/: the build runs inside the measured command, in that copy, so
+      # the gateways the tests start are built from the measured source.
       - name: Measure coverage
         timeout-minutes: 40
-        run: npx -y supercov@4.19.0 -- node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'
+        run: npx -y supercov@4.19.0 -- sh -c "npm run build && node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks 'tests/**/*.test.ts'"
         env:
           TS_NODE_TRANSPILE_ONLY: 'true'
       - name: Enforce 100%

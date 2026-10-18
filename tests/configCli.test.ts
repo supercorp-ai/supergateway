@@ -709,6 +709,16 @@ test('cliForEntry: "cors": true and "stateful": true are bare flags', () => {
   assert.equal(argv.stateful, true)
 })
 
+test('cliForEntry: an empty origin list overrides the CORS default', () => {
+  assert.deepEqual(
+    run({
+      cors: true,
+      mcpServers: { a: { command: 'srv', path: '/', cors: [] } },
+    }).args,
+    ['--stdio=srv'],
+  )
+})
+
 test("cliForEntry: an entry's tool settings are its flags, an empty list a bare --tools", () => {
   const tools = (value: Record<string, unknown>) =>
     run({ mcpServers: { a: { stdio: 'srv', ...value } } }).args.filter((arg) =>

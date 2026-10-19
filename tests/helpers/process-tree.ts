@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFile, execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
+import { requestTimeout } from './slow-host.js'
 
 /**
  * Live descendants of a process, by walking the ppid table.
@@ -237,7 +238,7 @@ export function processInfo(pid: number) {
   }
 }
 export async function stopped(pid: number) {
-  const deadline = Date.now() + 7000
+  const deadline = Date.now() + requestTimeout(7000)
   while (isAlive(pid) && Date.now() < deadline) await delay(25)
   assert.equal(isAlive(pid), false, `owned peer ${pid} survived cleanup`)
 }

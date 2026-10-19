@@ -13,7 +13,7 @@ import {
 } from './helpers/gateway-process.js'
 
 async function processExited(pid: number) {
-  const deadline = Date.now() + 2000
+  const deadline = Date.now() + requestTimeout(2000)
   while (Date.now() < deadline) {
     try {
       process.kill(pid, 0)

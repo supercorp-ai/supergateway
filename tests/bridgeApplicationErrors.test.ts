@@ -7,6 +7,7 @@ import {
   initialize,
   launchGateway,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // GW-036. An upstream server's application error (a JSON-RPC code outside the
@@ -62,7 +63,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
       const send = (message: object) =>
         bridge.stdin.write(JSON.stringify(message) + '\n')
       const wait = async (id: number) => {
-        const deadline = Date.now() + 15000
+        const deadline = Date.now() + requestTimeout(15000)
         while (!replies.has(id)) {
           assert.ok(Date.now() < deadline, `no reply to ${id}`)
           await delay(20)

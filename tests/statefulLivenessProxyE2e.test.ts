@@ -9,6 +9,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 test(
@@ -121,7 +122,7 @@ test(
         await delay(100)
       }
     }
-    const goneDeadline = Date.now() + 3000
+    const goneDeadline = Date.now() + requestTimeout(3000)
     while (!downstreamGone) {
       assert.ok(Date.now() < goneDeadline)
       await delay(10)

@@ -9,6 +9,7 @@ import {
   launchGateway,
   unusedPort,
   nodeServer,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // GW-033 for the bridges. A stdio client of `--sse` or `--streamableHttp`
@@ -101,7 +102,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
       })
       const send = (message: object) =>
         bridge.stdin.write(JSON.stringify(message) + '\n')
-      const deadline = Date.now() + 15000
+      const deadline = Date.now() + requestTimeout(15000)
       send(initialize(1))
       while (!initialized) {
         assert.ok(Date.now() < deadline, `bridge never initialized: ${errors}`)
@@ -125,7 +126,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
 
       bridge.stdout.resume()
       await control.wait('burst-done', undefined, 30000)
-      const until = Date.now() + 30000
+      const until = Date.now() + requestTimeout(30000)
       while (!answered && Date.now() < until) await delay(10)
       assert.equal(seq, COUNT)
       assert.ok(answered, 'the call is answered after the burst')

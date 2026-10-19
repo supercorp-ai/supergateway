@@ -135,7 +135,10 @@ async function eventually(
   check: () => boolean,
   description: string | (() => string),
 ) {
-  for (const deadline = Date.now() + 7000; Date.now() < deadline;) {
+  for (
+    const deadline = Date.now() + requestTimeout(7000);
+    Date.now() < deadline;
+  ) {
     if (check()) return
     await delay(15)
   }

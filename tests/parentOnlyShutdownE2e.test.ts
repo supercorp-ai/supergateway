@@ -2,7 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { auditClient } from './helpers/audit-client.js'
-import { gatewayTimeout, nodeServer } from './helpers/gateway-process.js'
+import {
+  gatewayTimeout,
+  nodeServer,
+  requestTimeout,
+} from './helpers/gateway-process.js'
 import { isAlive, processInfo, reapAfter } from './helpers/process-tree.js'
 
 // Live, and not a zombie: the shared check, which works on Windows too.
@@ -35,7 +39,7 @@ for (const mode of ['sse', 'stateful', 'stateless', 'ws'] as const) {
         b.gateway.interrupt('SIGTERM') // Never signal the whole group for the assertion.
         const exit = await b.gateway.exited
         assert.equal(exit.code, 0)
-        const deadline = Date.now() + 1500
+        const deadline = Date.now() + requestTimeout(1500)
         while (alive(b.pid) && Date.now() < deadline) await delay(20)
         assert.equal(
           alive(b.pid),

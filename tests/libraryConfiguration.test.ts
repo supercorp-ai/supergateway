@@ -5,7 +5,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { once } from 'node:events'
 // The `ws` client, not the global one: `WebSocket` is undefined on Node 20.
 import { WebSocket } from 'ws'
-import { initialize, rpc, unusedPort } from './helpers/gateway-process.js'
+import {
+  initialize,
+  rpc,
+  unusedPort,
+  requestTimeout,
+} from './helpers/gateway-process.js'
 
 for (const mode of ['ws', 'stateless']) {
   test(
@@ -35,7 +40,7 @@ for (const mode of ['ws', 'stateless']) {
           child.kill('SIGKILL')
         await closed
       })
-      const deadline = Date.now() + 5000
+      const deadline = Date.now() + requestTimeout(5000)
       while (!output.includes(`Listening on port ${port}`)) {
         assert.equal(child.exitCode, null, errors)
         assert.ok(Date.now() < deadline, output + errors)

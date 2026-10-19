@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OwnedChildProcesses } from '../src/lib/ownedChildProcesses.js'
 import { spawnCommand } from '../src/lib/childCommand.js'
+import { startedAt } from './helpers/process-tree.js'
 
 for (const shell of [true, false]) {
   test(
@@ -40,8 +41,23 @@ for (const shell of [true, false]) {
       )
       const stop = owner.own(server)
       let serverPid: number | undefined
-      t.after(() => {
-        for (const pid of [serverPid, server.pid, unrelated.pid]) {
+      let serverStarted: Promise<string | undefined> | undefined
+      t.after(async () => {
+        // Only a process that is still this test's: an ended one's PID may
+        // be another's by now, and taskkill /T would end that one's tree.
+        const ours = [server, unrelated]
+          .filter(
+            ({ exitCode, signalCode }) =>
+              exitCode == null && signalCode == null,
+          )
+          .map(({ pid }) => pid)
+        if (
+          serverPid &&
+          (await serverStarted) !== undefined &&
+          (await startedAt(serverPid)) === (await serverStarted)
+        )
+          ours.push(serverPid)
+        for (const pid of ours) {
           if (!pid) continue
           try {
             execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
@@ -66,6 +82,7 @@ for (const shell of [true, false]) {
           if (/^\d+\r?\n/.test(output)) resolve(Number(output.trim()))
         })
       })
+      serverStarted = startedAt(serverPid)
       if (shell)
         assert.notEqual(serverPid, server.pid, 'server runs beneath cmd.exe')
       assert.doesNotThrow(() => process.kill(serverPid!, 0))

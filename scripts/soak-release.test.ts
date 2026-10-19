@@ -199,11 +199,25 @@ test(
     async function roundTrip({ mode, url }: (typeof gateways)[number]) {
       if (mode === 'continuation') {
         const roots = { roots: [{ uri: 'file:///scratch', name: 'scratch' }] }
+        // Scaled like every other budget here. A fixed 15 seconds ended
+        // hour 2 of 4.2.1-rc.2's soak on a Windows runner whose rounds had
+        // slowed by a third, with only "The operation was aborted due to
+        // timeout" to say which request it was.
+        const budget = requestTimeout(15000)
         const post = async (handle?: string) => {
           const requestId = ++id
+          const call = handle ? 'resumed' : 'first'
+          const started = Date.now()
+          // Waiting for the headers or for the body, it is this call.
+          const named = (error: unknown): never => {
+            if ((error as Error)?.name !== 'TimeoutError') throw error
+            throw Error(
+              `continuation: the ${call} tools/call ${requestId} had no answer after ${Math.round((Date.now() - started) / 1000)} of ${budget / 1000} seconds`,
+            )
+          }
           const response = await fetch(url, {
             method: 'POST',
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(budget),
             headers: {
               'content-type': 'application/json',
               accept: 'application/json, text/event-stream',
@@ -234,8 +248,8 @@ test(
                   : {}),
               },
             }),
-          })
-          const text = await response.text()
+          }).catch(named)
+          const text = await response.text().catch(named)
           assert.equal(response.status, 200, text)
           const messages = response.headers
             .get('content-type')

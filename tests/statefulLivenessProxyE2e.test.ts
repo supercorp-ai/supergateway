@@ -110,7 +110,7 @@ test(
         'mcp-session-id': session,
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: pingId, result: {} }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(pong.status, 202)
     await pong.text()

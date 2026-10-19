@@ -5,6 +5,7 @@ import {
   launchGateway,
   peerCommand,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 /**
@@ -37,7 +38,7 @@ test(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
       })
 
     const unknown = await post('?sessionId=does-not-exist')
@@ -54,7 +55,7 @@ test(
     // Still serving afterwards, which is the part that was in doubt.
     const opened = await fetch(`http://127.0.0.1:${port}/sse`, {
       headers: { accept: 'text/event-stream' },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(opened.status, 200)
     await opened.body!.cancel()

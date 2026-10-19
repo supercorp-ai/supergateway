@@ -7,6 +7,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 /**
@@ -90,7 +91,7 @@ async function openSessions(
       method: 'POST',
       headers: headers(),
       body: JSON.stringify(initialize(i)),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(requestTimeout(8000)),
     })
     await response.text()
     const id = response.headers.get('mcp-session-id')
@@ -114,7 +115,7 @@ test(
       const ended = await fetch(url, {
         method: 'DELETE',
         headers: headers(session),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
       })
       await ended.text()
     }
@@ -146,7 +147,7 @@ test(
     const ended = await fetch(url, {
       method: 'DELETE',
       headers: headers(sessions[0]),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(ended.status, 200)
     await ended.text()

@@ -4,6 +4,7 @@ import {
   gatewayTimeout,
   launchGateway,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 /**
@@ -95,7 +96,7 @@ for (const mode of CASES) {
               clientInfo: { name: 'flood', version: '1.0.0' },
             },
           }),
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(requestTimeout(10000)),
         }).catch(() => {})
       }
 

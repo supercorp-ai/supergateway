@@ -9,6 +9,7 @@ import {
   peerCommand,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Express only matches routes that start with `/`, so a path flag written
@@ -51,7 +52,7 @@ test(
       /SSE endpoint: http:\/\/localhost:\d+\/sse\b/,
     )
     const response = await fetch(`${base}/sse`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(response.status, 200)
     const reader = response.body!.getReader()

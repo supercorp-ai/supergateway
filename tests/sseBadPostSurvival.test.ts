@@ -6,6 +6,7 @@ import {
   launchGateway,
   peerCommand,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 async function connect(
@@ -45,7 +46,7 @@ async function connect(
       method: 'POST',
       headers,
       body,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(requestTimeout(10000)),
     })
   return { frames, post }
 }

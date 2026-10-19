@@ -7,6 +7,7 @@ import {
   peerCommand,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Issue #163: the HTTP modes used express's 100 kB JSON default, so large
@@ -54,7 +55,7 @@ for (const stateful of [false, true]) {
       // Past 4 MB the gateway still refuses before touching the child.
       const tooLarge = await fetch(url, {
         method: 'POST',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
         headers: {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',

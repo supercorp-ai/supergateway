@@ -75,7 +75,7 @@ async function stream(t: TestContext, base: string) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(message),
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(requestTimeout(3000)),
     })
     await result.text()
     assert.equal(result.status, 202)

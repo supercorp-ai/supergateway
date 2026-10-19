@@ -125,7 +125,7 @@ const modes: Record<
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(message),
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(requestTimeout(5000)),
         })
         await response.text()
         assert.equal(response.status, 202)
@@ -317,7 +317,7 @@ for (const [mode, { args, open }] of Object.entries(modes)) {
 
       const reader = await open(t, base)
       reader.pause()
-      await control.wait('burst-start', undefined, 10000)
+      await control.wait('burst-start', undefined, requestTimeout(10000))
       await delay(HELD_FOR)
       assert.ok(
         !control.events.some((event) => event.kind === 'burst-done'),
@@ -325,7 +325,7 @@ for (const [mode, { args, open }] of Object.entries(modes)) {
       )
 
       reader.resume()
-      await control.wait('burst-done', undefined, 30000)
+      await control.wait('burst-done', undefined, requestTimeout(30000))
       const deadline = Date.now() + requestTimeout(30000)
       // Answered, and everything read: the answer is the last thing a server
       // says of a call, but not of a burst it makes after answering.

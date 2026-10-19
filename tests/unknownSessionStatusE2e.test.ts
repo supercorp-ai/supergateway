@@ -8,6 +8,7 @@ import {
   peerCommand,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // The MCP Streamable HTTP spec separates two cases that this gateway used to
@@ -47,7 +48,7 @@ const start = async (t: TestContext) => {
 const bare = (url: string, method: string, session?: string) =>
   fetch(url, {
     method,
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(requestTimeout(5000)),
     headers: {
       accept: 'application/json, text/event-stream',
       ...(session ? { 'mcp-session-id': session } : {}),

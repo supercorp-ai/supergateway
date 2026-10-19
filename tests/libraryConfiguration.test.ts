@@ -57,7 +57,7 @@ for (const mode of ['ws', 'stateless']) {
           assert.equal(String(reason), 'MCP server process failed')
         }
         const health = await fetch(url + '/health', {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(requestTimeout(2000)),
         })
         assert.equal(await health.text(), 'ok')
         assert.match(errors, /Failed to start the MCP server.*empty/s)
@@ -82,7 +82,7 @@ for (const mode of ['ws', 'stateless']) {
         // fails to start it, as the earlier versions' requests do.
         const modern = await fetch(url + '/mcp', {
           method: 'POST',
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(requestTimeout(2000)),
           headers: {
             'content-type': 'application/json',
             accept: 'application/json, text/event-stream',
@@ -117,7 +117,7 @@ for (const mode of ['ws', 'stateless']) {
           ],
         )
         const health = await fetch(url + '/health', {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(requestTimeout(2000)),
         })
         assert.equal(health.status, 200)
         assert.equal(await health.text(), 'ok')

@@ -316,16 +316,70 @@ for (const result of [undefined, 128, 5]) {
     const stop = owner.own(wrapper)
     Object.defineProperty(process, 'platform', platform)
     await stop()
-    assert.deepEqual(calls, [
-      [
+    // A failure is retried while the shell still runs, as this one does
+    // throughout: three attempts, each reported, then that the tree may
+    // still be running.
+    const attempts = result === 5 ? 3 : 1
+    assert.deepEqual(
+      calls,
+      Array(attempts).fill([
         'taskkill.exe',
         ['/PID', '2000004325', '/T', '/F'],
-        { windowsHide: true, timeout: 5000 },
-      ],
-    ])
-    assert.equal(errors.length, result === 5 ? 1 : 0)
+        { windowsHide: true, timeout: 15000 },
+      ]),
+    )
+    assert.equal(errors.length, result === 5 ? 4 : 0)
+    if (result === 5)
+      assert.deepEqual(errors.at(-1), [
+        'Could not end server tree 2000004325 in 3 attempts; it may still be running',
+      ])
     await owner.close()
-    assert.equal(calls.length, 1, 'cleanup remains idempotent')
+    assert.equal(calls.length, attempts, 'cleanup remains idempotent')
+  })
+}
+
+// The 4.2.1-rc.2 soak's leak: taskkill killed at its budget on a stalled
+// host, and the servers it was ending left running for hours.
+const timedOut = () =>
+  Object.assign(new Error('Command failed: taskkill.exe'), {
+    code: null,
+    killed: true,
+    signal: 'SIGTERM',
+  })
+for (const then of ['ends the tree', 'finds the shell gone'] as const) {
+  test(`Windows retries a taskkill that timed out, and the retry ${then}`, async (t) => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    t.after(() => Object.defineProperty(process, 'platform', platform))
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    const wrapper = child(2000004326)
+    const errors: unknown[] = []
+    let calls = 0
+    t.mock.method(childProcess, 'execFile', ((...args: unknown[]) => {
+      const callback = args.at(-1) as (
+        error: Error | null,
+        stdout: string,
+      ) => void
+      if (++calls === 1) {
+        // The shell exits while the gateway waits to try again.
+        if (then === 'finds the shell gone')
+          setTimeout(() => Object.assign(wrapper, { exitCode: 1 }), 50)
+        return callback(timedOut(), '')
+      }
+      callback(null, SUCCESS(2000004326, 900))
+    }) as unknown as typeof childProcess.execFile)
+    const owner = new OwnedChildProcesses({
+      info() {},
+      error: (...args) => errors.push(args),
+    })
+    const stop = owner.own(wrapper)
+    Object.defineProperty(process, 'platform', platform)
+    await stop()
+    assert.equal(calls, then === 'ends the tree' ? 2 : 1)
+    assert.equal(errors.length, 1, 'the timed-out attempt is reported')
+    assert.match(
+      String((errors[0] as unknown[])[0]),
+      /Failed to terminate child tree 2000004326/,
+    )
   })
 }
 

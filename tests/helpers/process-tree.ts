@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 
 /**
@@ -246,10 +246,18 @@ export function reapAfter(
   pid: number,
   group: number,
 ) {
+  // When it started, read while the test runs, without holding it up (a
+  // process-table read on Windows can take longer than a test's timeouts).
+  const started = process.platform === 'win32' ? startedAt(pid) : undefined
   // Runs AFTER the assertions; also cleans detached groups when a mutant fails.
-  t.after(() => {
-    // Windows has no process groups: end the tree under the process instead.
+  t.after(async () => {
+    // Windows has no process groups: end the tree under the process instead,
+    // if it is still that process. By now it has usually exited and its PID
+    // may be another's: in a soak, a server of a gateway beside this test,
+    // which `taskkill /T` ended mid-request (hour 2 of 4.2.1-rc.3's soak).
     if (process.platform === 'win32') {
+      const then = await started
+      if (then === undefined || (await startedAt(pid)) !== then) return
       try {
         execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
           stdio: 'ignore',
@@ -268,6 +276,28 @@ export function reapAfter(
       }
     }
   })
+}
+
+/**
+ * When Windows process `pid` started, which tells it from a later process
+ * that took its PID; undefined once there is no such process.
+ */
+export function startedAt(pid: number): Promise<string | undefined> {
+  return new Promise((resolve) =>
+    execFile(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `(Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}').CreationDate.Ticks`,
+      ],
+      { encoding: 'utf8', timeout: 30000, windowsHide: true },
+      (error, stdout) =>
+        resolve(error ? undefined : stdout.trim() || undefined),
+    ),
+  )
 }
 
 /**

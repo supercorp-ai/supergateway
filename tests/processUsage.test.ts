@@ -14,6 +14,8 @@ mock.module('node:child_process', {
       if (answer instanceof Error) throw answer
       return answer
     },
+    // Not used here; the helper's reaper imports it.
+    execFile: () => assert.fail('processUsage reads synchronously'),
   },
 })
 after(() => mock.restoreAll())

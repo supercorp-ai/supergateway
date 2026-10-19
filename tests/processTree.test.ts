@@ -4,7 +4,13 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { alreadyGone, descendantsOf } from './helpers/process-tree.js'
+import {
+  alreadyGone,
+  descendantsOf,
+  isAlive,
+  reapAfter,
+  startedAt,
+} from './helpers/process-tree.js'
 
 for (const platform of ['win32', 'linux', 'darwin'] as const) {
   test(`${platform}: process enumeration counts descendants and excludes unrelated processes`, () => {
@@ -393,3 +399,42 @@ test('a safety-net kill counts an unreaped group as gone, and nothing else', () 
   assert.equal(alreadyGone(failed('EINVAL')), false)
   assert.equal(alreadyGone(new Error('no code')), false)
 })
+
+// A safety net must not end a process that took an ended one's PID: in a
+// soak, reapAfter's taskkill /T ended another gateway's server mid-request.
+const windowsOnly = {
+  skip: process.platform !== 'win32' && 'start times are read on Windows',
+  timeout: 60000,
+}
+const lingering = () =>
+  spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+
+test(
+  'a Windows start time names one process, and none once it has ended',
+  windowsOnly,
+  async () => {
+    const child = lingering()
+    const first = await startedAt(child.pid!)
+    assert.ok(first, 'a running process has a start time')
+    assert.equal(await startedAt(child.pid!), first, 'and it does not change')
+    child.kill()
+    await once(child, 'exit')
+    assert.equal(await startedAt(child.pid!), undefined)
+  },
+)
+
+test(
+  'reapAfter still ends a process the test left running',
+  windowsOnly,
+  async (t) => {
+    const child = lingering()
+    t.after(() => child.kill())
+    await t.test('a test that leaves it running', (inner) =>
+      reapAfter(inner, child.pid!, 0),
+    )
+    assert.equal(isAlive(child.pid!), false, 'the safety net ended it')
+  },
+)

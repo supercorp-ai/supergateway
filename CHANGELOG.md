@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.2.1-rc.3
+
+- **Windows: a server is no longer left running when stopping it fails once.** On a busy machine, the taskkill that ends a server's process tree could run past its 5-second limit and be cut off. The gateway then gave up on that server, which kept running until the gateway exited. A failed attempt is now retried while the server is still running, up to three times, each allowed 15 seconds; if all three fail, the gateway logs that the server may still be running (#351).
+- Soak: the continuation round trip's time budget scales with the machine like every other request's, and a timeout names the call (#350).
+
 ## 4.2.1-rc.2
 
 Two config-file fixes, on every platform, and a Windows diagnostic.

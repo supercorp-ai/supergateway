@@ -159,9 +159,8 @@ for (const wrapped of [false, true]) {
       t.after(() => subscription.close())
       assert.deepEqual(subscription.honoredFilter, { toolsListChanged: true })
       for (
-        const end = Date.now() + 3000;
+        const end = Date.now() + requestTimeout(3000);
         changes.length === 0 && Date.now() < end;
-
       )
         await delay(10)
       assert.ok(

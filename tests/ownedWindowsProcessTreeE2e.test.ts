@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { OwnedChildProcesses } from '../src/lib/ownedChildProcesses.js'
 import { spawnCommand } from '../src/lib/childCommand.js'
 import { startedAt } from './helpers/process-tree.js'
+import { requestTimeout } from './helpers/gateway-process.js'
 
 for (const shell of [true, false]) {
   test(
@@ -89,7 +90,7 @@ for (const shell of [true, false]) {
       await stop()
       await stop()
       await owner.close()
-      const deadline = Date.now() + 1000
+      const deadline = Date.now() + requestTimeout(1000)
       let alive = true
       while (alive && Date.now() < deadline) {
         try {

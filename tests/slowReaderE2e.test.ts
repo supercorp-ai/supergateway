@@ -9,6 +9,7 @@ import {
   launchGateway,
   unusedPort,
   nodeServer,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Raw node:http lets the test stop reading the socket itself. Fetch/SDK clients
@@ -119,7 +120,7 @@ for (const paused of [false, true]) {
         },
       )
       const base = `http://127.0.0.1:${port}`
-      const deadline = Date.now() + 8000
+      const deadline = Date.now() + requestTimeout(8000)
       while (true) {
         try {
           const response = await fetch(`${base}/health`, {
@@ -212,7 +213,7 @@ for (const paused of [false, true]) {
       ])
       if (!paused || !slow.response.destroyed) {
         if (paused) {
-          const deadline = Date.now() + 15000
+          const deadline = Date.now() + requestTimeout(15000)
           while (
             !slow.response.destroyed &&
             !slow.replies.has(2) &&

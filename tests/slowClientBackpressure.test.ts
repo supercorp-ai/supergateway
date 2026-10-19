@@ -11,6 +11,7 @@ import {
   rpc,
   unusedPort,
   nodeServer,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // GW-033. A client that stops reading must hold its own child, the way pipe()
@@ -325,7 +326,7 @@ for (const [mode, { args, open }] of Object.entries(modes)) {
 
       reader.resume()
       await control.wait('burst-done', undefined, 30000)
-      const deadline = Date.now() + 30000
+      const deadline = Date.now() + requestTimeout(30000)
       // Answered, and everything read: the answer is the last thing a server
       // says of a call, but not of a burst it makes after answering.
       while (

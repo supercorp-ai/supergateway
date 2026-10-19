@@ -8,6 +8,7 @@ import {
   launchGateway,
   peerCommand,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 import { descendantsOf } from './helpers/process-tree.js'
 
@@ -71,7 +72,7 @@ test(
             const open: string[] = []
 
             const settled = async (expected: number) => {
-              const deadline = Date.now() + 4000
+              const deadline = Date.now() + requestTimeout(4000)
               for (;;) {
                 const live = descendantsOf(gateway.child.pid!, {
                   since: gateway.spawnedAt,

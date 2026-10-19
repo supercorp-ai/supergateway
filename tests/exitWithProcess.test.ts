@@ -197,7 +197,7 @@ for (const [label, kill] of [
 // ---------------------------------------------------------------- watching
 
 const until = async (predicate: () => boolean) => {
-  const deadline = Date.now() + 2000
+  const deadline = Date.now() + requestTimeout(2000)
   while (!predicate()) {
     assert.ok(Date.now() < deadline, 'condition never held')
     await delay(2)

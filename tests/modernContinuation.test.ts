@@ -148,7 +148,7 @@ function alive(pid: number) {
   }
 }
 async function eventually(check: () => boolean, description: string) {
-  const deadline = Date.now() + 8000
+  const deadline = Date.now() + requestTimeout(8000)
   while (!check()) {
     if (Date.now() > deadline) assert.fail(description)
     await delay(25)

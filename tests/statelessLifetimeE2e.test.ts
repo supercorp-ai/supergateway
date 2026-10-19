@@ -96,7 +96,7 @@ test(
     const heldFirst = await b.control.wait('hold')
     const second = rpc(b.url, call('shared', 'hold'))
     void second.catch(() => {})
-    const deadline = Date.now() + 4000
+    const deadline = Date.now() + requestTimeout(4000)
     while (
       b.control.events.filter((event) => event.kind === 'hold').length < 2 &&
       Date.now() < deadline

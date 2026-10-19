@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createSoakCommandGroup } from '../scripts/soak-command-group.mjs'
+import { requestTimeout } from './helpers/gateway-process.js'
 
 test(
   'a failed soak command stops concurrent load, preserves logs, and prevents later commands',
@@ -34,7 +35,7 @@ test(
       ],
       60000,
     )
-    const deadline = Date.now() + 5000
+    const deadline = Date.now() + requestTimeout(5000)
     while (!existsSync(join(root, 'ready'))) {
       assert.ok(Date.now() < deadline, 'peer did not start')
       await delay(10)
@@ -235,7 +236,7 @@ test('a runner-cancelled command is reported as cancelled, not as a failure', as
   )
   // Cancel a command that is genuinely mid-flight, which is the shape the
   // runner produces: not one killed before it could exec.
-  const deadline = Date.now() + 5000
+  const deadline = Date.now() + requestTimeout(5000)
   while (!existsSync(join(root, 'ready'))) {
     assert.ok(Date.now() < deadline, 'command did not start')
     await delay(10)

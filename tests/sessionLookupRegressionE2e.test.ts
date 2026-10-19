@@ -5,6 +5,7 @@ import {
   launchGateway,
   peerCommand,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 /**
@@ -60,7 +61,7 @@ for (const method of ['POST', 'GET', 'DELETE']) {
       for (const sessionId of INHERITED) {
         const response = await fetch(base + '/mcp', {
           method,
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(requestTimeout(3000)),
           headers: {
             'mcp-session-id': sessionId,
             'content-type': 'application/json',
@@ -88,7 +89,7 @@ for (const method of ['POST', 'GET', 'DELETE']) {
       // The gateway is still serving afterwards, not merely still a process:
       // the crash this pins took the whole listener with it.
       const health = await fetch(base + '/health', {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(requestTimeout(2000)),
       })
       assert.equal(health.status, 200)
       assert.equal(await health.text(), 'ok')

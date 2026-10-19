@@ -8,6 +8,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 import {
   lifecycleControl,
@@ -42,7 +43,10 @@ test(
     t.after(() => abort.abort())
     const stream = await fetch(url, {
       headers: { 'mcp-session-id': session, accept: 'text/event-stream' },
-      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+      signal: AbortSignal.any([
+        abort.signal,
+        AbortSignal.timeout(requestTimeout(5000)),
+      ]),
     })
     assert.equal(stream.status, 200)
     const streamEnded = stream.text().then(
@@ -65,7 +69,7 @@ test(
     const deleted = await fetch(url, {
       method: 'DELETE',
       headers: { 'mcp-session-id': session },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(requestTimeout(3000)),
     })
     assert.equal(deleted.status, 200)
     await deleted.text()

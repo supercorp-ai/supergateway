@@ -117,7 +117,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
         method: 'tools/call',
         params: { name: 'burst', arguments: { count: COUNT } },
       })
-      await control.wait('burst-start', undefined, 10000)
+      await control.wait('burst-start', undefined, requestTimeout(10000))
       await delay(HELD_FOR)
       assert.ok(
         !control.events.some((event) => event.kind === 'burst-done'),
@@ -125,7 +125,7 @@ for (const [flag, { upstream, path }] of Object.entries(bridges)) {
       )
 
       bridge.stdout.resume()
-      await control.wait('burst-done', undefined, 30000)
+      await control.wait('burst-done', undefined, requestTimeout(30000))
       const until = Date.now() + requestTimeout(30000)
       while (!answered && Date.now() < until) await delay(10)
       assert.equal(seq, COUNT)

@@ -7,6 +7,7 @@ import {
   launchGateway,
   peerCommand,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 test(
@@ -86,7 +87,7 @@ test(
             id: 999,
             method: 'tools/list',
           }),
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(requestTimeout(3000)),
         })
         assert.equal(stale.status, 503)
         await stale.text()

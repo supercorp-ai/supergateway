@@ -7,6 +7,7 @@ import {
   peerCommand,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 for (const notification of [true, false]) {
@@ -41,10 +42,10 @@ for (const notification of [true, false]) {
           accept: 'application/json, text/event-stream',
         },
         body,
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(requestTimeout(5000)),
       }).catch(async (cause) => {
         const health = await fetch(base + '/health', {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(requestTimeout(2000)),
         }).catch(() => undefined)
         const status = health?.status
         await health?.text()
@@ -80,7 +81,7 @@ for (const notification of [true, false]) {
         )
       }
       const health = await fetch(base + '/health', {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(requestTimeout(2000)),
       })
       assert.equal(health.status, 200)
       await health.text()

@@ -130,7 +130,7 @@ test(
     )
     // And it is listening there.
     const response = await fetch(`http://127.0.0.1:${port}/one/sse`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(requestTimeout(5000)),
     })
     assert.equal(response.status, 200)
     await response.body!.cancel()

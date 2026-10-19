@@ -2,7 +2,7 @@ import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { unusedPort } from './helpers/gateway-process.js'
+import { unusedPort, requestTimeout } from './helpers/gateway-process.js'
 
 // Opt-in: verify the packed tarball in every shipping container variant.
 const ENABLED = process.env.RUN_DOCKER_TESTS === '1'
@@ -141,7 +141,7 @@ for (const variant of ['base', 'uvx', 'deno'])
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(requestTimeout(10000)),
         })
 
       const deadline = Date.now() + 60000
@@ -201,7 +201,7 @@ for (const variant of ['base', 'uvx', 'deno'])
       const removed = await fetch(url, {
         method: 'DELETE',
         headers,
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(requestTimeout(10000)),
       })
       assert.equal(removed.status, 200)
       await removed.text()
@@ -270,7 +270,7 @@ for (const variant of ['base', 'uvx', 'deno']) {
       for (const method of ['server/discover', 'tools/list', 'tools/call']) {
         const response = await fetch(url, {
           method: 'POST',
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(requestTimeout(10000)),
           headers: {
             'content-type': 'application/json',
             accept: 'application/json, text/event-stream',

@@ -7,6 +7,7 @@ import {
   gatewayTimeout,
   launchGateway,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 
 // Issue #91: escape line separators in the SSE wire representation while
@@ -104,7 +105,7 @@ async function callSeparators(t: Parameters<typeof launchGateway>[0]) {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(requestTimeout(10000)),
     })
 
   const initialized = await send({

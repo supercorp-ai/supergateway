@@ -9,6 +9,7 @@ import {
   launchGateway,
   rpc,
   unusedPort,
+  requestTimeout,
 } from './helpers/gateway-process.js'
 import {
   lifecycleControl,
@@ -60,7 +61,7 @@ for (const stateful of [false, true]) {
         'observe child exit',
       )
       const health = await fetch(base + '/health', {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(requestTimeout(2000)),
       })
       assert.equal(health.status, 200)
       await health.text()

@@ -12,6 +12,15 @@ import type { Logger } from '../types.js'
 // the gateway may not signal, a child that changed user for one.
 const UNREAPED_GRACE_MS = 1000
 
+// taskkill can outlast any budget on a stalled host: a 4.2.1-rc.2 soak saw
+// two of them killed at five seconds while the Windows runner stood still,
+// and the two servers they were ending ran for the remaining four and a half
+// hours. A failed attempt is retried while the shell still runs; its PID is
+// still its own until Node has seen it exit.
+const TASKKILL_TIMEOUT_MS = 15000
+const TASKKILL_ATTEMPTS = 3
+const TASKKILL_RETRY_MS = 250
+
 export class OwnedChildProcesses {
   private readonly children = new Set<() => Promise<void>>()
   closing = false
@@ -52,27 +61,20 @@ export class OwnedChildProcesses {
         // tree while the shell is still alive, before sending any direct signal.
         // Once it has exited, its tree cannot be found by its PID, and the PID
         // may already be another process's: taskkill /T would end that one.
-        const running = child.exitCode == null && child.signalCode == null
-        if (pid !== undefined && running) {
-          await new Promise<void>((resolve) => {
-            childProcess.execFile(
-              'taskkill.exe',
-              ['/PID', String(pid), '/T', '/F'],
-              { windowsHide: true, timeout: 5000 },
-              (error, stdout) => {
-                // taskkill returns 128 when the process has already exited.
-                if (error && error.code !== 128) {
-                  this.logger.error(
-                    `Failed to terminate child tree ${pid}:`,
-                    error,
-                  )
-                }
-                this.reportEnded(pid, String(stdout))
-                resolve()
-              },
+        const running = () => child.exitCode == null && child.signalCode == null
+        if (pid !== undefined)
+          for (let attempt = 1; running(); attempt++) {
+            if (await this.endTree(pid)) break
+            if (attempt === TASKKILL_ATTEMPTS) {
+              this.logger.error(
+                `Could not end server tree ${pid} in ${TASKKILL_ATTEMPTS} attempts; it may still be running`,
+              )
+              break
+            }
+            await new Promise((resolve) =>
+              setTimeout(resolve, TASKKILL_RETRY_MS),
             )
-          })
-        }
+          }
         this.children.delete(stop)
         return
       }
@@ -95,6 +97,25 @@ export class OwnedChildProcesses {
       void stop()
     })
     return stop
+  }
+
+  /** One taskkill of server `pid`'s tree: whether it is over. */
+  private endTree(pid: number) {
+    return new Promise<boolean>((resolve) => {
+      childProcess.execFile(
+        'taskkill.exe',
+        ['/PID', String(pid), '/T', '/F'],
+        { windowsHide: true, timeout: TASKKILL_TIMEOUT_MS },
+        (error, stdout) => {
+          // taskkill returns 128 when the process has already exited.
+          const failed = error != null && error.code !== 128
+          if (failed)
+            this.logger.error(`Failed to terminate child tree ${pid}:`, error)
+          this.reportEnded(pid, String(stdout))
+          resolve(!failed)
+        },
+      )
+    })
   }
 
   /**

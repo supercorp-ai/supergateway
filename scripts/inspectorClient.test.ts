@@ -16,7 +16,11 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { launchGateway, unusedPort } from '../tests/helpers/gateway-process.js'
+import {
+  launchGateway,
+  requestTimeout,
+  unusedPort,
+} from '../tests/helpers/gateway-process.js'
 import {
   installedCommand,
   npm,
@@ -121,6 +125,10 @@ async function observe(
         [
           ...[bin, '--cli', ...target, '--', ...options, ...transport],
           ...['--format', 'json'],
+          // The Inspector gives a server 15 s to connect, fixed. Through two
+          // gateways on a loaded Windows soak runner that ran out (4.2.1-rc.3);
+          // scaled like every other budget here.
+          ...['--connect-timeout', String(requestTimeout(15000))],
         ],
         { timeout: 120000, maxBuffer: 16 * 1024 * 1024 },
         (_error, stdout, stderr) => resolve({ stdout, stderr }),

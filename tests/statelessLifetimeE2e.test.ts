@@ -171,7 +171,9 @@ test(
       true,
       'notification receives an EOF grace period',
     )
-    await stopped(initializing.pid, 6500)
+    // The gateway's 5 s grace after stdin closes is fixed; ending the peer
+    // after it (taskkill on Windows) takes as long as the host makes it.
+    await stopped(initializing.pid, 5000 + requestTimeout(1500))
     assert.equal(b.gateway.child.exitCode, null)
   },
 )

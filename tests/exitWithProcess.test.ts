@@ -363,6 +363,9 @@ const kill = async (child: ChildProcess) => {
   await exited
 }
 
+// The gateway checks its launcher once a second; shutting down after it
+// notices (taskkill on Windows) takes as long as the host makes it.
+const noticedAndStopped = 1000 + requestTimeout(4000)
 const exitedWithin = async (
   gateway: ReturnType<typeof launchGateway>,
   ms: number,
@@ -430,7 +433,7 @@ for (const mode of ['sse', 'stateful'] as const)
       const children = childrenOf(gateway)
       assert.ok(children() > 0, 'the session has an MCP server process')
       await kill(launcher)
-      const exit = await exitedWithin(gateway, 5000)
+      const exit = await exitedWithin(gateway, noticedAndStopped)
       assert.deepEqual(exit, { code: 0, signal: null })
       assert.match(gateway.output(), exitMessage(launcher.pid!))
       assert.match(
@@ -474,7 +477,7 @@ test(
     const children = childrenOf(upstream)
     assert.ok(children() > 0, 'the bridge’s session has a server process')
     await kill(launcher)
-    const exit = await exitedWithin(bridge, 5000)
+    const exit = await exitedWithin(bridge, noticedAndStopped)
     assert.deepEqual(exit, { code: 0, signal: null })
     // A bridge logs to stderr: its stdout is the MCP stream.
     assert.match(bridge.errors(), exitMessage(launcher.pid!))

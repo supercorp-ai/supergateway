@@ -1,7 +1,7 @@
 import { test, mock, after } from 'node:test'
 import assert from 'node:assert/strict'
 
-// The resource soaks' sampler on Windows: one PowerShell stall is retried, as
+// The resource soaks' sampler on Windows: PowerShell stalls are retried, as
 // every process-table read is, and a second is believed. 4.2.1-rc.1's 25-hour
 // soak lost a lane to a single stalled sample.
 const answers: Array<string | Error> = []
@@ -33,18 +33,19 @@ const onWindows = (t: import('node:test').TestContext) => {
   t.after(() => Object.defineProperty(process, 'platform', platform))
 }
 
-test('Windows: one stalled sample is asked again', (t) => {
+test('Windows: a stalled sample is asked again, up to four times', (t) => {
   onWindows(t)
-  answers.push(stall(), '7 2048000 234\r\n')
+  answers.push(stall(), stall(), stall(), '7 2048000 234\r\n')
   assert.deepEqual(processUsage([7]), [{ rssKiB: 2000, descriptors: 234 }])
-  assert.equal(asked.length, 2)
+  assert.equal(asked.length, 4)
   assert.equal(asked[0][0], 'powershell.exe')
 })
 
-test('Windows: a second stall is believed', (t) => {
+test('Windows: a fourth stall is believed', (t) => {
   onWindows(t)
-  answers.push(stall(), stall())
+  answers.push(stall(), stall(), stall(), stall())
   assert.throws(() => processUsage([7]), /ETIMEDOUT/)
+  assert.equal(asked.length, 4)
 })
 
 test('Windows: any other failure is not retried', (t) => {

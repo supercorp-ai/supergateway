@@ -31,31 +31,36 @@ const ticksFrom = (unixMs: number) =>
   (BigInt(Math.floor(unixMs)) - clockTolerance) * 10000n + ticksAtUnixEpoch
 
 /**
- * A process-table read, with one stall retried. A query that timed out
- * observed nothing, which is not evidence about any process, and failing on
- * it blames whatever ran then: soak run 35395011603 lost a healthy campaign at
- * cycle 32 when a protocol test died of `spawnSync powershell.exe ETIMEDOUT`,
- * and 4.2.1-rc.1's 25-hour soak lost its Windows scenarios lane two hours in
- * to one stalled resource sample. PowerShell cold-starts for every query on
- * Windows, thousands of chances per lane to be unlucky, so one stall is
- * retried before it is believed. A second timeout still throws: an unreadable
- * table must never pass as a clean one.
+ * A process-table read, with stalls retried. A query that timed out observed
+ * nothing, which is not evidence about any process, and failing on it blames
+ * whatever ran then: soak run 35395011603 lost a healthy campaign at cycle 32
+ * when a protocol test died of `spawnSync powershell.exe ETIMEDOUT`, and
+ * 4.2.1-rc.1's 25-hour soak lost its Windows scenarios lane two hours in to
+ * one stalled resource sample. PowerShell cold-starts for every query on
+ * Windows, thousands of chances per lane to be unlucky. A stall can also last:
+ * hour 20 of 4.2.1-rc.3's soak lost two Windows lanes on separate runners in
+ * the same minute, each to two 30-second timeouts in a row. So a stall is
+ * retried up to STALL_ATTEMPTS reads, about two minutes, before it is
+ * believed, and the last timeout still throws: an unreadable table must never
+ * pass as a clean one.
  */
-function retriedOnce<T>(read: () => T): T {
-  try {
-    return read()
-  } catch (error) {
-    const timedOut =
-      (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ||
-      /ETIMEDOUT/.test(String((error as Error)?.message ?? ''))
-    if (!timedOut) throw error
-    return read()
+const STALL_ATTEMPTS = 4
+function retried<T>(read: () => T): T {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return read()
+    } catch (error) {
+      const timedOut =
+        (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ||
+        /ETIMEDOUT/.test(String((error as Error)?.message ?? ''))
+      if (!timedOut || attempt === STALL_ATTEMPTS) throw error
+    }
   }
 }
 
-/** A PowerShell command's output, with one stall retried (see retriedOnce). */
+/** A PowerShell command's output, with stalls retried (see retried). */
 function powershell(command: string): string {
-  return retriedOnce(() =>
+  return retried(() =>
     execFileSync(
       'powershell.exe',
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
@@ -102,7 +107,7 @@ export function descendantsOf(
           options,
         )
       : query('ps', ['-eo', 'pid=,ppid='], options)
-  const table = retriedOnce(read)
+  const table = retried(read)
   assert.ok(table.trim(), 'Process enumeration returned an empty table')
   const children = new Map<number, number[]>()
   const created = new Map<number, bigint>()

@@ -332,13 +332,13 @@ test('a Windows root spawn time tolerates clock granularity rather than hiding c
 // with process trees; it inherited the leak check's `afterEach`, which
 // cold-starts PowerShell after every test on Windows. One stalled query out of
 // roughly a thousand per lane took the campaign with it.
-test('a process query that times out once is retried rather than believed', () => {
+test('a process query that times out is retried, up to four reads, rather than believed', () => {
   const attempts: number[] = []
   const found = descendantsOf(10, {
     platform: 'win32',
     query: () => {
       attempts.push(1)
-      if (attempts.length === 1) {
+      if (attempts.length < 4) {
         throw Object.assign(new Error('spawnSync powershell.exe ETIMEDOUT'), {
           code: 'ETIMEDOUT',
         })
@@ -348,8 +348,8 @@ test('a process query that times out once is retried rather than believed', () =
   })
   assert.deepEqual(
     { attempts: attempts.length, found },
-    { attempts: 2, found: [11, 12] },
-    'the second read is trusted and its table is walked normally',
+    { attempts: 4, found: [11, 12] },
+    'the fourth read is trusted and its table is walked normally',
   )
 })
 
@@ -368,9 +368,10 @@ test('a process query that keeps timing out still fails rather than reporting no
       }),
     /ETIMEDOUT/,
   )
-  // Exactly one retry: an unreadable table must never pass as a clean one, and
-  // retrying forever would hang the suite instead of reporting the problem.
-  assert.equal(attempts, 2)
+  // Four reads, then the timeout: an unreadable table must never pass as a
+  // clean one, and retrying forever would hang the suite instead of reporting
+  // the problem.
+  assert.equal(attempts, 4)
 })
 
 test('a process query that fails for any other reason is not retried', () => {

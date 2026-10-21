@@ -61,9 +61,17 @@ type Observed = Record<string, unknown>
 
 // --- What is observed is made comparable: nothing that names a run. ---
 
+// A port is a whole number on its own: not part of a longer one, and not a
+// negative JSON-RPC error code. Ports are drawn from 20000-32768, which holds
+// -32600 to -32603; a run on port 32600 once turned 4.1.0's
+// `"code":-32600` into `-<port0>` and failed the comparison.
 const scrub = (text: string, ports: number[]) =>
   ports
-    .reduce((all, port, i) => all.replaceAll(String(port), `<port${i}>`), text)
+    .reduce(
+      (all, port, i) =>
+        all.replace(new RegExp(`(?<![-\\d])${port}(?!\\d)`, 'g'), `<port${i}>`),
+      text,
+    )
     .replace(
       /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
       '<uuid>',

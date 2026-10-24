@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.2.1
+
+Upgrading from 4.2.0. Mostly Windows fixes, and two config-file fixes on every platform. No new options.
+
+### Fixes
+
+- **Windows: a stopped server no longer keeps running.** Every `--stdio` server on Windows runs under `cmd.exe`, and stopping a session, a client or the gateway ended only the shell, leaving the server behind: one per session or connection since 4.1.0. Now the server's whole process tree is ended, and a stop that fails on a busy machine is retried while the server still runs (#335, by @joshmouch; #351).
+- **Windows: `"command": "npx"` in a config file starts.** A command that is a script, as `npx` is (`npx.cmd`), now runs through `cmd.exe`, the way other MCP clients run it, and each argument still reaches the server exactly as written.
+- **`"cors": false` on a server is honoured.** With `cors` set at the top level of a config file, a server set to `false` still answered browsers from any origin, and `--printConfig` left the setting out (#345, by @wunsir).
+- **An empty `"apiKey"` list is refused.** In a config file, `"apiKey": []` on a server replaced a top-level key and served that server to anyone. A file with one now stops at startup and at `--checkConfig`, naming the line, as an empty `--apiKey`, key file or `SUPERGATEWAY_API_KEY` already did. To leave one server without a key, set `apiKey` on the servers that need one instead of at the top level (#347).
+
+### Other
+
+- On Windows, each server stop logs the processes it ended, and an error if one was outside that server's tree.
+- The whole test suite, the standalone executable's tests, the cross-client battery and a 25-hour soak now run on Windows too.
+
 ## 4.2.1-rc.3
 
 - **Windows: a server is no longer left running when stopping it fails once.** On a busy machine, the taskkill that ends a server's process tree could run past its 5-second limit and be cut off. The gateway then gave up on that server, which kept running until the gateway exited. A failed attempt is now retried while the server is still running, up to three times, each allowed 15 seconds; if all three fail, the gateway logs that the server may still be running (#351).

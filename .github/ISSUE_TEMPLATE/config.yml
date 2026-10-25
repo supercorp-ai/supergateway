@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://discord.gg/CudcAH53yF
+    about: Ask on Discord
+  - name: Security vulnerability
+    url: https://github.com/supercorp-ai/supergateway/security/advisories/new
+    about: Report it privately, not as an issue

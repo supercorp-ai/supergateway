@@ -625,7 +625,7 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributing
 
-Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions. For questions and discussion, join us on [Discord](https://discord.gg/CudcAH53yF).
+Issues and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and what a PR needs; report security issues privately as described in [SECURITY.md](SECURITY.md). For questions and discussion, join us on [Discord](https://discord.gg/CudcAH53yF).
 
 ## Tests
 

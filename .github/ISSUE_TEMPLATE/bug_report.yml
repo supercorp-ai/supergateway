@@ -1,0 +1,38 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or config
+      description: The exact supergateway command, or your config file (remove secrets).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Output with `--logLevel debug`, if you can (remove secrets).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Supergateway version
+      placeholder: e.g. 4.2.1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version (or Docker image / standalone executable), and the MCP client you used.
+      placeholder: e.g. macOS 15, Node 24, Claude Desktop

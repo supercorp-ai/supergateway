@@ -42,7 +42,9 @@ const debugFormatArgs = (args: any[]) =>
     if (typeof arg === 'object') {
       return util.inspect(arg, {
         depth: null,
-        colors: process.stderr.isTTY,
+        // Only a terminal has hasColors(); it honours NO_COLOR, FORCE_COLOR
+        // and NODE_DISABLE_COLORS, and a terminal that can't show colour.
+        colors: process.stderr.hasColors?.() ?? false,
         compact: false,
       })
     }

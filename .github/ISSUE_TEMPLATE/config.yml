@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question or discussion
+  - name: Question or help
     url: https://discord.gg/CudcAH53yF
-    about: Ask on Discord
+    about: Ask on Discord, it's the fastest way to get an answer
   - name: Security vulnerability
     url: https://github.com/supercorp-ai/supergateway/security/advisories/new
-    about: Report it privately, not as an issue
+    about: Report it privately, not as a public issue

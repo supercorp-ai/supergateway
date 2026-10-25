@@ -2,6 +2,19 @@ name: Bug report
 description: Something doesn't work as documented
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Questions are quicker on [Discord](https://discord.gg/CudcAH53yF). Security issues: please [report privately](https://github.com/supercorp-ai/supergateway/security/advisories/new) instead.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I tried the latest version (`npx -y supergateway@latest`)
+          required: true
+        - label: I searched existing issues
+          required: true
   - type: textarea
     id: what
     attributes:
@@ -13,15 +26,35 @@ body:
     id: command
     attributes:
       label: Command or config
-      description: The exact supergateway command, or your config file (remove secrets).
+      description: The exact supergateway command, or your config file. Remove secrets.
       render: shell
     validations:
       required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - stdio → SSE
+        - stdio → WebSocket
+        - stdio → Streamable HTTP (stateless)
+        - stdio → Streamable HTTP (stateful)
+        - SSE or Streamable HTTP → stdio
+        - Remote server → SSE, WebSocket or Streamable HTTP
+        - Config file (--config)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: e.g. Claude Desktop, Cursor, MCP Inspector, Python SDK
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Output with `--logLevel debug`, if you can (remove secrets).
+      description: Output with `--logLevel debug`, if you can. Remove secrets.
       render: text
   - type: input
     id: version
@@ -34,5 +67,5 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, Node version (or Docker image / standalone executable), and the MCP client you used.
-      placeholder: e.g. macOS 15, Node 24, Claude Desktop
+      description: OS, and Node version, Docker image or standalone executable.
+      placeholder: e.g. macOS 15, Node 24

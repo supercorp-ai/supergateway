@@ -2,15 +2,24 @@ name: Feature request
 description: Suggest something supergateway should do
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure it's a feature? Ask on [Discord](https://discord.gg/CudcAH53yF) first.
   - type: textarea
     id: problem
     attributes:
       label: What are you trying to do
-      description: The problem or use case, not just the solution.
+      description: The problem or use case, not just the solution. What's your setup?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: What would help
-      description: How you'd like it to work, e.g. a flag or config option.
+      description: How you'd like it to work, e.g. a flag or config option. Optional.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do today
+      description: Any workaround you use now. Optional.

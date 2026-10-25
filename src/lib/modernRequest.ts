@@ -91,7 +91,6 @@ export class ModernRequest {
     const { res, logger } = this.at
     if (!this.stopPromise) {
       res.off('close', this.closed)
-      this.query.cancel()
       this.stopPromise = Promise.resolve()
         .then(() => this.cleanUp())
         .catch((error) => {

@@ -23,14 +23,14 @@ test('public configuration modules preserve formatting, parsed values and idle c
     stderr: unknown[][] = []
   t.mock.method(console, 'log', (...args: unknown[]) => stdout.push(args))
   t.mock.method(console, 'error', (...args: unknown[]) => stderr.push(args))
-  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY')
-  Object.defineProperty(process.stderr, 'isTTY', {
-    value: false,
+  const colors = Object.getOwnPropertyDescriptor(process.stderr, 'hasColors')
+  Object.defineProperty(process.stderr, 'hasColors', {
+    value: undefined,
     configurable: true,
   })
   t.after(() => {
-    if (tty) Object.defineProperty(process.stderr, 'isTTY', tty)
-    else Reflect.deleteProperty(process.stderr, 'isTTY')
+    if (colors) Object.defineProperty(process.stderr, 'hasColors', colors)
+    else Reflect.deleteProperty(process.stderr, 'hasColors')
   })
   const value = { nested: { answer: 42 } }
   for (const logLevel of ['info', 'debug']) {

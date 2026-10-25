@@ -45,8 +45,4 @@ export class ChildQuery {
       resolve(message as JSONRPCResponse)
     }
   }
-
-  cancel() {
-    this.pending?.reject(new Error('Request closed'))
-  }
 }

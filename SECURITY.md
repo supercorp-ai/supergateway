@@ -17,6 +17,10 @@ Anything that lets someone get past what the gateway is set up to allow, for exa
 
 The MCP servers you run behind the gateway, and what they can do, are out of scope: report those to their authors.
 
+## Maintainers
+
+Security reports are handled by [@Nedomas](https://github.com/Nedomas) (Domas Bitvinskas, [domas@supercorp.ai](mailto:domas@supercorp.ai)), Supergateway's creator and maintainer.
+
 ## Supported versions
 
 Fixes go into the latest 4.x release. Please check the newest version before reporting.

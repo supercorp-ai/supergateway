@@ -1,4 +1,5 @@
 import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import type { Logger } from '../types.js'
 
 /**
@@ -33,16 +34,41 @@ interface Listenable {
   listen(port: number, host: string, onListening: () => void): Server
 }
 
+export interface ListenerOptions {
+  port: number
+  /** The address to listen on; every interface when unset. */
+  host?: string
+  /** Supplied when at least one MCP server on the listener has no API key. */
+  warnUnauthenticated?: (message: string) => void
+}
+
+// address() reports the bound IP, including resolved hostnames and
+// IPv4-mapped IPv6 addresses in dotted form.
+const loopback = /^(?:::1$|127\.|::ffff:127\.)/i
+
 /**
  * Listen on `port`, and on `host` when one is set. Without one the call is
  * `listen(port, …)`, exactly as before `--host` existed: every interface.
  */
 export const listenOn = (
   target: Listenable,
-  port: number,
-  host: string | undefined,
+  { port, host, warnUnauthenticated }: ListenerOptions,
   onListening: () => void,
-) =>
-  host === undefined
-    ? target.listen(port, onListening)
-    : target.listen(port, host, onListening)
+) => {
+  const ready = () => {
+    if (warnUnauthenticated) {
+      // The successful listen(port) callback runs with an IP socket bound.
+      const { address, port: boundPort } = server.address() as AddressInfo
+      if (!loopback.test(address))
+        warnUnauthenticated(
+          `WARNING: No API key is configured for at least one MCP server on ${address} (port ${boundPort}). Anyone who can reach this listener can use that server. Configure an API key (--apiKey, SUPERGATEWAY_API_KEY, or apiKey in the config entry), or bind to loopback with --host 127.0.0.1.`,
+        )
+    }
+    onListening()
+  }
+  const server =
+    host === undefined
+      ? target.listen(port, ready)
+      : target.listen(port, host, ready)
+  return server
+}

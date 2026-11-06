@@ -436,14 +436,15 @@ for (const mode of modes) {
       })
     }
 
-    await t.test('no key ever appears in stdout or stderr', () => {
+    await t.test('no key or missing-key warning appears in the logs', () => {
       assert.match(all(), /Rejected a request/)
+      assert.doesNotMatch(all(), /WARNING: No API key/)
       assertNoKeys(all())
     })
   })
 
   test(
-    `${mode.label}: with no key configured, nothing changes`,
+    `${mode.label}: without a key, clients can still connect`,
     options,
     async (t) => {
       const { gateway, port } = await start(t, mode)
@@ -451,8 +452,8 @@ for (const mode of modes) {
       assert.notEqual((await open(mode, port, {})).status, 401)
       if (mode.kind === 'http')
         assert.equal((await modern(port, {})).status, 200)
-      const all = gateway.output() + gateway.errors()
-      assert.doesNotMatch(all, /API key/)
+      assert.doesNotMatch(gateway.output(), /API key: required/)
+      assert.match(gateway.errors(), /WARNING: No API key/)
     },
   )
 }

@@ -4,7 +4,11 @@ import { type HealthCheck, serverHealthOf } from '../lib/serverHealth.js'
 import { type ServerSource, startServer } from '../lib/serverSource.js'
 import { onSignals } from '../lib/onSignals.js'
 import { keepConnectionsAlive } from '../lib/keepConnectionsAlive.js'
-import { listenOn, endpointHost } from '../lib/listenHost.js'
+import {
+  listenOn,
+  endpointHost,
+  type ListenerOptions,
+} from '../lib/listenHost.js'
 import type { Mount } from '../lib/serve.js'
 import { announceGateway } from '../lib/gatewayListing.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
@@ -14,10 +18,7 @@ import express from 'express'
 import { spawn } from 'child_process'
 import { StatefulSessions } from './statefulSessions.js'
 
-interface StdioToStreamableHttpOptions {
-  port: number
-  /** The address to listen on; every interface when unset. */
-  host?: string
+interface StdioToStreamableHttpOptions extends ListenerOptions {
   streamableHttpPath: string
   logger: Logger
   corsOrigin: CorsOptions['origin']
@@ -41,7 +42,7 @@ export async function stdioToStatefulStreamableHttp(
   const mount = stdioToStatefulStreamableHttpMount(args)
   onSignals({ logger, cleanup: mount.close, drainStdin: true })
   keepConnectionsAlive(
-    listenOn(mount.app, port, host, () => {
+    listenOn(mount.app, args, () => {
       logger.info(`Listening on port ${port}`)
       mount.listening(host, port)
     }),

@@ -1,5 +1,6 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { getLogger } from '../src/lib/getLogger.js'
 import { jsonLine } from '../src/lib/jsonLogger.js'
@@ -7,6 +8,7 @@ import {
   gatewayTimeout,
   initialize,
   launchGateway,
+  listening,
   peerCommand,
   rpc,
   stdioRpc,
@@ -524,6 +526,40 @@ test(
     await delay(200)
     assert.equal(bridge.errors(), '')
     protocolOnly(bridge.output())
+  },
+)
+
+test(
+  'an unauthenticated listener still warns in JSON on stderr at log level none',
+  { timeout: gatewayTimeout(20000) },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      peerCommand,
+      '--outputTransport',
+      'streamableHttp',
+      '--port',
+      String(port),
+      '--logLevel',
+      'none',
+      '--logFormat',
+      'json',
+    ])
+    await listening(port, '127.0.0.1')
+    const { messages } = await rpc(
+      `http://127.0.0.1:${port}/mcp`,
+      initialize(1),
+    )
+    assert.equal(messages[0].result.serverInfo.name, 'mock-server')
+    const closed = once(gateway.child, 'close')
+    await gateway.dispose()
+    await closed
+    assert.equal(gateway.output(), '')
+    const warnings = logLines(gateway.errors())
+    assert.equal(warnings.length, 1, gateway.errors())
+    assert.equal(warnings[0].level, 'error')
+    assert.match(warnings[0].msg, /^WARNING: No API key/)
   },
 )
 

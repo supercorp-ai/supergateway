@@ -3,5 +3,31 @@
     "tests/gatewayE2e.test.ts: CLI rejects unsupported SSE output": "#292: a remote server can be served over SSE, WebSocket and Streamable HTTP, so --sse or --streamableHttp with one of those outputs starts a gateway instead of being refused.",
     "tests/gatewayE2e.test.ts: CLI rejects unsupported HTTP output": "#292: as above.",
     "tests/wsClientIdentity.test.ts: a server request with a string id reaches the client and its reply reaches the server": "#264 (GW-034): this client never initializes, so the gateway initializes the server for it, and this fixture pings the client before answering any request: the client sees that ping once more, for the gateway's initialize."
+  },
+  "4.2.0": {
+    "tests/apiKey.test.ts: SSE: with no key configured, nothing changes": "#360: the unauthenticated listener now warns on stderr.",
+    "tests/apiKey.test.ts: WS: with no key configured, nothing changes": "#360: as above.",
+    "tests/apiKey.test.ts: stateless Streamable HTTP: with no key configured, nothing changes": "#360: as above.",
+    "tests/apiKey.test.ts: stateful Streamable HTTP: with no key configured, nothing changes": "#360: as above.",
+    "tests/unknownOptions.test.ts: with nothing unknown, the startup output is unchanged": "#360: an unauthenticated non-loopback listener now warns on stderr. The released tests expect only unknown-option warnings.",
+    "tests/unknownOptions.test.ts: known options in both spellings start the gateway without a warning": "#360: as above.",
+    "tests/unknownOptions.test.ts: unknown options are warned once each on stderr, and nothing else changes": "#360: as above.",
+    "tests/unknownOptions.test.ts: a quoted --stdio command keeps its own options, and the gateway serves": "#360: as above.",
+    "tests/unknownOptions.test.ts: after warning, the gateway still starts and serves": "#360: as above.",
+    "tests/unknownOptions.test.ts: an unquoted --stdio command is named, flag and argument": "#360: as above.",
+    "tests/unknownOptions.test.ts: --logLevel none silences the warnings too": "#360: the unauthenticated-listener warning is emitted even at log level none."
+  },
+  "4.2.1": {
+    "tests/apiKey.test.ts: SSE: with no key configured, nothing changes": "#360: the unauthenticated listener now warns on stderr.",
+    "tests/apiKey.test.ts: WS: with no key configured, nothing changes": "#360: as above.",
+    "tests/apiKey.test.ts: stateless Streamable HTTP: with no key configured, nothing changes": "#360: as above.",
+    "tests/apiKey.test.ts: stateful Streamable HTTP: with no key configured, nothing changes": "#360: as above.",
+    "tests/unknownOptions.test.ts: with nothing unknown, the startup output is unchanged": "#360: an unauthenticated non-loopback listener now warns on stderr. The released tests expect only unknown-option warnings.",
+    "tests/unknownOptions.test.ts: known options in both spellings start the gateway without a warning": "#360: as above.",
+    "tests/unknownOptions.test.ts: unknown options are warned once each on stderr, and nothing else changes": "#360: as above.",
+    "tests/unknownOptions.test.ts: a quoted --stdio command keeps its own options, and the gateway serves": "#360: as above.",
+    "tests/unknownOptions.test.ts: after warning, the gateway still starts and serves": "#360: as above.",
+    "tests/unknownOptions.test.ts: an unquoted --stdio command is named, flag and argument": "#360: as above.",
+    "tests/unknownOptions.test.ts: --logLevel none silences the warnings too": "#360: the unauthenticated-listener warning is emitted even at log level none."
   }
 }

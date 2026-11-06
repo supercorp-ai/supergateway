@@ -19,11 +19,12 @@ import {
 
 // `--host` end to end, against the built CLI: where each listening gateway
 // accepts connections, what its startup listing says, and where the flag is
-// refused. Unset, nothing may change, down to the byte: deployments and
+// refused. With no --host, the stdout listing stays the same: deployments and
 // downstream tools (langchain-mcp-tools waits for `Listening on port`) read
 // these lines.
 
 const prefix = '[supergateway] '
+const warningPrefix = `${prefix}WARNING: No API key`
 const banner =
   'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com'
 
@@ -287,12 +288,22 @@ const exitOf = (gateway: ReturnType<typeof launchGateway>) =>
     delay(requestTimeout(10000), 'still running', { ref: false }),
   ])
 
+async function startupWarnings(gateway: ReturnType<typeof launchGateway>) {
+  const closed = once(gateway.child, 'close')
+  await gateway.dispose()
+  await closed
+  return gateway
+    .errors()
+    .split('\n')
+    .filter((line) => line.startsWith(warningPrefix))
+}
+
 for (const mode of modes) {
   test(
-    `${mode.name} without --host listens on every interface and prints what it always has`,
+    `${mode.name} without --host listens on every interface and warns on stderr`,
     { timeout: gatewayTimeout(20000) },
     async (t) => {
-      const { port, lines } = await start(t, mode, [])
+      const { gateway, port, lines } = await start(t, mode, [])
       assert.deepEqual(
         lines,
         mode.listing(port),
@@ -306,6 +317,7 @@ for (const mode of modes) {
           await mode.reach(t, lanAddress!, port)
         },
       )
+      assert.equal((await startupWarnings(gateway)).length, 1)
     },
   )
 
@@ -313,7 +325,10 @@ for (const mode of modes) {
     `${mode.name} with --host 127.0.0.1 listens on loopback only`,
     { timeout: gatewayTimeout(20000) },
     async (t) => {
-      const { port, lines } = await start(t, mode, ['--host', '127.0.0.1'])
+      const { gateway, port, lines } = await start(t, mode, [
+        '--host',
+        '127.0.0.1',
+      ])
       await mode.reach(t, '127.0.0.1', port)
       await t.test(
         'it is not reachable on a non-loopback address',
@@ -331,6 +346,7 @@ for (const mode of modes) {
         listingWithHost(mode, port, '127.0.0.1', '127.0.0.1'),
         'the host is listed after the port, and the endpoints name it',
       )
+      assert.deepEqual(await startupWarnings(gateway), [])
     },
   )
 
@@ -339,7 +355,10 @@ for (const mode of modes) {
       `${mode.name} with --host ${spelling} listens on IPv6 loopback only`,
       { timeout: gatewayTimeout(20000), skip: noIpv6 },
       async (t) => {
-        const { port, lines } = await start(t, mode, ['--host', spelling])
+        const { gateway, port, lines } = await start(t, mode, [
+          '--host',
+          spelling,
+        ])
         await mode.reach(t, '::1', port)
         assert.equal(
           await connects('127.0.0.1', port),
@@ -351,6 +370,7 @@ for (const mode of modes) {
           listingWithHost(mode, port, '::1', '[::1]'),
           'the host is listed without brackets, and the endpoints bracket it',
         )
+        assert.deepEqual(await startupWarnings(gateway), [])
       },
     )
 
@@ -362,13 +382,17 @@ for (const mode of modes) {
         skip: wildcard === '::' ? noIpv6 : false,
       },
       async (t) => {
-        const { port, lines } = await start(t, mode, ['--host', wildcard])
+        const { gateway, port, lines } = await start(t, mode, [
+          '--host',
+          wildcard,
+        ])
         assert.deepEqual(
           lines,
           listingWithHost(mode, port, wildcard, 'localhost'),
           'the host is listed, but a client cannot connect to a wildcard address',
         )
         await mode.reach(t, '127.0.0.1', port)
+        assert.equal((await startupWarnings(gateway)).length, 1)
       },
     )
 
@@ -397,6 +421,7 @@ for (const mode of modes) {
           unhandled: errors.includes("throw er; // Unhandled 'error' event"),
           error: errors.match(/^Error: listen (E[A-Z]+): /m)?.[1],
           listening: gateway.output().includes('Listening on port'),
+          warned: errors.includes(warningPrefix),
         }
       }
       const occupied = net.createServer()
@@ -409,6 +434,7 @@ for (const mode of modes) {
         unhandled: true,
         error: 'EADDRINUSE',
         listening: false,
+        warned: false,
       })
       const notAvailable = await failure(
         ['--host', unbindable],
@@ -422,6 +448,17 @@ for (const mode of modes) {
     },
   )
 }
+
+test(
+  'an explicit non-loopback address warns on stderr',
+  { timeout: gatewayTimeout(20000), skip: noLan },
+  async (t) => {
+    const { gateway, port } = await start(t, modes[0], ['--host', lanAddress!])
+    const warnings = await startupWarnings(gateway)
+    assert.equal(warnings.length, 1)
+    assert.ok(warnings[0].includes(`${lanAddress} (port ${port})`), warnings[0])
+  },
+)
 
 for (const bridge of [
   { flag: '--sse', url: 'http://127.0.0.1:54321/events', starts: 'SSE' },

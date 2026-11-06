@@ -595,11 +595,15 @@ async function commandLine(t: TestContext, entry: string): Promise<Observed> {
       startup.join('\n').replaceAll(peer, '<server>'),
       [started.port],
     )
-    const before = log().length
+    const stdoutLength = started.process.output().length
+    const stderrLength = started.process.errors().length
     started.process.child.kill('SIGTERM')
     const { code, signal } = await started.process.exited
+    const shutdownLog =
+      started.process.output().slice(stdoutLength) +
+      started.process.errors().slice(stderrLength)
     seen[`${transport}: SIGTERM`] = comparable(
-      { code, signal, log: log().slice(before) },
+      { code, signal, log: shutdownLog },
       [started.port],
     )
   }

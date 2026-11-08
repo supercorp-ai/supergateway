@@ -19,6 +19,7 @@
  *   npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
  */
 
+import type { AddressInfo } from 'node:net'
 import { hideBin } from 'yargs/helpers'
 import { parseCli, unknownArguments, inputTransportOf, hostOf } from './cli.js'
 import { getLogger } from './lib/getLogger.js'
@@ -28,6 +29,7 @@ import { orExit } from './exits.js'
 import { exitWithProcessOf, watchProcess } from './lib/exitWithProcess.js'
 import { start } from './startOne.js'
 import { requestShutdown } from './lib/onSignals.js'
+import { unauthenticatedWarning } from './lib/unauthenticatedWarning.js'
 
 async function main() {
   const args = hideBin(process.argv)
@@ -61,12 +63,22 @@ async function main() {
   const { pid } = orExit(logger, exitWithProcessOf(argv))
   announceStart(logger, run, argv, host, pid)
 
-  // This startup warning goes to stderr even when regular logs are off.
-  const warnUnauthenticated = servers.some(
+  // The listening servers without a key. Their warning goes to stderr even
+  // when regular logs are off: it is the one line nobody should miss.
+  const open = servers.filter(
     (server) => !isOnStdio(server) && server.apiKeys.length === 0,
   )
-    ? loggerFor(undefined, 'info').error
-    : undefined
+  const warn = loggerFor(undefined, 'info').error
+  const warnUnauthenticated =
+    open.length === 0
+      ? undefined
+      : (bound: AddressInfo) =>
+          warn(
+            unauthenticatedWarning(
+              bound,
+              'servers' in run ? open.map((server) => server.name) : undefined,
+            ),
+          )
   try {
     if ('servers' in run)
       await serveSeveral(

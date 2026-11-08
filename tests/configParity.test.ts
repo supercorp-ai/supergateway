@@ -34,8 +34,12 @@ type Case = {
   args: (port: number, upstream: number) => string[]
   // The upstream gateway a bridge connects to, if any.
   upstream?: string[]
-  // The last startup line, and the stream it is written to.
+  // The last line of the startup listing.
   done: RegExp
+  // Listens on every interface without an API key, so the warning about it
+  // follows the listing. It is on stderr and the listing on stdout, so one
+  // can arrive before the other: the log is read once both are in.
+  warns?: true
   // One MCP request, as a value two runs can be compared by.
   exercise: (t: TestContext, gateway: Gateway, port: number) => Promise<unknown>
 }
@@ -104,6 +108,7 @@ const cases: Case[] = [
       'add',
     ],
     done: /^POST messages:/,
+    warns: true,
     exercise: overSse('/sse'),
   },
   {
@@ -121,6 +126,7 @@ const cases: Case[] = [
       'x-trace: on',
     ],
     done: /^POST messages:/,
+    warns: true,
     exercise: overSse('/events'),
   },
   {
@@ -160,6 +166,7 @@ const cases: Case[] = [
       '2025-03-26',
     ],
     done: /^StreamableHttp endpoint:/,
+    warns: true,
     exercise: overHttp('/rpc'),
   },
   {
@@ -177,6 +184,7 @@ const cases: Case[] = [
       '--cors',
     ],
     done: /^StreamableHttp endpoint:/,
+    warns: true,
     exercise: overHttp('/mcp'),
   },
   {
@@ -203,6 +211,8 @@ const cases: Case[] = [
 const ended = (stream: Readable) =>
   stream.readableEnded ? Promise.resolve() : once(stream, 'end')
 
+const warning = /^WARNING: No API key is set/
+
 const logLines = (text: string) =>
   text
     .split('\n')
@@ -218,11 +228,12 @@ const observe = async (
   port: number,
 ) => {
   const gateway = launchGateway(t, args)
+  const logged = (pattern: RegExp) =>
+    [gateway.output(), gateway.errors()].some((text) =>
+      logLines(text).some((line) => pattern.test(line)),
+    )
   await gateway.waitFor(
-    () =>
-      [gateway.output(), gateway.errors()].some((text) =>
-        logLines(text).some((line) => item.done.test(line)),
-      ),
+    () => logged(item.done) && (!item.warns || logged(warning)),
     'finish starting',
   )
   const startup = {

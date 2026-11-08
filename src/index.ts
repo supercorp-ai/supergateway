@@ -44,9 +44,9 @@ async function main() {
   const argv = 'argv' in run ? run.argv : run.servers[0].argv
   // No log line goes to stdout while it carries an entry's MCP messages.
   const logsBesideStdio = 'servers' in run && run.servers.some(isOnStdio)
-  const loggerFor = (server?: string) =>
+  const loggerFor = (server?: string, logLevel = argv.logLevel) =>
     getLogger({
-      logLevel: argv.logLevel,
+      logLevel,
       logFormat: argv.logFormat,
       outputTransport: logsBesideStdio
         ? 'stdio'
@@ -61,13 +61,25 @@ async function main() {
   const { pid } = orExit(logger, exitWithProcessOf(argv))
   announceStart(logger, run, argv, host, pid)
 
+  // This startup warning goes to stderr even when regular logs are off.
+  const warnUnauthenticated = servers.some(
+    (server) => !isOnStdio(server) && server.apiKeys.length === 0,
+  )
+    ? loggerFor(undefined, 'info').error
+    : undefined
   try {
     if ('servers' in run)
-      await serveSeveral(servers, run.healthEndpoints, argv.port, host, logger)
+      await serveSeveral(
+        servers,
+        run.healthEndpoints,
+        { port: argv.port, host, warnUnauthenticated },
+        logger,
+      )
     else
       await start(input, argv, logger, {
         host,
         apiKeys: servers[0].apiKeys,
+        warnUnauthenticated,
       })
   } catch (err) {
     logger.error('Fatal error:', err)

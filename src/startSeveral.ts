@@ -2,6 +2,7 @@ import type { KeyedServer } from './invocation.js'
 import type { Logger } from './types.js'
 import { onStdio } from './startOne.js'
 import { serve } from './lib/serve.js'
+import type { ListenerOptions } from './lib/listenHost.js'
 import { mountOf } from './serverOptions.js'
 import type { BridgeLifecycle } from './lib/stdioBridge.js'
 import { orExit } from './exits.js'
@@ -13,15 +14,13 @@ import { requestShutdown } from './lib/onSignals.js'
 export async function serveSeveral(
   servers: KeyedServer[],
   healthEndpoints: string[],
-  port: number,
-  host: string | undefined,
+  listener: ListenerOptions,
   logger: Logger,
 ) {
   const onStdio = servers.find(isOnStdio)
   let closeStdio: (() => Promise<void>) | undefined
   serve({
-    port,
-    host,
+    ...listener,
     logger,
     mounts: servers
       .filter((server) => server !== onStdio)
@@ -31,7 +30,7 @@ export async function serveSeveral(
           `  - outputTransport: ${server.argv.outputTransport}`,
         )
         return mountOf(server.argv, server.logger, {
-          host,
+          host: listener.host,
           apiKeys: server.apiKeys,
           path: server.path,
         })

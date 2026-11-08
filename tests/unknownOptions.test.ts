@@ -178,21 +178,24 @@ const lines = (text: string) =>
 const banner =
   'Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com'
 
-// The stdio→SSE startup, as it is printed today, up to its last ready line.
+const loopback = ['--host', '127.0.0.1']
+
+// The stdio→SSE startup on loopback, up to its last ready line.
 const sseStartup = (port: number, stdio: string) => [
   'Starting...',
   banner,
   '  - outputTransport: sse',
   '  - Headers: (none)',
   `  - port: ${port}`,
+  '  - host: 127.0.0.1',
   `  - stdio: ${stdio}`,
   '  - ssePath: /sse',
   '  - messagePath: /message',
   '  - CORS: disabled',
   '  - Health endpoints: (none)',
   `Listening on port ${port}`,
-  `SSE endpoint: http://localhost:${port}/sse`,
-  `POST messages: http://localhost:${port}/message`,
+  `SSE endpoint: http://127.0.0.1:${port}/sse`,
+  `POST messages: http://127.0.0.1:${port}/message`,
 ]
 
 const startSse = async (
@@ -205,6 +208,7 @@ const startSse = async (
     peerCommand,
     '--port',
     String(port),
+    ...loopback,
     ...extra,
   ])
   await gateway.ready()
@@ -301,6 +305,7 @@ test(
       'streamableHttp',
       '--port',
       String(port),
+      ...loopback,
     ])
     await gateway.ready()
     const { messages } = await rpc(`http://127.0.0.1:${port}/mcp`, initialize())
@@ -321,6 +326,7 @@ test(
       'streamableHttp',
       '--port',
       String(port),
+      ...loopback,
       '--bindAddress',
       '0.0.0.0',
     ])
@@ -345,6 +351,7 @@ test(
       '/tmp',
       '--port',
       String(port),
+      ...loopback,
     ])
     await gateway.ready()
     assert.deepEqual(lines(gateway.errors()), [option('-y'), argument('/tmp')])
@@ -353,7 +360,7 @@ test(
 )
 
 test(
-  '--logLevel none silences the warnings too',
+  '--logLevel none silences unknown-option warnings',
   { timeout: gatewayTimeout(15000) },
   async (t) => {
     const port = await unusedPort()
@@ -362,6 +369,7 @@ test(
       peerCommand,
       '--port',
       String(port),
+      ...loopback,
       '--healthEndpoint',
       '/healthz',
       '--logLevel',

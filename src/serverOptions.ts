@@ -8,6 +8,7 @@ import { headers } from './lib/headers.js'
 import { ToolNames } from './lib/toolNames.js'
 import { corsOrigin } from './lib/corsOrigin.js'
 import type { HealthCheck } from './lib/serverHealth.js'
+import type { ListenerOptions } from './lib/listenHost.js'
 import { orExit } from './exits.js'
 import type { Mount } from './lib/serve.js'
 import { stdioToSseMount } from './gateways/stdioToSse.js'
@@ -18,7 +19,7 @@ import { stdioToStatelessStreamableHttpMount } from './gateways/stdioToStateless
 // What a listening gateway takes beyond the command line, once checked:
 // `host` is the address `--host` names, or undefined for every interface, and
 // `apiKeys` is empty when no source gives a key, so authentication is off.
-export type Listening = { host: string | undefined; apiKeys: string[] }
+export type Listening = Omit<ListenerOptions, 'port'> & { apiKeys: string[] }
 
 // A config file can start a server without a shell (`command` + `args`), or
 // with its own environment and directory; it puts that here in place of the
@@ -93,7 +94,7 @@ const responseHeaders = (source: ServerSource, argv: Cli, logger: Logger) =>
 const listenerArgs = (
   argv: Cli,
   logger: Logger,
-  { host, apiKeys, path }: ServerOptions,
+  { host, apiKeys, path, warnUnauthenticated }: ServerOptions,
 ) => {
   const source = serverOf(argv, logger)
   return {
@@ -102,6 +103,7 @@ const listenerArgs = (
       ...source,
       host,
       path,
+      warnUnauthenticated,
       logger,
       corsOrigin: corsOrigin({ argv }),
       healthEndpoints: argv.healthEndpoint as string[],

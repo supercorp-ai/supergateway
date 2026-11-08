@@ -581,22 +581,33 @@ async function commandLine(t: TestContext, entry: string): Promise<Observed> {
     .split('\n')
     .filter((line) => line.includes('keepAlive'))
 
+  const listenerWarnings: Record<string, number> = {}
   for (const transport of Object.keys(TRANSPORTS) as TransportName[]) {
     const started = await gateway(t, entry, transport)
     const log = () => started.process.output() + started.process.errors()
     await quiet(log)
+    const lines = log().split('\n')
+    const startup = lines.filter(
+      (line) => !line.startsWith('[supergateway] WARNING: No API key'),
+    )
+    listenerWarnings[transport] = lines.length - startup.length
     seen[`${transport}: startup log`] = comparable(
-      log().replaceAll(peer, '<server>'),
+      startup.join('\n').replaceAll(peer, '<server>'),
       [started.port],
     )
-    const before = log().length
+    const stdoutLength = started.process.output().length
+    const stderrLength = started.process.errors().length
     started.process.child.kill('SIGTERM')
     const { code, signal } = await started.process.exited
+    const shutdownLog =
+      started.process.output().slice(stdoutLength) +
+      started.process.errors().slice(stderrLength)
     seen[`${transport}: SIGTERM`] = comparable(
-      { code, signal, log: log().slice(before) },
+      { code, signal, log: shutdownLog },
       [started.port],
     )
   }
+  seen['unauthenticated listener warnings'] = listenerWarnings
   return seen
 }
 

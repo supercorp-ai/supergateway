@@ -611,6 +611,33 @@ test('an "apiKey" in the file locks the entry', options, async (t) => {
 })
 
 test(
+  'a shared listener warns once when only some entries have a key',
+  options,
+  async (t) => {
+    const entry = { ...mock, outputTransport: 'streamableHttp' }
+    const { port, gateway } = await serve(t, {
+      mcpServers: {
+        tools: { ...entry, apiKey: 'file-key' },
+        open: entry,
+        alsoOpen: entry,
+      },
+    })
+    assert.equal(await post(port), 401)
+    const { messages } = await rpc(
+      `http://127.0.0.1:${port}/open/mcp`,
+      initialize(1),
+    )
+    assert.equal(messages[0].result.serverInfo.name, 'mock-server')
+    await gateway.dispose()
+    const { stderr } = await outcome(gateway)
+    const warnings = logLines(stderr).filter((line) =>
+      line.startsWith('WARNING: No API key'),
+    )
+    assert.equal(warnings.length, 1, stderr)
+  },
+)
+
+test(
   "--apiKey beside --config is accepted in addition to the file's",
   options,
   async (t) => {

@@ -37,12 +37,21 @@ const applicationError: Record<string, Intended> = {
   },
 }
 
+const listenerWarnings: Record<string, Intended> = {
+  'unauthenticated listener warnings': {
+    was: { sse: 0, ws: 0, stateless: 0, stateful: 0 },
+    now: { sse: 1, ws: 1, stateless: 1, stateful: 1 },
+    why: '#360: a non-loopback listener serving MCP without an API key now warns once on stderr.',
+  },
+}
+
 export const intended: Record<
   string,
   Record<string, Record<string, Intended>>
 > = {
   '4.1.0': {
     'command line': {
+      ...listenerWarnings,
       'sse: an option that does not exist, in the log': {
         was: [],
         now: ['[supergateway] Ignored unknown option --keepAlive (see --help)'],
@@ -52,4 +61,6 @@ export const intended: Record<
     'application error through --sse': applicationError,
     'application error through --streamableHttp': applicationError,
   },
+  '4.2.0': { 'command line': listenerWarnings },
+  '4.2.1': { 'command line': listenerWarnings },
 }

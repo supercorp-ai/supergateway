@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Logger } from '../types.js'
+import { isLoopback } from './unauthenticatedWarning.js'
 
 /**
  * The address `--host` names, as `listen` takes it. URLs write an IPv6
@@ -38,17 +39,18 @@ export interface ListenerOptions {
   port: number
   /** The address to listen on; every interface when unset. */
   host?: string
-  /** Supplied when at least one MCP server on the listener has no API key. */
-  warnUnauthenticated?: (message: string) => void
+  /**
+   * Given when at least one MCP server on the listener has no API key; told
+   * where the listener bound, once, when other machines can reach it.
+   */
+  warnUnauthenticated?: (bound: AddressInfo) => void
 }
-
-// address() reports the bound IP, including resolved hostnames and
-// IPv4-mapped IPv6 addresses in dotted form.
-const loopback = /^(?:::1$|127\.|::ffff:127\.)/i
 
 /**
  * Listen on `port`, and on `host` when one is set. Without one the call is
  * `listen(port, …)`, exactly as before `--host` existed: every interface.
+ * The warning for a listener without an API key follows the startup listing,
+ * so it is the last line an operator sees.
  */
 export const listenOn = (
   target: Listenable,
@@ -56,15 +58,11 @@ export const listenOn = (
   onListening: () => void,
 ) => {
   const ready = () => {
-    if (warnUnauthenticated) {
-      // The successful listen(port) callback runs with an IP socket bound.
-      const { address, port: boundPort } = server.address() as AddressInfo
-      if (!loopback.test(address))
-        warnUnauthenticated(
-          `WARNING: No API key is configured for at least one MCP server on ${address} (port ${boundPort}). Anyone who can reach this listener can use that server. Configure an API key (--apiKey, SUPERGATEWAY_API_KEY, or apiKey in the config entry), or bind to loopback with --host 127.0.0.1.`,
-        )
-    }
     onListening()
+    if (warnUnauthenticated === undefined) return
+    // `listen(port, …)` binds an IP socket, so address() is an AddressInfo.
+    const bound = server.address() as AddressInfo
+    if (!isLoopback(bound.address)) warnUnauthenticated(bound)
   }
   const server =
     host === undefined

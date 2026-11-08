@@ -456,7 +456,7 @@ test(
     const { gateway, port } = await start(t, modes[0], ['--host', lanAddress!])
     const warnings = await startupWarnings(gateway)
     assert.equal(warnings.length, 1)
-    assert.ok(warnings[0].includes(`${lanAddress} (port ${port})`), warnings[0])
+    assert.ok(warnings[0].includes(`reach ${lanAddress}:${port} `), warnings[0])
   },
 )
 

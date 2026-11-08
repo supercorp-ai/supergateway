@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.2-rc.1
+
+Upgrading from 4.2.1. No new options, and nothing changes for clients.
+
+- **A warning when anyone on the network can use the gateway.** A gateway serving MCP without an API key on an address other machines can reach (no `--host`, `0.0.0.0`, `::` or a network address) prints one `WARNING: No API key is set` line on stderr after its startup listing, even with `--logLevel none`. With several servers in a `--config` file, it names the ones without a key. `--apiKey`, `SUPERGATEWAY_API_KEY` or `--host 127.0.0.1` turn it off. It changes nothing else (#360 by @shivasymbl, #370 by @wunsir, #371).
+- **Debug logs honour `NO_COLOR`.** With `--logLevel debug` in a terminal, `NO_COLOR`, `FORCE_COLOR=0` and `TERM=dumb` now turn colour off (#368).
+- Two cleanup steps that had no effect were removed (#363).
+
 ## 4.2.1
 
 Upgrading from 4.2.0. Mostly Windows fixes, and two config-file fixes on every platform. No new options.

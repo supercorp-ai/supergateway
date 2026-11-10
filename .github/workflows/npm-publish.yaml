@@ -25,7 +25,8 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Up to 15 minutes of it is waiting for npm to show the version.
+    timeout-minutes: 30
     environment: npm
     permissions:
       contents: read

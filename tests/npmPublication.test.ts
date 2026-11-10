@@ -57,6 +57,47 @@ test('npm publication stops after the bounded number of missing-package checks',
   assert.equal(pauses, 2)
 })
 
+test('npm publication waits up to 15 minutes by default', async () => {
+  let calls = 0
+  let waited = 0
+  await assert.rejects(
+    waitForPublication({
+      version,
+      channel: 'next',
+      integrity,
+      request: async () => {
+        calls++
+        return new Response('{}', { status: 404 })
+      },
+      sleep: async (ms) => {
+        waited += ms
+      },
+    }),
+    /after 180 checks/,
+  )
+  assert.equal(calls, 180)
+  assert.ok(waited >= 14.9 * 60_000, `waited ${waited} ms`)
+})
+
+test('npm publication by default outlasts the five minutes 4.2.2 took to appear', async () => {
+  // Five minutes of a missing package, then the package and its tag.
+  const missing = (5 * 60_000) / 5000 + 1
+  const remote = registry([
+    ...Array.from({ length: missing }, (): [number, object] => [404, {}]),
+    [200, metadata],
+    [200, { next: version }],
+  ])
+  const tags = await waitForPublication({
+    version,
+    channel: 'next',
+    integrity,
+    request: remote.request,
+    sleep: async () => {},
+  })
+  assert.deepEqual(tags, { next: version })
+  assert.equal(remote.calls(), missing + 2)
+})
+
 test('npm publication does not retry mismatched package bytes', async () => {
   const remote = registry([
     [200, { version, dist: { integrity: 'sha512-other' } }],

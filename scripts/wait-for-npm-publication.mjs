@@ -5,11 +5,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { packRelease } from './pack-release.mjs'
 
 // npm can accept a publish before its public metadata and dist-tag are visible.
+// It has taken over five minutes (4.2.2), so the default allows 15: 180 checks,
+// 5 seconds apart.
 export async function waitForPublication({
   version,
   channel,
   integrity,
-  attempts = 40,
+  attempts = 180,
   intervalMs = 5000,
   request = fetch,
   downloadPackage,

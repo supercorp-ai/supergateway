@@ -804,7 +804,11 @@ test('a disabled second entry leaves one to run', options, async (t) => {
   const { port } = await serve(t, {
     mcpServers: {
       tools: { ...mock, outputTransport: 'streamableHttp' },
-      off: { ...mock, enabled: false },
+      off: {
+        ...mock,
+        enabled: false,
+        env: { TOKEN: '${SUPERGATEWAY_DISABLED_SERVER_TOKEN}' },
+      },
     },
   })
   const { response } = await rpc(

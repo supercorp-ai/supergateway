@@ -845,6 +845,42 @@ test('"disabled" and "enabled" turn an entry off', () => {
   entryError({ ...local, enabled: 0 }, 'enabled', 'Expected true or false')
 })
 
+test('loadConfig_disabledServersDoNotRequireEnvironmentVariables', () => {
+  const CONFIG = configOf(
+    file({
+      active: local,
+      disabled: {
+        ...remote,
+        disabled: true,
+        headers: { Authorization: '${TOKEN}' },
+      },
+      notEnabled: { ...local, enabled: false, env: { TOKEN: '${TOKEN}' } },
+      combined: {
+        mcpServers: {
+          active: local,
+          disabled: {
+            ...remote,
+            disabled: true,
+            headers: { Authorization: '${TOKEN}' },
+          },
+          notEnabled: { ...local, enabled: false, env: { TOKEN: '${TOKEN}' } },
+        },
+      },
+    }),
+  )
+
+  assert.deepEqual(
+    CONFIG.entries.map((entry) => entry.name),
+    ['active', 'combined'],
+  )
+  const COMBINED = CONFIG.entries[1].server
+  assert.ok('members' in COMBINED)
+  assert.deepEqual(
+    COMBINED.members.map((member) => member.name),
+    ['active'],
+  )
+})
+
 test('a file with every entry disabled has nothing to serve', () => {
   const text = file({ a: { ...local, disabled: true } })
   assert.equal(

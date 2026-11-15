@@ -15,15 +15,23 @@ export function expand(
       : expandString(value, path, env, fail)
   if (Array.isArray(value))
     return value.map((item, i) => expand(item, [...path, i], env, fail))
-  if (value && typeof value === 'object')
+  if (value && typeof value === 'object') {
+    const raw = value as Record<string, unknown>
+    if (isServerEntry(path) && (raw.disabled === true || raw.enabled === false))
+      return value
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
         expand(item, [...path, key], env, fail),
       ]),
     )
+  }
   return value
 }
+
+const isServerEntry = (path: (string | number)[]) =>
+  path[0] === 'mcpServers' &&
+  (path.length === 2 || (path.length === 4 && path[2] === 'mcpServers'))
 
 // A server's own keys sit at odd depths (mcpServers.<name>.stdio, and
 // mcpServers.<name>.mcpServers.<member>.stdio); at even depths are the names

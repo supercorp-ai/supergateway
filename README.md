@@ -98,6 +98,46 @@ npx -y supergateway \
     --header "X-My-Header: another-header-value"
 ```
 
+### Public documentation search from a stdio host
+
+For a stdio-only MCP host, add this entry to its `mcpServers` configuration
+(the format used in the Claude Desktop examples below):
+
+```json
+{
+  "mcpServers": {
+    "publicDocs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--streamableHttp",
+        "https://mcp.parallel.ai/mcp",
+        "--tools",
+        "web_search",
+        "--header",
+        "User-Agent: supergateway-public-docs-example"
+      ]
+    }
+  }
+}
+```
+
+This uses the [Parallel MCP setup](https://docs.parallel.ai/integrations/mcp/quickstart)
+without an API key. The gateway exposes only `web_search`; other remote tools
+are hidden and calls to them are refused locally. Keep the host's tool approval
+settings, then manually enter a public lookup such as:
+
+> Use publicDocs web_search to find the official Node.js documentation for the
+> node:test test runner. Include the original source URLs from the tool result.
+
+Approve that lookup in the host. Check that its tool list contains only
+`web_search` for this entry and that the tool result includes original source
+URLs, such as `https://nodejs.org/api/test.html`. The bridge passes the tool
+result through; the host decides how to display or cite it. If the result is
+empty or reports an error, report that outcome instead of supplying a source.
+Only send public queries you intend to share with the remote service.
+
 ## stdio → Streamable HTTP
 
 Expose an MCP stdio server as a Streamable HTTP server.

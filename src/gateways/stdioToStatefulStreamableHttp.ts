@@ -14,6 +14,7 @@ import { announceGateway } from '../lib/gatewayListing.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { modernRelayFor } from '../lib/modernHttp.js'
 import { streamableHttpApp } from '../lib/streamableHttpApp.js'
+import { acceptedHosts } from '../lib/hostValidation.js'
 import express from 'express'
 import { spawn } from 'child_process'
 import { StatefulSessions } from './statefulSessions.js'
@@ -28,6 +29,8 @@ interface StdioToStreamableHttpOptions extends ListenerOptions {
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
+  /** Extra Host names to accept, from --allow-host. */
+  allowHost?: string[]
   sessionTimeout: number | null
 }
 
@@ -69,6 +72,7 @@ export function stdioToStatefulStreamableHttpMount(
     apiKeys = [],
     path = '/',
     sessionTimeout,
+    allowHost,
   } = args
 
   announceGateway(logger, {
@@ -102,6 +106,7 @@ export function stdioToStatefulStreamableHttpMount(
     ),
     apiKeys,
     logger,
+    acceptedHosts: acceptedHosts(host, allowHost),
   })
 
   const sessions = new StatefulSessions(args, children, logger, sessionTimeout)

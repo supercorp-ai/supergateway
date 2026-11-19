@@ -24,6 +24,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import bodyParser from 'body-parser'
 import { setResponseHeaders } from '../lib/headers.js'
 import { requireApiKey } from '../lib/apiKey.js'
+import { acceptedHosts, validateHost } from '../lib/hostValidation.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -40,6 +41,8 @@ interface StdioToSseOptions extends ListenerOptions {
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
+  /** Extra Host names to accept, from --allow-host. */
+  allowHost?: string[]
 }
 
 /**
@@ -83,6 +86,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
     headers,
     apiKeys = [],
     path = '/',
+    allowHost,
   } = args
 
   announceGateway(logger, {
@@ -125,6 +129,9 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   const sessions: SseSessions = {}
 
   const app = express()
+  // Before anything else, so nothing answers a rebound Host. See
+  // acceptedHosts in hostValidation.
+  app.use(validateHost(acceptedHosts(host, allowHost), logger))
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
     next()

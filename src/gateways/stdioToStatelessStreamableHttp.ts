@@ -14,6 +14,7 @@ import { announceGateway } from '../lib/gatewayListing.js'
 import { OwnedChildProcesses } from '../lib/ownedChildProcesses.js'
 import { modernRelayFor } from '../lib/modernHttp.js'
 import { streamableHttpApp } from '../lib/streamableHttpApp.js'
+import { acceptedHosts } from '../lib/hostValidation.js'
 import express from 'express'
 import { spawn } from 'child_process'
 import { StatelessRequest } from './statelessRequest.js'
@@ -28,6 +29,8 @@ interface StdioToStreamableHttpOptions extends ListenerOptions {
   headers: Record<string, string>
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
+  /** Extra Host names to accept, from --allow-host. */
+  allowHost?: string[]
   protocolVersion: string
 }
 
@@ -69,6 +72,7 @@ export function stdioToStatelessStreamableHttpMount(
     apiKeys = [],
     path = '/',
     protocolVersion,
+    allowHost,
   } = args
 
   announceGateway(logger, {
@@ -101,6 +105,7 @@ export function stdioToStatelessStreamableHttpMount(
     ),
     apiKeys,
     logger,
+    acceptedHosts: acceptedHosts(host, allowHost),
   })
 
   app.post(streamableHttpPath, async (req, res) => {

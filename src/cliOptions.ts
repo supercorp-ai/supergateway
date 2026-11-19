@@ -73,6 +73,11 @@ export const cli = (args: string[]) =>
       description:
         'Log line format: text (default) or json, one JSON object per line',
     })
+    .option('allowHost', {
+      type: 'array',
+      description:
+        'Extra Host names a listening gateway accepts, for clients that arrive by a name the gateway cannot guess, e.g. --allow-host mypc.local --allow-host gateway.internal',
+    })
     .option('cors', {
       type: 'array',
       description:

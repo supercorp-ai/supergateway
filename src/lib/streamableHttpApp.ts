@@ -5,6 +5,7 @@ import { escapeSseJsonSeparators } from './escapeSseJsonSeparators.js'
 import { setResponseHeaders } from './headers.js'
 import { jsonBodyErrors } from './jsonBodyErrors.js'
 import { requireApiKey } from './apiKey.js'
+import { validateHost } from './hostValidation.js'
 import { healthHandler, type ServerHealth } from './serverHealth.js'
 
 /**
@@ -26,6 +27,7 @@ export function streamableHttpApp(
     health,
     apiKeys,
     logger,
+    acceptedHosts,
   }: {
     headers: Record<string, string>
     corsOrigin: CorsOptions['origin']
@@ -36,9 +38,15 @@ export function streamableHttpApp(
     health?: ServerHealth
     apiKeys: string[]
     logger: Logger
+    /** The Host names the gateway answers as; checked before anything else. */
+    acceptedHosts?: string[]
   },
 ): Express {
   const app = express()
+  // Before anything else, so nothing answers a rebound Host: a page on the
+  // web resolving a name it owns to 127.0.0.1 must not drive the server
+  // behind this gateway.
+  if (acceptedHosts) app.use(validateHost(acceptedHosts, logger))
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
     // --header applies to every response, as it does in SSE mode. It used to

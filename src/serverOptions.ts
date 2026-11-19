@@ -104,6 +104,7 @@ const listenerArgs = (
       host,
       path,
       warnUnauthenticated,
+      allowHost: argv.allowHost as string[] | undefined,
       logger,
       corsOrigin: corsOrigin({ argv }),
       healthEndpoints: argv.healthEndpoint as string[],

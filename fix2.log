@@ -1,0 +1,26 @@
+[supergateway] Starting...
+[supergateway] Supergateway is supported by Supercov - Coverage for coding agents and software factories 🌙 - https://supercov.com
+[supergateway]   - outputTransport: streamableHttp
+[supergateway] Running stateless server
+[supergateway]   - Headers: (none)
+[supergateway]   - port: 8002
+[supergateway]   - stdio: node /tmp/sg/dummy.mcp.js
+[supergateway]   - streamableHttpPath: /mcp
+[supergateway]   - protocolVersion: 2024-11-05
+[supergateway]   - CORS: disabled
+[supergateway]   - Health endpoints: (none)
+[supergateway] Listening on port 8002
+[supergateway] StreamableHttp endpoint: http://localhost:8002/mcp
+[supergateway] WARNING: No API key is set, so anyone who can reach port 8002 on this machine (the gateway listens on every network interface) can use the MCP server. Set --apiKey or SUPERGATEWAY_API_KEY to require a key, or --host 127.0.0.1 to accept local connections only.
+[supergateway] StreamableHttp → Child: {"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}
+[supergateway] Non-initialize message detected, sending auto-initialize request first
+[supergateway] StreamableHttp → Child (auto-initialize): {"jsonrpc":"2.0","id":"init_1795130984735_2p3yol7g1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"supergateway","version":"4.2.2"}}}
+[supergateway] Child → StreamableHttp: {"jsonrpc":"2.0","id":"init_1795130984735_2p3yol7g1","result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"dummy","version":"1.0"}}}
+[supergateway] Initialize response received
+[supergateway] StreamableHttp → Child (initialized): {"jsonrpc":"2.0","method":"notifications/initialized"}
+[supergateway] StreamableHttp → Child (original): {"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}
+[supergateway] Child → StreamableHttp: {"jsonrpc":"2.0","id":4,"result":{"tools":[{"name":"read_file","description":"read any file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}}]}}
+[supergateway] StreamableHttp connection closed
+[supergateway] Child exited: code=null, signal=SIGTERM
+[supergateway] Rejected request: Host header evil.example.com is not this gateway
+[supergateway] Caught SIGTERM. Exiting...

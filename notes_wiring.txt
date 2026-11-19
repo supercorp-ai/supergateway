@@ -1,0 +1,1 @@
+wsVerifier: helper to add in stdioToWs (or hostValidation): host first, then key

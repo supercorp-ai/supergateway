@@ -21,7 +21,13 @@ import { WsConnections } from './wsConnections.js'
 import { ChildHandoff } from '../lib/childHandoff.js'
 import express from 'express'
 import { spawn } from 'child_process'
+import type { VerifyClientCallbackAsync } from 'ws'
 import { requireApiKey, verifyApiKey } from '../lib/apiKey.js'
+import {
+  acceptedHosts,
+  validateHost,
+  verifyWsHost,
+} from '../lib/hostValidation.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 
 interface StdioToWsOptions extends ListenerOptions {
@@ -33,6 +39,8 @@ interface StdioToWsOptions extends ListenerOptions {
   healthCheck?: HealthCheck
   // The keys a client must present; none, or left out, means no check.
   apiKeys?: string[]
+  /** Extra Host names to accept, from --allow-host. */
+  allowHost?: string[]
 }
 
 /**
@@ -69,6 +77,23 @@ export async function stdioToWs(args: StdioToWsArgs) {
   })
 }
 
+// The upgrade's checks, in order: the Host header names this gateway, then
+// the client presents an API key when the gateway takes one. `verifyClient`
+// takes one callback, so the two compose here.
+const wsVerifier = (
+  accepted: string[],
+  apiKeys: string[],
+  logger: Logger,
+): VerifyClientCallbackAsync => {
+  const hostCheck = verifyWsHost(accepted, logger)
+  const keyCheck = verifyApiKey(apiKeys, logger)
+  if (!keyCheck) return hostCheck
+  return (info, done) =>
+    hostCheck(info, (ok) => {
+      if (ok) keyCheck(info, done)
+    })
+}
+
 export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   const {
     port,
@@ -80,6 +105,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
     corsOrigin,
     apiKeys = [],
     path = '/',
+    allowHost,
   } = args
   announceGateway(logger, {
     port,
@@ -101,6 +127,9 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   )
 
   const app = express()
+  // Before anything else, so nothing answers a rebound Host. See
+  // acceptedHosts in hostValidation.
+  app.use(validateHost(acceptedHosts(host, allowHost), logger))
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))
@@ -122,7 +151,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   const wsTransport = new WebSocketServerTransport(
     {
       path: messagePath,
-      verifyClient: verifyApiKey(apiKeys, logger),
+      verifyClient: wsVerifier(acceptedHosts(host, allowHost), apiKeys, logger),
     },
     {
       onconnection: (clientId) => connections.open(clientId),

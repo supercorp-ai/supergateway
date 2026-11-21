@@ -38,3 +38,16 @@ export function unauthenticatedWarning(bound: AddressInfo, open?: string[]) {
   const them = open.length === 1 ? 'it' : 'them'
   return `WARNING: No API key is set for ${quoted(open)}, so anyone who can reach ${reach(bound)} can use ${them}. Set "apiKey" on ${open.length === 1 ? 'that server' : 'those servers'} in the config file, --apiKey or SUPERGATEWAY_API_KEY to require a key on every server, or ${local}.`
 }
+
+/**
+ * The startup warning for WebSocket servers with neither an API key nor
+ * `--cors`. A browser applies no CORS to a WebSocket, so any web page it
+ * opens can use such a server, even one that listens on loopback only.
+ * `open` names the config entries; undefined for the command line's server.
+ */
+export function browserWarning(open?: string[]) {
+  if (open === undefined)
+    return 'WARNING: Neither --cors nor an API key is set, so any web page open in a browser that can reach the gateway can use the MCP server over WebSocket. Set --cors to the origins that may use it, or --apiKey or SUPERGATEWAY_API_KEY to require a key.'
+  const one = open.length === 1
+  return `WARNING: Neither "cors" nor an API key is set for ${quoted(open)}, so any web page open in a browser that can reach the gateway can use ${one ? 'it' : 'them'} over WebSocket. Set "cors" to the origins that may use ${one ? 'it' : 'them'}, or "apiKey", on ${one ? 'that server' : 'those servers'} in the config file, or --apiKey or SUPERGATEWAY_API_KEY to require a key on every server.`
+}

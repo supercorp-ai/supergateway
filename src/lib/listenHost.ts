@@ -44,6 +44,12 @@ export interface ListenerOptions {
    * where the listener bound, once, when other machines can reach it.
    */
   warnUnauthenticated?: (bound: AddressInfo) => void
+  /**
+   * Given when a WebSocket server on the listener has neither an API key nor
+   * `--cors`: any web page can use it, loopback or not. Told once it listens,
+   * after the warning above.
+   */
+  warnBrowsers?: () => void
 }
 
 /**
@@ -54,15 +60,17 @@ export interface ListenerOptions {
  */
 export const listenOn = (
   target: Listenable,
-  { port, host, warnUnauthenticated }: ListenerOptions,
+  { port, host, warnUnauthenticated, warnBrowsers }: ListenerOptions,
   onListening: () => void,
 ) => {
   const ready = () => {
     onListening()
-    if (warnUnauthenticated === undefined) return
-    // `listen(port, …)` binds an IP socket, so address() is an AddressInfo.
-    const bound = server.address() as AddressInfo
-    if (!isLoopback(bound.address)) warnUnauthenticated(bound)
+    if (warnUnauthenticated !== undefined) {
+      // `listen(port, …)` binds an IP socket, so address() is an AddressInfo.
+      const bound = server.address() as AddressInfo
+      if (!isLoopback(bound.address)) warnUnauthenticated(bound)
+    }
+    warnBrowsers?.()
   }
   const server =
     host === undefined

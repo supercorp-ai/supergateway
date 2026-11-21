@@ -582,15 +582,23 @@ async function commandLine(t: TestContext, entry: string): Promise<Observed> {
     .filter((line) => line.includes('keepAlive'))
 
   const listenerWarnings: Record<string, number> = {}
+  const browserWarnings: Record<string, number> = {}
   for (const transport of Object.keys(TRANSPORTS) as TransportName[]) {
     const started = await gateway(t, entry, transport)
     const log = () => started.process.output() + started.process.errors()
     await quiet(log)
     const lines = log().split('\n')
     const startup = lines.filter(
-      (line) => !line.startsWith('[supergateway] WARNING: No API key'),
+      (line) =>
+        !line.startsWith('[supergateway] WARNING: No API key') &&
+        !line.startsWith('[supergateway] WARNING: Neither --cors'),
     )
-    listenerWarnings[transport] = lines.length - startup.length
+    listenerWarnings[transport] = lines.filter((line) =>
+      line.startsWith('[supergateway] WARNING: No API key'),
+    ).length
+    browserWarnings[transport] = lines.filter((line) =>
+      line.startsWith('[supergateway] WARNING: Neither --cors'),
+    ).length
     seen[`${transport}: startup log`] = comparable(
       startup.join('\n').replaceAll(peer, '<server>'),
       [started.port],
@@ -608,6 +616,7 @@ async function commandLine(t: TestContext, entry: string): Promise<Observed> {
     )
   }
   seen['unauthenticated listener warnings'] = listenerWarnings
+  seen['WebSocket warnings for web pages'] = browserWarnings
   return seen
 }
 

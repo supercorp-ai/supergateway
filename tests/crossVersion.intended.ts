@@ -45,6 +45,14 @@ const listenerWarnings: Record<string, Intended> = {
   },
 }
 
+const browserWarnings: Record<string, Intended> = {
+  'WebSocket warnings for web pages': {
+    was: { sse: 0, ws: 0, stateless: 0, stateful: 0 },
+    now: { sse: 0, ws: 1, stateless: 0, stateful: 0 },
+    why: 'A WebSocket server with neither --cors nor an API key, which any web page can use, now warns once on stderr.',
+  },
+}
+
 export const intended: Record<
   string,
   Record<string, Record<string, Intended>>
@@ -52,6 +60,7 @@ export const intended: Record<
   '4.1.0': {
     'command line': {
       ...listenerWarnings,
+      ...browserWarnings,
       'sse: an option that does not exist, in the log': {
         was: [],
         now: ['[supergateway] Ignored unknown option --keepAlive (see --help)'],
@@ -61,6 +70,7 @@ export const intended: Record<
     'application error through --sse': applicationError,
     'application error through --streamableHttp': applicationError,
   },
-  '4.2.0': { 'command line': listenerWarnings },
-  '4.2.1': { 'command line': listenerWarnings },
+  '4.2.0': { 'command line': { ...listenerWarnings, ...browserWarnings } },
+  '4.2.1': { 'command line': { ...listenerWarnings, ...browserWarnings } },
+  '4.2.2': { 'command line': browserWarnings },
 }

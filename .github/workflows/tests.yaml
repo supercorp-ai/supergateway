@@ -375,6 +375,8 @@ jobs:
           - '1.28.0'
           - '1.29.0'
           - '1.30.0'
+          - '1.31.0'
+          - '1.32.2'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

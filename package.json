@@ -44,10 +44,10 @@
     "**/*": "prettier --write --ignore-unknown"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/node": "2.0.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "cross-spawn": "7.0.6",
@@ -92,6 +92,6 @@
     "dist"
   ],
   "overrides": {
-    "@hono/node-server": "1.19.17"
+    "@hono/node-server": "1.19.18"
   }
 }

@@ -8,17 +8,21 @@ import {
   requestTimeout,
   unusedPort,
 } from './helpers/gateway-process.js'
+import { sdkBetween } from './helpers/upstream.js'
 
-// A JSON-RPC batch (protocol 2025-03-26) of any length is answered in full.
-// From SDK 1.30.1 the Streamable HTTP transport refuses a batch of more than
-// 100 messages with 400 -32600, with no option to change it, and the gateway
-// cannot step around the check. Measured on the built gateway: 1.30.0
-// answers 101 and 500 in full; 1.31.0 refuses both, stateless and stateful.
-// This pins the current behaviour, so an SDK bump cannot change it unnoticed.
-const LENGTH = 101
+// A JSON-RPC batch (protocol 2025-03-26) over Streamable HTTP.
+//
+// From SDK 1.30.1 the transport refuses a batch of more than 100 messages
+// with 400 -32600 and runs none of it, with no option to change
+// it. Up to 4.2.2 the gateway shipped SDK 1.30.0 and answered any length;
+// from 4.2.3 it ships 1.32.2, so 100 is the most a batch may carry, as on
+// every server built on the SDK since. The older SDKs in the CI matrix still
+// answer 101 in full, and this says so, so the change cannot move unnoticed.
+const LIMIT = 100
+const capped = sdkBetween('1.30.1', '2.0.0')
 
-const batch = () =>
-  Array.from({ length: LENGTH }, (_, index) => ({
+const batch = (length: number) =>
+  Array.from({ length }, (_, index) => ({
     jsonrpc: '2.0',
     id: 1000 + index,
     method: 'tools/list',
@@ -41,12 +45,19 @@ const post = async (url: string, body: unknown, session?: string) => {
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data:'))
     .flatMap((line) => JSON.parse(line.slice(5)))
-  return { response, messages }
+  return { response, text, messages }
 }
+
+const answeredIn = (messages: any[]) =>
+  new Set(
+    messages
+      .filter((message) => 'result' in message)
+      .map((message) => message.id),
+  ).size
 
 for (const stateful of [false, true]) {
   test(
-    `${stateful ? 'stateful' : 'stateless'} HTTP answers a ${LENGTH}-message batch in full`,
+    `${stateful ? 'stateful' : 'stateless'} HTTP answers a batch of up to ${LIMIT} messages in full, and ${capped ? 'refuses' : 'answers'} one more`,
     { timeout: gatewayTimeout(30000) },
     async (t) => {
       const port = await unusedPort()
@@ -73,14 +84,24 @@ for (const stateful of [false, true]) {
           session,
         )
       }
-      const { response, messages } = await post(url, batch(), session)
-      assert.equal(response.status, 200)
-      const answered = new Set(
-        messages
-          .filter((message) => 'result' in message)
-          .map((message) => message.id),
-      )
-      assert.equal(answered.size, LENGTH, 'every message in the batch')
+      const full = await post(url, batch(LIMIT), session)
+      assert.equal(full.response.status, 200)
+      assert.equal(answeredIn(full.messages), LIMIT, 'every message in it')
+
+      const over = await post(url, batch(LIMIT + 1), session)
+      if (!capped) {
+        assert.equal(over.response.status, 200)
+        assert.equal(answeredIn(over.messages), LIMIT + 1)
+        return
+      }
+      assert.equal(over.response.status, 400)
+      assert.deepEqual(over.messages, [], 'nothing in it was answered')
+      const refusal = JSON.parse(over.text)
+      assert.equal(refusal.error.code, -32600, over.text)
+      assert.equal(refusal.id, null)
+      // The gateway, and the session, still serve.
+      const after = await post(url, batch(1), session)
+      assert.equal(answeredIn(after.messages), 1)
     },
   )
 }

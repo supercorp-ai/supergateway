@@ -62,3 +62,54 @@ test(
     assert.equal(gateway.child.exitCode, null, 'the gateway is still running')
   },
 )
+
+/**
+ * A session id that names a member every plain object inherits is a session
+ * id like any other: unknown, so the same 503, and the gateway serves on.
+ */
+test(
+  'a session id naming an inherited object member is an unknown session',
+  { timeout: gatewayTimeout(30000) },
+  async (t) => {
+    const port = await unusedPort()
+    const gateway = launchGateway(t, [
+      '--stdio',
+      peerCommand,
+      '--port',
+      String(port),
+    ])
+    await gateway.ready()
+
+    for (const sessionId of [
+      'constructor',
+      '__proto__',
+      'toString',
+      'hasOwnProperty',
+      'valueOf',
+    ]) {
+      // A browser can send this one without a preflight.
+      const refused = await fetch(
+        `http://127.0.0.1:${port}/message?sessionId=${sessionId}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain' },
+          body: 'x',
+          signal: AbortSignal.timeout(requestTimeout(5000)),
+        },
+      )
+      assert.equal(refused.status, 503, sessionId)
+      assert.equal(
+        await refused.text(),
+        `No active SSE connection for session ${sessionId}`,
+      )
+    }
+
+    const opened = await fetch(`http://127.0.0.1:${port}/sse`, {
+      headers: { accept: 'text/event-stream' },
+      signal: AbortSignal.timeout(requestTimeout(5000)),
+    })
+    assert.equal(opened.status, 200)
+    await opened.body!.cancel()
+    assert.equal(gateway.child.exitCode, null, 'the gateway is still running')
+  },
+)

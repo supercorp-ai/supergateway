@@ -11,7 +11,9 @@ import type { Logger } from '../types.js'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import { drained } from '../lib/outputBackpressure.js'
 
-export type SseSessions = Record<
+// A Map, as in statefulSessions.ts: the key is the client's `sessionId` query
+// parameter, so only a session this gateway created is ever found.
+export type SseSessions = Map<
   string,
   {
     server: Server
@@ -48,7 +50,7 @@ export class SseSession {
   ) {
     const sessionId = (this.sessionId = transport.sessionId)
     this.label = `Session ${sessionId}`
-    sessions[sessionId] = { server, transport, response: res }
+    sessions.set(sessionId, { server, transport, response: res })
     this.connection = new ConnectionChild(
       peer,
       this.owner(),
@@ -103,10 +105,11 @@ export class SseSession {
   // its child failed stops it.
   private end(report: () => void, clientLeft = false) {
     const { sessions, sessionId } = this
-    if (!sessions[sessionId]) return
+    const session = sessions.get(sessionId)
+    if (!session) return
     report()
-    const { server } = sessions[sessionId]
-    delete sessions[sessionId]
+    const { server } = session
+    sessions.delete(sessionId)
     this.connection.end(clientLeft)
     server.close().catch((err) => {
       this.logger.error(`Failed to close session ${sessionId}:`, err)
@@ -141,7 +144,7 @@ export class SseSession {
         if ('id' in jsonMsg && !('method' in jsonMsg))
           this.pending.delete(jsonMsg.id)
         logger.info(`Child → SSE (session ${sessionId}):`, jsonMsg)
-        if (!sessions[sessionId]) return
+        if (!sessions.has(sessionId)) return
         this.transport.send(jsonMsg).catch((err) => {
           this.end(() =>
             logger.error(`Failed to send to session ${sessionId}:`, err),
@@ -161,7 +164,7 @@ export class SseSession {
       },
       exit: (code, signal) => {
         const detail = `Child exited (session ${sessionId}): code=${code}, signal=${signal}`
-        if (!sessions[sessionId]) {
+        if (!sessions.has(sessionId)) {
           logger.info(detail)
           return
         }

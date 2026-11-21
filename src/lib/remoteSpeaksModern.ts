@@ -2,6 +2,7 @@ import type { RemoteServer } from './upstreamPeer.js'
 import type { Logger } from '../types.js'
 import { MODERN_VERSION } from './modernVersion.js'
 import { getVersion } from './getVersion.js'
+import { remoteFetch } from './redirects.js'
 
 /** How long an answer about what a remote server speaks stands. */
 export const SPEAKS_FOR_MS = 60_000
@@ -24,7 +25,7 @@ export function remoteSpeaksModern(
   let last: { at: number; speaks: Promise<boolean> } | undefined
   return (): Promise<boolean> => {
     if (last && now() - last.at < SPEAKS_FOR_MS) return last.speaks
-    const speaks = discovers(remote).then((speaks) => {
+    const speaks = discovers(remote, logger).then((speaks) => {
       logger.info(
         `The remote server ${speaks ? 'speaks' : 'does not speak'} ${MODERN_VERSION}`,
       )
@@ -37,9 +38,12 @@ export function remoteSpeaksModern(
 
 // Whether `server/discover` is answered with the version among those the
 // server supports. Anything else, an error or silence included, is a no.
-async function discovers(remote: RemoteServer): Promise<boolean> {
+async function discovers(
+  remote: RemoteServer,
+  logger: Logger,
+): Promise<boolean> {
   try {
-    const response = await fetch(remote.url, {
+    const response = await remoteFetch(remote, logger)(remote.url, {
       method: 'POST',
       signal: AbortSignal.timeout(DISCOVER_TIMEOUT_MS),
       headers: {

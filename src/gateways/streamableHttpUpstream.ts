@@ -12,6 +12,7 @@ import {
   upstreamClientIdentity,
 } from '../lib/stdioBridge.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
+import { redirectSafeFetch } from '../lib/redirects.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { rejectMalformedInitialize, upstreamLost } from './upstreamFailures.js'
 import { z } from 'zod'
@@ -42,13 +43,17 @@ export class Upstream {
   private connecting: Promise<unknown> | undefined
   private readonly reconnects = new ReconnectSchedule()
   private hasConnected = false
+  // Redirects followed by the rule in redirects.ts, for every transport.
+  private readonly send: ReturnType<typeof redirectSafeFetch>
 
   constructor(
     private readonly url: URL,
     private readonly headers: Record<string, string>,
     private readonly logger: Logger,
     private readonly exit: BridgeLifecycle['exit'],
-  ) {}
+  ) {
+    this.send = redirectSafeFetch(headers, logger)
+  }
 
   private isCurrent(transport: StreamableHTTPClientTransport) {
     return this.connection?.transport === transport
@@ -80,7 +85,7 @@ export class Upstream {
       requestInit: { headers: this.headers },
       // Read upstream responses only as fast as the stdio client reads.
       fetch: async (url, init) =>
-        readAsDrained(await fetch(url, init), process.stdout),
+        readAsDrained(await this.send(url, init), process.stdout),
     })
     relayServerMessages(transport, (message) => {
       this.logger.info('Streamable HTTP → Stdio:', message)

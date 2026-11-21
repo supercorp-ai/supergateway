@@ -2,6 +2,7 @@ import { type JSONRPCMessage, parseJSONRPCMessage } from './modernSdk.js'
 import type { RemoteServer } from './upstreamPeer.js'
 import type { Logger } from '../types.js'
 import { encodedHeader, mirroredHeaders } from './modernHeaders.js'
+import { remoteFetch } from './redirects.js'
 export { MODERN_VERSION } from './modernVersion.js'
 
 export { remoteSpeaksModern, SPEAKS_FOR_MS } from './remoteSpeaksModern.js'
@@ -63,21 +64,24 @@ export class UpstreamModernChild implements ModernChild {
   async send(message: JSONRPCMessage): Promise<void> {
     if (this.closed) throw new Error('Upstream request is closed')
     const call = 'method' in message && message.method === 'tools/call'
-    const response = await fetch(this.remote.url, {
-      method: 'POST',
-      signal: this.aborting.signal,
-      headers: {
-        ...this.remote.headers,
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-        ...(this.request.version === undefined
-          ? {}
-          : { 'mcp-protocol-version': encodedHeader(this.request.version) }),
-        ...mirroredHeaders(message),
-        ...(call ? this.request.params : {}),
+    const response = await remoteFetch(this.remote, this.logger)(
+      this.remote.url,
+      {
+        method: 'POST',
+        signal: this.aborting.signal,
+        headers: {
+          ...this.remote.headers,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...(this.request.version === undefined
+            ? {}
+            : { 'mcp-protocol-version': encodedHeader(this.request.version) }),
+          ...mirroredHeaders(message),
+          ...(call ? this.request.params : {}),
+        },
+        body: JSON.stringify(message),
       },
-      body: JSON.stringify(message),
-    })
+    )
     const awaited =
       'id' in message && 'method' in message ? message.id : undefined
     const reading = this.read(response, awaited)

@@ -10,6 +10,7 @@ import {
   type BridgeLifecycle,
 } from '../lib/stdioBridge.js'
 import { readAsDrained } from '../lib/outputBackpressure.js'
+import { redirectSafeFetch } from '../lib/redirects.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { redactUrl } from '../lib/urlCredentials.js'
 
@@ -41,17 +42,21 @@ export const openSseTransport = (
   exit: BridgeLifecycle['exit'],
 ) => {
   const stream: EventStream = { opened: false }
+  // Redirects followed by the rule in redirects.ts, on the event stream and
+  // the POSTs alike.
+  const send = redirectSafeFetch(headers, logger)
   const transport = new SSEClientTransport(upstreamUrl, {
+    // The POSTs, which used the global fetch.
+    fetch: send,
     eventSourceInit: {
-      fetch: async (...props: Parameters<typeof fetch>) => {
-        const [url, init = {}] = props
+      fetch: async (url: string | URL, init: RequestInit = {}) => {
         // The SDK passes a `Headers` object, and spreading one yields `{}`: the
         // stream request lost `Accept: text/event-stream` (sent as `*/*`) and
         // every other header the SDK set. Merge, and let --header win.
         const merged = new Headers(init.headers)
         for (const [name, value] of Object.entries(headers))
           merged.set(name, value)
-        const response = await fetch(url, { ...init, headers: merged })
+        const response = await send(url, { ...init, headers: merged })
         if (response.ok) stream.opened = true
         // Read the event stream only as fast as the stdio client reads.
         return readAsDrained(response, process.stdout)

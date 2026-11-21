@@ -81,14 +81,23 @@ export const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
 // Capabilities together: what any server has, the combined server has.
+//
+// Every key is data: a server's capabilities come from its JSON, and whatever
+// it names is read and written as the merged object's own property.
 export const union = (
   into: Record<string, unknown>,
   from: Record<string, unknown>,
 ) => {
   for (const [key, value] of Object.entries(from)) {
-    const present = into[key]
+    const present = Object.hasOwn(into, key) ? into[key] : undefined
     if (isObject(present) && isObject(value)) union(present, value)
-    else into[key] = present || (isObject(value) ? union({}, value) : value)
+    else
+      Object.defineProperty(into, key, {
+        value: present || (isObject(value) ? union({}, value) : value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
   }
   return into
 }

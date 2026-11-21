@@ -31,7 +31,7 @@ export class WebSocketServerTransport {
       path: string
       // Refuses an upgrade before it is a connection: a refused client never
       // reaches `onconnection`, and no child is spawned for it.
-      verifyClient?: VerifyClientCallbackAsync
+      verifyClient: VerifyClientCallbackAsync
     },
     private readonly handlers: {
       onconnection: (clientId: string) => void
@@ -43,12 +43,7 @@ export class WebSocketServerTransport {
     // Not bound to an HTTP server: several WebSocket paths can share one
     // port, and `ws` refuses, with 400, every upgrade for a path that isn't
     // its own, so each server's upgrades are handed to it (handleUpgrade).
-    // Only when given, so a server without a check is built as it always was.
-    this.wss = new WebSocketServer({
-      path,
-      noServer: true,
-      ...(verifyClient ? { verifyClient } : {}),
-    })
+    this.wss = new WebSocketServer({ path, noServer: true, verifyClient })
   }
 
   /**

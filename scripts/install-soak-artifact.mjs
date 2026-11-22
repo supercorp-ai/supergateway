@@ -8,8 +8,8 @@ const version = process.env.SOAK_PACKAGE_VERSION
 const digest = process.env.SOAK_PACKAGE_SHA256
 assert.equal(
   version,
-  '4.2.2',
-  'Select the 4.2.2 release explicitly',
+  '4.2.3-rc.1',
+  'Select the 4.2.3 RC.1 candidate explicitly',
 )
 assert.match(
   digest ?? '',

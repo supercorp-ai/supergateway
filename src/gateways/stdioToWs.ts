@@ -21,7 +21,8 @@ import { WsConnections } from './wsConnections.js'
 import { ChildHandoff } from '../lib/childHandoff.js'
 import express from 'express'
 import { spawn } from 'child_process'
-import { requireApiKey, verifyApiKey } from '../lib/apiKey.js'
+import { requireApiKey } from '../lib/apiKey.js'
+import { verifyWebSocket } from '../lib/websocketOrigin.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 
 interface StdioToWsOptions extends ListenerOptions {
@@ -122,7 +123,7 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   const wsTransport = new WebSocketServerTransport(
     {
       path: messagePath,
-      verifyClient: verifyApiKey(apiKeys, logger),
+      verifyClient: verifyWebSocket(corsOrigin, apiKeys, logger),
     },
     {
       onconnection: (clientId) => connections.open(clientId),

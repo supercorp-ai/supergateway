@@ -438,3 +438,112 @@ test(
     assert.deepEqual(warnings((await stopped(started)).stderr), [])
   },
 )
+
+// --- WebSocket without --cors ---
+//
+// A browser applies no CORS to a WebSocket, so a WS server with neither a
+// key nor --cors can be used by any web page, loopback or not. The default
+// stays as it is; the operator is told, after the warning above, last.
+
+const browserWarnings = (text: string) =>
+  text.split('\n').filter((line) => line.includes('WARNING: Neither'))
+
+const browserLine = `${prefix}WARNING: Neither --cors nor an API key is set, so any web page open in a browser that can reach the gateway can use the MCP server over WebSocket. Set --cors to the origins that may use it, or --apiKey or SUPERGATEWAY_API_KEY to require a key.`
+
+test(
+  'WS on loopback without --cors or a key warns about web pages, and only that',
+  options,
+  async (t) => {
+    const port = await unusedPort()
+    const started = launchGateway(t, [
+      '--stdio',
+      peerCommand,
+      ...outputs.WS,
+      '--port',
+      String(port),
+      '--host',
+      '127.0.0.1',
+      '--logLevel',
+      'none',
+    ])
+    // Not ready by its log, which is off: by its port.
+    await listening(port, '127.0.0.1')
+    const { stdout, stderr } = await stopped(started)
+    assert.deepEqual(warnings(stderr), [])
+    assert.deepEqual(stderr.split('\n').filter(Boolean), [browserLine])
+    assert.equal(stdout, '')
+  },
+)
+
+test(
+  'WS on every interface without --cors or a key: both warnings, the web page one last',
+  options,
+  async (t) => {
+    const { port, gateway: started } = await gateway(t, outputs.WS)
+    const lines = (await stopped(started)).stderr.split('\n').filter(Boolean)
+    assert.deepEqual(lines.slice(-2), [everyInterface(port), browserLine])
+  },
+)
+
+for (const [how, args] of [
+  ['--cors with an origin', ['--cors', 'http://app.test']],
+  ['bare --cors', ['--cors']],
+  ['a key', ['--apiKey', 'k']],
+] as const)
+  test(`WS with ${how} says nothing about web pages`, options, async (t) => {
+    const { gateway: started } = await gateway(t, [
+      ...outputs.WS,
+      '--host',
+      '127.0.0.1',
+      ...args,
+    ])
+    assert.deepEqual(browserWarnings((await stopped(started)).stderr), [])
+  })
+
+for (const [mode, args] of Object.entries(outputs).filter(
+  ([mode]) => mode !== 'WS',
+))
+  test(
+    `${mode} says nothing about web pages: CORS covers it`,
+    options,
+    async (t) => {
+      const { gateway: started } = await gateway(t, args)
+      assert.deepEqual(browserWarnings((await stopped(started)).stderr), [])
+    },
+  )
+
+const ws = { ...mock, outputTransport: 'ws' }
+
+test(
+  'a config file names its WS servers without "cors" or a key, once',
+  options,
+  async (t) => {
+    const { gateway: started } = await serveConfig(
+      t,
+      {
+        mcpServers: {
+          a: ws,
+          strict: { ...ws, cors: ['http://app.test'] },
+          keyed: { ...ws, apiKey: 'k' },
+          http,
+          b: ws,
+        },
+      },
+      ['--host', '127.0.0.1'],
+    )
+    assert.deepEqual(browserWarnings((await stopped(started)).stderr), [
+      `${prefix}WARNING: Neither "cors" nor an API key is set for "a" and "b", so any web page open in a browser that can reach the gateway can use them over WebSocket. Set "cors" to the origins that may use them, or "apiKey", on those servers in the config file, or --apiKey or SUPERGATEWAY_API_KEY to require a key on every server.`,
+    ])
+  },
+)
+
+test('a config file with one such WS server names it', options, async (t) => {
+  const { gateway: started } = await serveConfig(
+    t,
+    { mcpServers: { open: ws, tools: http } },
+    ['--host', '127.0.0.1'],
+  )
+  assert.deepEqual(browserWarnings((await stopped(started)).stderr), [
+    `${prefix}WARNING: Neither "cors" nor an API key is set for "open", so any web page open in a browser that can reach the gateway can use it over WebSocket. Set "cors" to the origins that may use it, or "apiKey", on that server in the config file, or --apiKey or SUPERGATEWAY_API_KEY to require a key on every server.`,
+  ])
+})

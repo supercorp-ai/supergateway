@@ -20,10 +20,15 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+// 2.x and 3.x published no end-to-end tests to run; they are marked
+// `"own tests": false` and checked only by crossVersion.test.ts.
+const baselines = JSON.parse(
+  readFileSync('tests/crossVersion.baselines.json', 'utf8'),
+)
 const versions = process.argv[2]
   ? [process.argv[2]]
-  : Object.keys(
-      JSON.parse(readFileSync('tests/crossVersion.baselines.json', 'utf8')),
+  : Object.keys(baselines).filter(
+      (version) => baselines[version]['own tests'] !== false,
     )
 const only = process.argv[3] ?? ''
 const entry = resolve(process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js')

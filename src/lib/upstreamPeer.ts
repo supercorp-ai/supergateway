@@ -10,6 +10,7 @@ import type { Logger } from '../types.js'
 import type { StartPeer } from './childHandoff.js'
 import type { OwnedChildProcesses } from './ownedChildProcesses.js'
 import { readWhile } from './outputBackpressure.js'
+import { remoteFetch } from './redirects.js'
 
 /** A remote MCP server, served over HTTP as if it were a local one. */
 export interface RemoteServer {
@@ -42,13 +43,17 @@ export const upstreamPeer =
     // Settles the wait for initialize's answer; set when initialize is sent.
     let answered!: () => void
     // Read the remote server's responses only as fast as the client reads.
-    const held = async (...props: Parameters<typeof fetch>) =>
-      readWhile(await fetch(...props), () => owner.output())
+    // Redirects followed by remoteFetch's rule (redirects.ts).
+    const send = remoteFetch(remote, logger)
+    const held = async (url: string | URL, init?: RequestInit) =>
+      readWhile(await send(url, init), () => owner.output())
     const transport =
       remote.type === 'sse'
         ? new SSEClientTransport(remote.url, {
             // The SDK sends requestInit's headers on the event stream too.
             eventSourceInit: { fetch: held },
+            // Its POSTs, which used the global fetch.
+            fetch: send,
             requestInit: { headers: remote.headers },
           })
         : new StreamableHTTPClientTransport(remote.url, {

@@ -94,7 +94,7 @@ const responseHeaders = (source: ServerSource, argv: Cli, logger: Logger) =>
 const listenerArgs = (
   argv: Cli,
   logger: Logger,
-  { host, apiKeys, path, warnUnauthenticated }: ServerOptions,
+  { host, apiKeys, path, warnUnauthenticated, warnBrowsers }: ServerOptions,
 ) => {
   const source = serverOf(argv, logger)
   return {
@@ -104,6 +104,7 @@ const listenerArgs = (
       host,
       path,
       warnUnauthenticated,
+      warnBrowsers,
       logger,
       corsOrigin: corsOrigin({ argv }),
       healthEndpoints: argv.healthEndpoint as string[],

@@ -29,7 +29,11 @@ import { orExit } from './exits.js'
 import { exitWithProcessOf, watchProcess } from './lib/exitWithProcess.js'
 import { start } from './startOne.js'
 import { requestShutdown } from './lib/onSignals.js'
-import { unauthenticatedWarning } from './lib/unauthenticatedWarning.js'
+import {
+  browserWarning,
+  unauthenticatedWarning,
+} from './lib/unauthenticatedWarning.js'
+import { corsOrigin } from './lib/corsOrigin.js'
 
 async function main() {
   const args = hideBin(process.argv)
@@ -79,12 +83,29 @@ async function main() {
               'servers' in run ? open.map((server) => server.name) : undefined,
             ),
           )
+  // The WebSocket servers any web page can use: no key, and no --cors.
+  const browsable = open.filter(
+    (server) =>
+      server.argv.outputTransport === 'ws' &&
+      !corsOrigin({ argv: server.argv }),
+  )
+  const warnBrowsers =
+    browsable.length === 0
+      ? undefined
+      : () =>
+          warn(
+            browserWarning(
+              'servers' in run
+                ? browsable.map((server) => server.name)
+                : undefined,
+            ),
+          )
   try {
     if ('servers' in run)
       await serveSeveral(
         servers,
         run.healthEndpoints,
-        { port: argv.port, host, warnUnauthenticated },
+        { port: argv.port, host, warnUnauthenticated, warnBrowsers },
         logger,
       )
     else
@@ -92,6 +113,7 @@ async function main() {
         host,
         apiKeys: servers[0].apiKeys,
         warnUnauthenticated,
+        warnBrowsers,
       })
   } catch (err) {
     logger.error('Fatal error:', err)

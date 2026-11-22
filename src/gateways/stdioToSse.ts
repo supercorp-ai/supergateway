@@ -122,7 +122,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   // made this the most reported crash in the tracker (#112, #138, #153).
   //
   // The shape is taken from @sfasching's #113.
-  const sessions: SseSessions = {}
+  const sessions: SseSessions = new Map()
 
   const app = express()
   app.use((_req, res, next) => {
@@ -228,7 +228,7 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
       return res.status(400).send('Missing sessionId parameter')
     }
 
-    const session = sessions[sessionId]
+    const session = sessions.get(sessionId)
     // A session is stored with its transport, and kept only while it is open.
     if (session) {
       logger.info(`POST to SSE transport (session ${sessionId})`)

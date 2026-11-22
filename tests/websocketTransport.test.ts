@@ -48,8 +48,9 @@ test('WebSocket transport passes messages through per client and reports each en
   const { WebSocketServerTransport } =
     await import('../src/server/websocket.js')
   const events: unknown[][] = []
+  const verifyClient = () => {}
   const transport = new WebSocketServerTransport(
-    { path: '/wire' },
+    { path: '/wire', verifyClient },
     {
       onconnection: (id) => events.push(['connect', id]),
       onmessage: (message, id) => events.push(['message', message, id]),
@@ -59,7 +60,11 @@ test('WebSocket transport passes messages through per client and reports each en
   )
   // Not bound to an HTTP server: the gateway hands it its upgrades, so
   // several can share one port.
-  assert.deepEqual(server!.options, { path: '/wire', noServer: true })
+  assert.deepEqual(server!.options, {
+    path: '/wire',
+    noServer: true,
+    verifyClient,
+  })
   transport.start()
 
   const first = new FakeSocket(),

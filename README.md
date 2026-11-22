@@ -33,9 +33,9 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--protocolVersion "2025-06-18"`**: Protocol version the gateway uses when it initializes the server itself and the client's request doesn't name one (stateless stdio→Streamable HTTP mode, default: `2024-11-05`)
 - **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, stdio→Streamable HTTP, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times). With a local server they go on the gateway's responses; with a remote one (`--sse`, `--streamableHttp`) they are sent to the remote server
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
-- **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs except the [warning about a missing API key](#requiring-an-api-key).
+- **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs except the [startup warnings](#security).
 - **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
-- **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
+- **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching). With origins, a web page from any other origin can't open a WebSocket either (`403`); clients that aren't browsers send no origin and are unaffected.
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (every mode but stdio output; can be used multiple times) that respond with `"ok"`
 - **`--healthCheck gateway | server`**: What the health endpoints check (default: `gateway`). `gateway` answers `"ok"` while the gateway is up. `server` also checks the MCP server: it starts one (or, for `--sse`/`--streamableHttp`, opens a session with the remote server), initializes and pings it, and stops it. It answers `"ok"` if the server responded within 10 seconds, and `503` with the reason otherwise (e.g. `unhealthy: the server exited (code=1, signal=null)`). The answer is reused for 10 seconds, so polling every second starts at most one server per 10 seconds. The startup log says when health turns bad and when it recovers
 - **`--toolPrefix "github_"`**: Put this before every tool name the server lists, so `search` becomes `github_search` (all modes). Clients call the tool by that name, and the server still gets its own. It is used as given, so include a separator. Tool names may be letters, digits, `_`, `-` and `.`, at most 128 characters; the gateway warns about a prefix or name outside that
@@ -135,11 +135,13 @@ Expose an MCP stdio server as a WebSocket server:
 ```bash
 npx -y supergateway \
     --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
-    --port 8000 --outputTransport ws --messagePath /message
+    --port 8000 --host 127.0.0.1 --outputTransport ws --messagePath /message \
+    --cors "http://localhost:3000"
 ```
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
 - Each WebSocket connection gets its own server process.
+- Browsers apply no CORS to WebSockets, so without `--cors` or `--apiKey` any web page can use the server, even on `127.0.0.1`. With `--cors` and origins, only pages from those origins can (above: a web app on `localhost:3000`). Without either, the gateway prints a startup warning and logs each web page origin that connects.
 
 ## Remote server → SSE, WS or Streamable HTTP
 
@@ -154,6 +156,7 @@ npx -y supergateway \
 
 - Each client session gets its own session with the remote server, ended when the client's ends, and at shutdown.
 - `--header` and `--oauth2Bearer` go to the remote server. The client's own `Authorization` and API key never do.
+- A redirect from the remote server is followed. The headers go with it on the same origin, or from `http` to `https` on the same host; a redirect to any other origin is followed without them, and logged once.
 - Requests from the remote server to the client (sampling, roots, elicitation) are passed through.
 - A remote server that is down, refuses the client or goes away fails that session only.
 - The 2026-07-28 protocol's stateless requests are passed on to a remote Streamable HTTP server that speaks that version. The gateway asks it once a minute (`server/discover`). One that doesn't, and any remote SSE server, is served as before: its clients are told the version isn't supported, and those that negotiate fall back to an earlier one.
@@ -176,6 +179,16 @@ curl -H "Authorization: Bearer $MCP_API_KEY" ...   # or: -H "X-API-Key: $MCP_API
 - Without a key, a gateway that other machines can reach (no `--host`, `0.0.0.0`, `::` or a network address) prints a `WARNING: No API key is set` line on stderr after its startup listing, even with `--logLevel none`. It changes nothing else. With several servers in a `--config` file, it names the ones without a key. `--host 127.0.0.1`, `localhost` or `::1` keeps it local and quiet.
 - Keys are never logged. Use HTTPS (e.g. behind a reverse proxy) so they are not sent in clear text.
 - To send a key to a remote server from SSE→stdio or Streamable HTTP→stdio, use `--header` or `--oauth2Bearer`; `--apiKey` is refused there.
+
+## Security
+
+The defaults keep every existing setup working, so they are open: a gateway listens on every interface and serves anyone who reaches it. Lock it down to what you need:
+
+- **Only this machine?** Add `--host 127.0.0.1`.
+- **Anything else can reach it** (other machines, containers, a reverse proxy)? Add `--apiKey`. A key is also the one thing a web page can't supply, so it stops browsers too, DNS rebinding included.
+- **A web app uses it over WebSocket?** List the app's origins with `--cors`; pages from other origins are refused.
+
+Two startup warnings on stderr say when one of these is missing, even with `--logLevel none`: `WARNING: No API key is set` (see [Requiring an API key](#requiring-an-api-key)), and, for stdio→WS without `--cors` or a key, `WARNING: Neither --cors nor an API key is set`. Neither changes what the gateway does. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Several servers from a config file
 
@@ -482,6 +495,20 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributors
 
+- [@orshih6](https://github.com/orshih6)
+- [@Teycir](https://github.com/Teycir)
+- [@Pst-itsl1](https://github.com/Pst-itsl1)
+- [@amanverma-wsu](https://github.com/amanverma-wsu)
+- [@swarnpriya](https://github.com/swarnpriya)
+- [@gaopeng32](https://github.com/gaopeng32)
+- [@basavesh](https://github.com/basavesh)
+- [@HexMystic](https://github.com/HexMystic)
+- [@Liam-G](https://github.com/Liam-G)
+- [@freyesperales](https://github.com/freyesperales)
+- [@GGGCI](https://github.com/GGGCI)
+- [@falhenaki](https://github.com/falhenaki)
+- [@oralabteam](https://github.com/oralabteam)
+- [@nfortea](https://github.com/nfortea)
 - [@shivasymbl](https://github.com/shivasymbl)
 - [@cesar-blog](https://github.com/cesar-blog)
 - [@twinity1](https://github.com/twinity1)

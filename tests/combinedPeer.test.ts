@@ -1296,3 +1296,28 @@ test('a server started again at a lower version: the exit of its first start is 
     'both ran b',
   )
 })
+
+// A server's capabilities are its JSON, where every key is an ordinary one, so
+// the merged capabilities hold each as their own, and nothing else changes.
+test("a server's __proto__ or constructor capability is a key like any other", async (t) => {
+  // Whatever happens here stays in this test.
+  t.after(() => delete (Object.prototype as Record<string, unknown>).logging)
+  const { client, servers } = combine({
+    odd: {
+      capabilities: JSON.parse(
+        '{"__proto__":{"logging":{}},"constructor":{"x":1},"tools":{}}',
+      ),
+    },
+    quiet: { tools: ['x'] },
+  })
+  const capabilities = (await result(client.initialize())).capabilities
+  assert.equal(({} as Record<string, unknown>).logging, undefined)
+  assert.equal(Object.getPrototypeOf(capabilities), Object.prototype)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(capabilities)),
+    JSON.parse('{"__proto__":{"logging":{}},"constructor":{"x":1},"tools":{}}'),
+  )
+  await client.request('logging/setLevel', { level: 'debug' })
+  assert.equal(servers.quiet.methods().includes('logging/setLevel'), false)
+  assert.equal(servers.odd.methods().includes('logging/setLevel'), false)
+})

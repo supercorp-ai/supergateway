@@ -6,7 +6,7 @@ Supergateway is a command-line tool with no graphical interface, so accessibilit
 
 - **Plain text output.** Logs are plain lines of text, one event per line, with no spinners, progress bars or animations. Debug output is coloured only in a terminal that can show colour, and `NO_COLOR` turns it off.
 - **Machine-readable output.** `--logFormat json` writes one JSON object per line, so you can filter or re-render logs with any tool that suits you.
-- **Less output.** `--logLevel none` silences logs except the warning about a missing API key, and `--logLevel debug` is opt-in.
+- **Less output.** `--logLevel none` silences logs except the startup warnings about a missing API key or `--cors`, and `--logLevel debug` is opt-in.
 - **Any environment.** It runs in any terminal on Linux, macOS and Windows, through npm, Docker or a standalone executable, and can be configured entirely from a JSON file (`--config`) instead of long command lines.
 - **Text documentation.** The README and guides are Markdown with real headings, lists and code blocks, and no information that's only in images.
 

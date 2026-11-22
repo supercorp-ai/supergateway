@@ -41,8 +41,10 @@ const fetched = (
   answer: (sent: Sent) => Response | Promise<Response>,
 ) => {
   const sent: Sent[] = []
-  t.mock.method(globalThis, 'fetch', async (url: URL, init: Sent['init']) => {
-    const request = { url: String(url), init }
+  t.mock.method(globalThis, 'fetch', async (url: URL, init: RequestInit) => {
+    // Sent as `Headers`, which redirects.ts reads and edits; recorded plain.
+    const headers = Object.fromEntries(new Headers(init.headers))
+    const request = { url: String(url), init: { ...init, headers } }
     sent.push(request)
     return answer(request)
   })
@@ -101,6 +103,8 @@ test("a request is a POST with the headers that mirror it, and the gateway's own
   await upstream.finish()
   assert.equal(sent[0].url, 'http://remote.example/mcp')
   assert.equal(sent[0].init.method, 'POST')
+  // A redirect comes back to redirects.ts to be followed.
+  assert.equal(sent[0].init.redirect, 'manual')
   assert.deepEqual(sent[0].init.headers, {
     authorization: 'Bearer upstream',
     'x-team': 'core',

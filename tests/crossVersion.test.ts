@@ -23,6 +23,7 @@ import {
   requestTimeout,
   unusedPort,
 } from './helpers/gateway-process.js'
+import { forgetGateway } from './helpers/leak-check.js'
 import { intended } from './crossVersion.intended.js'
 
 /**
@@ -39,18 +40,41 @@ import { intended } from './crossVersion.intended.js'
  * too: a difference that is not listed fails, and so does a listed one that
  * is no longer there.
  *
+ * Releases before the oldest of those are checked another way, marked
+ * `"works with": true` in crossVersion.baselines.json. Since them, the changes
+ * a client sees are written down release by release, so comparing their own
+ * answers with this build's would only list those again. What can still
+ * change is how this build works with one of them, as the bridge in front of
+ * it or the gateway behind it, when one side is upgraded first. That is
+ * compared with what the latest release does in the same place: it must be
+ * the same, or listed under that release.
+ *
  * The released versions come from npm, so this runs only where
  * SUPERGATEWAY_BASELINES names the directory `scripts/install-baselines.mjs`
- * filled: `npm run test:versions`, and the "Released versions" job in CI.
+ * filled: `npm run test:versions`, and the "Side by side" jobs in CI.
+ * SUPERGATEWAY_RELEASE runs only the one release it names.
  */
 
 const baselineDir = process.env.SUPERGATEWAY_BASELINES
 const candidate = resolve(
   process.env.SUPERGATEWAY_TEST_ENTRY ?? 'dist/index.js',
 )
-const versions: string[] = Object.keys(
-  JSON.parse(readFileSync('tests/crossVersion.baselines.json', 'utf8')),
+const baselines: Record<
+  string,
+  { 'works with'?: boolean; transports?: TransportName[] }
+> = JSON.parse(readFileSync('tests/crossVersion.baselines.json', 'utf8'))
+const chosen = (version: string) =>
+  !process.env.SUPERGATEWAY_RELEASE ||
+  process.env.SUPERGATEWAY_RELEASE === version
+const compared = Object.keys(baselines).filter(
+  (version) => !baselines[version]['works with'],
 )
+const versions = compared.filter(chosen)
+const older = Object.keys(baselines).filter(
+  (version) => baselines[version]['works with'] && chosen(version),
+)
+// The file lists releases oldest first.
+const latest = compared.at(-1)!
 const entryOf = (version: string) =>
   resolve(baselineDir!, version, 'node_modules/supergateway/dist/index.js')
 
@@ -673,6 +697,73 @@ function compare(
   assert.deepEqual(unexpected, [], `${group}, against ${version}`)
 }
 
+// --- One version as the bridge in front of another. ---
+
+const BRIDGED = [
+  ['sse', '--sse', '/sse'],
+  ['stateless', '--streamableHttp', '/mcp'],
+  ['stateful', '--streamableHttp', '/mcp'],
+] as const
+
+// A whole session, through `bridge` in front of a `served` gateway.
+async function chained(
+  t: TestContext,
+  bridge: string,
+  served: string,
+  transport: TransportName,
+  flag: string,
+  path: string,
+) {
+  const started = await gateway(t, served, transport)
+  // An older release's own process count is not this build's to answer
+  // for: 3.4.3's stateless gateway keeps a server per request (#108, fixed
+  // in 4.0.0), past the budget the harness holds every gateway to.
+  if (![candidate, entryOf(latest)].includes(served))
+    forgetGateway(started.process.child.pid)
+  return session(
+    t,
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [bridge, flag, `${started.base}${path}`],
+      stderr: 'ignore',
+    }),
+    [started.port],
+  )
+}
+
+// What a server's own error code becomes, through `bridge` in front of a
+// `served` gateway.
+async function applicationError(
+  t: TestContext,
+  bridge: string,
+  served: string,
+  transport: TransportName,
+  flag: string,
+  path: string,
+): Promise<Observed> {
+  const started = await gateway(
+    t,
+    served,
+    transport,
+    [],
+    `${JSON.stringify(process.execPath)} ${JSON.stringify(resolve('tests/helpers/app-error-peer.mjs'))}`,
+  )
+  const client = new Client({ name: 'cross-version', version: '1' })
+  t.after(() => client.close().catch(() => {}))
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [bridge, flag, `${started.base}${path}`],
+      stderr: 'ignore',
+    }),
+  )
+  return {
+    'tools/list': comparable(await client.listTools().catch(failure), [
+      started.port,
+    ]),
+  }
+}
+
 // --- The tests. ---
 
 const skip = !baselineDir
@@ -741,34 +832,25 @@ for (const version of versions) {
       `a server's application error through the ${flag} bridge is what it was in ${version}`,
       { ...options, skip },
       async (t) => {
-        const through = async (bridge: string) => {
-          const started = await gateway(
-            t,
-            candidate,
-            transport,
-            [],
-            `${JSON.stringify(process.execPath)} ${JSON.stringify(resolve('tests/helpers/app-error-peer.mjs'))}`,
-          )
-          const client = new Client({ name: 'cross-version', version: '1' })
-          t.after(() => client.close().catch(() => {}))
-          await client.connect(
-            new StdioClientTransport({
-              command: process.execPath,
-              args: [bridge, flag, `${started.base}${path}`],
-              stderr: 'ignore',
-            }),
-          )
-          return {
-            'tools/list': comparable(await client.listTools().catch(failure), [
-              started.port,
-            ]),
-          }
-        }
         compare(
           `application error through ${flag}`,
           version,
-          await through(entryOf(version)),
-          await through(candidate),
+          await applicationError(
+            t,
+            entryOf(version),
+            candidate,
+            transport,
+            flag,
+            path,
+          ),
+          await applicationError(
+            t,
+            candidate,
+            candidate,
+            transport,
+            flag,
+            path,
+          ),
         )
       },
     )
@@ -776,27 +858,13 @@ for (const version of versions) {
   // One side upgraded first: an old bridge in front of this gateway, and
   // this bridge in front of an old gateway. Each must give the client what
   // this build gives it at both ends.
-  for (const [transport, flag, path] of [
-    ['sse', '--sse', '/sse'],
-    ['stateless', '--streamableHttp', '/mcp'],
-    ['stateful', '--streamableHttp', '/mcp'],
-  ] as const)
+  for (const [transport, flag, path] of BRIDGED)
     test(
       `${version} and this build work as bridge and gateway of each other over ${transport}`,
       { ...options, skip },
       async (t) => {
-        const through = async (bridge: string, served: string) => {
-          const started = await gateway(t, served, transport)
-          return session(
-            t,
-            new StdioClientTransport({
-              command: process.execPath,
-              args: [bridge, flag, `${started.base}${path}`],
-              stderr: 'ignore',
-            }),
-            [started.port],
-          )
-        }
+        const through = (bridge: string, served: string) =>
+          chained(t, bridge, served, transport, flag, path)
         const old = entryOf(version)
         const both = await through(candidate, candidate)
         compare(
@@ -810,6 +878,60 @@ for (const version of versions) {
           version,
           await through(candidate, old),
           both,
+        )
+      },
+    )
+}
+
+// Older releases: this build works with each as the latest release does,
+// over the transports the release has (`transports` in the baselines file;
+// 2.8.3 has no Streamable HTTP).
+for (const version of older) {
+  const has = BRIDGED.filter(
+    ([transport]) => baselines[version].transports?.includes(transport) ?? true,
+  )
+  for (const [transport, flag, path] of has)
+    test(
+      `${version} works with this build as with ${latest}, as bridge and gateway over ${transport}`,
+      { ...options, skip },
+      async (t) => {
+        const old = entryOf(version)
+        const reference = entryOf(latest)
+        compare(
+          `bridge of ${version}, gateway of this build, over ${transport}`,
+          latest,
+          await chained(t, old, reference, transport, flag, path),
+          await chained(t, old, candidate, transport, flag, path),
+        )
+        compare(
+          `bridge of this build, gateway of ${version}, over ${transport}`,
+          latest,
+          await chained(t, reference, old, transport, flag, path),
+          await chained(t, candidate, old, transport, flag, path),
+        )
+      },
+    )
+
+  for (const [transport, flag, path] of has.filter(
+    ([transport]) => transport !== 'stateless',
+  ))
+    test(
+      `a server's application error through the ${flag} bridge of ${version} is what it is with ${latest}`,
+      { ...options, skip },
+      async (t) => {
+        const old = entryOf(version)
+        compare(
+          `application error through ${flag} of ${version}`,
+          latest,
+          await applicationError(
+            t,
+            old,
+            entryOf(latest),
+            transport,
+            flag,
+            path,
+          ),
+          await applicationError(t, old, candidate, transport, flag, path),
         )
       },
     )

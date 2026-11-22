@@ -16,7 +16,17 @@ const baselines = JSON.parse(
   readFileSync('tests/crossVersion.baselines.json', 'utf8'),
 )
 
+// With SUPERGATEWAY_RELEASE, that release and the latest one compared side
+// by side, which crossVersion.test.ts checks the older ones against.
+const latest = Object.keys(baselines)
+  .filter((version) => !baselines[version]['works with'])
+  .at(-1)
+const wanted = (version) =>
+  !process.env.SUPERGATEWAY_RELEASE ||
+  [process.env.SUPERGATEWAY_RELEASE, latest].includes(version)
+
 for (const [version, { sha256 }] of Object.entries(baselines)) {
+  if (!wanted(version)) continue
   const directory = resolve(root, version)
   const entry = resolve(directory, 'node_modules/supergateway/dist/index.js')
   if (existsSync(entry)) {

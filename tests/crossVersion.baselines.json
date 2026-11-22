@@ -1,4 +1,19 @@
 {
+  "2.8.3": {
+    "sha256": "7f7905ebeb7c086eab12240100a2859c069b51ccbb9e9463dbacd0f8804b6c70",
+    "works with": true,
+    "own tests": false,
+    "transports": ["sse"]
+  },
+  "3.4.3": {
+    "sha256": "d26391996026bb5967a77e877474cdffa9431ed59c65186d557064de98f5ab84",
+    "works with": true,
+    "own tests": false
+  },
+  "4.0.0": {
+    "sha256": "91f38b07cc08783db00d4d604f8ec4a8dd272e4c4eef029cb9edc70a64a6b6e1",
+    "works with": true
+  },
   "4.1.0": {
     "sha256": "f8295d624eb36776211dadc6f5c5ff41b85fa18fd9f80b30759887b87d7c46af"
   },

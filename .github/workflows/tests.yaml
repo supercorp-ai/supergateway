@@ -420,6 +420,10 @@ jobs:
   # that is not written down fails here, and so does a written one that is no
   # longer there. When a release ships, it is added to
   # tests/crossVersion.baselines.json and to the matrix below.
+  #
+  # 2.8.3, 3.4.3 and 4.0.0 come from before these checks. For them, this
+  # build must work with each, as bridge and gateway, exactly as the latest
+  # release does. 4.0.0's own tests run too; 2.x and 3.x published none.
   versions:
     name: Side by side with ${{ matrix.release }}
     runs-on: ubuntu-latest
@@ -427,7 +431,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ['4.1.0', '4.2.0', '4.2.1', '4.2.2']
+        release: ['2.8.3', '3.4.3', '4.0.0', '4.1.0', '4.2.0', '4.2.1', '4.2.2']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -443,6 +447,8 @@ jobs:
       - name: The same client against the release and this build
         timeout-minutes: 10
         run: npm run test:versions
+        env:
+          SUPERGATEWAY_RELEASE: ${{ matrix.release }}
       - name: Stop the rest of the run (this job failed)
         if: failure()
         continue-on-error: true
@@ -457,7 +463,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ['4.1.0', '4.2.0', '4.2.1', '4.2.2']
+        release: ['4.0.0', '4.1.0', '4.2.0', '4.2.1', '4.2.2']
     steps:
       - name: Checkout
         uses: actions/checkout@v4

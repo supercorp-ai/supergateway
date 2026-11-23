@@ -495,6 +495,8 @@ In stdio→SSE mode only the path of `--baseUrl` reaches clients: `--baseUrl htt
 
 ## Contributors
 
+- [@thaisingle](https://github.com/thaisingle)
+- [@iamarica](https://github.com/iamarica)
 - [@orshih6](https://github.com/orshih6)
 - [@Teycir](https://github.com/Teycir)
 - [@Pst-itsl1](https://github.com/Pst-itsl1)

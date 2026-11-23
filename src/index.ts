@@ -19,6 +19,8 @@
  *   npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
  */
 
+// First, so that every module after it finds `crypto` on Node 18 too.
+import './lib/webCrypto.js'
 import type { AddressInfo } from 'node:net'
 import { hideBin } from 'yargs/helpers'
 import { parseCli, unknownArguments, inputTransportOf, hostOf } from './cli.js'

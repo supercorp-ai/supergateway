@@ -1,3 +1,6 @@
+// First: @hono/node-server 2.x, under @modelcontextprotocol/node, reads the
+// global crypto as it loads.
+import './webCrypto.js'
 export {
   parseJSONRPCMessage,
   type JSONRPCMessage,

@@ -53,6 +53,34 @@ const browserWarnings: Record<string, Intended> = {
   },
 }
 
+// A fresh install gives the MCP SDK @hono/node-server 2.x since 4.2.3, which
+// sends an empty answer without a Content-Type. 4.2.3 as published already
+// does; until then the lockfile kept 1.19, which sent text/plain.
+const plain = 'text/plain; charset=UTF-8'
+const stateful = {
+  'access-control-allow-origin': '*',
+  'access-control-expose-headers': 'Mcp-Session-Id',
+  'x-team': 'core',
+}
+const emptyAnswer = (status: number, headers: Record<string, string>) => ({
+  was: {
+    status,
+    headers: { 'content-type': plain, ...headers },
+    sessionHeader: 'absent',
+    body: '',
+  },
+  now: { status, headers, sessionHeader: 'absent', body: '' },
+  why: '@hono/node-server 2.x, which a fresh install of 4.2.3 already has: an answer with no body has no Content-Type.',
+})
+const emptyAnswers: Record<string, Intended> = {
+  'stateless: a notification': emptyAnswer(202, {
+    'access-control-allow-origin': '*',
+    'x-team': 'core',
+  }),
+  'stateful: initialized': emptyAnswer(202, stateful),
+  'stateful: DELETE the session': emptyAnswer(200, stateful),
+}
+
 export const intended: Record<
   string,
   Record<string, Record<string, Intended>>
@@ -69,8 +97,15 @@ export const intended: Record<
     },
     'application error through --sse': applicationError,
     'application error through --streamableHttp': applicationError,
+    'HTTP answers': emptyAnswers,
   },
-  '4.2.0': { 'command line': { ...listenerWarnings, ...browserWarnings } },
-  '4.2.1': { 'command line': { ...listenerWarnings, ...browserWarnings } },
-  '4.2.2': { 'command line': browserWarnings },
+  '4.2.0': {
+    'command line': { ...listenerWarnings, ...browserWarnings },
+    'HTTP answers': emptyAnswers,
+  },
+  '4.2.1': {
+    'command line': { ...listenerWarnings, ...browserWarnings },
+    'HTTP answers': emptyAnswers,
+  },
+  '4.2.2': { 'command line': browserWarnings, 'HTTP answers': emptyAnswers },
 }

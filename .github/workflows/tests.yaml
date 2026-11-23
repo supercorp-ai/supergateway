@@ -653,6 +653,45 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
+  # Supergateway requires Node 20, but npm only warns about `engines`, so
+  # people on Node 18 still run it. 4.2.3 broke its Streamable HTTP output
+  # there: a fresh install's @hono/node-server 2.x needs the global `crypto`.
+  # Built on 24, then served on 18 with the same dependency tree.
+  node18:
+    name: Gateway still serves on Node 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies and build
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Set up Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Serve SSE and Streamable HTTP on Node 18
+        timeout-minutes: 4
+        run: node scripts/node18-smoke.mjs
+
+      - name: Stop the rest of the run (this job failed)
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+
   # The three published images are a shipping surface nothing else checks. The
   # publish workflow builds and pushes them without asserting anything about
   # what came out, which is how `:deno` came to contain no Deno (GW-024).

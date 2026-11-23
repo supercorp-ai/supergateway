@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { webcrypto } from 'node:crypto'
+import crypto, { webcrypto } from 'node:crypto'
 import { provideWebCrypto } from '../src/lib/webCrypto.js'
 
-test('without a global crypto, as on Node 18, Node’s Web Crypto is provided', () => {
+test('without a global crypto, as on Node 18, it is node:crypto, as @hono/node-server 1.19 set it', () => {
   const node18: { crypto?: unknown } = {}
   provideWebCrypto(node18)
-  assert.equal(node18.crypto, webcrypto)
+  assert.equal(node18.crypto, crypto)
 })
 
 test('a global crypto that is already defined is left as it is', () => {

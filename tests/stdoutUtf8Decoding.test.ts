@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { observeGateway } from './helpers/observed-gateway.js'
 import { initialize } from './helpers/gateway-process.js'
 
@@ -10,8 +11,10 @@ test('all stdout readers preserve every UTF-8 byte split and keep child decoder 
   // One WebSocket gateway, a child per connection; what reaches each client.
   let wsHandlers: { onconnection: (clientId: string) => void }
   const wsSent = new Map<string, unknown[]>()
+  // Only the listener is stubbed: @hono/node-server, under the SDKs, reads
+  // the rest of http as it loads.
   t.mock.module('http', {
-    namedExports: { createServer: () => ({ listen() {}, on() {} }) },
+    namedExports: { ...http, createServer: () => ({ listen() {}, on() {} }) },
   })
   t.mock.module(new URL('../src/server/websocket.js', import.meta.url).href, {
     namedExports: {

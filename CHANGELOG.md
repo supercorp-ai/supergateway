@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.4
+
+Upgrading from 4.2.3. A fix for Node 18; nothing else changes.
+
+- **Streamable HTTP on Node 18 again.** With 4.2.3, a fresh install picks up a dependency that needs Node 20, so on Node 18 every Streamable HTTP request, stateless or stateful, failed with `400 Parse error` (`crypto is not defined`). SSE and WebSocket output, Node 20 and later, the Docker images and the executables were not affected. Supergateway still requires Node 20; on Node 18 it works again as 4.2.2 did.
+- **Noted late for 4.2.3:** an answer with no body (the `202` to a notification, the `200` to a session `DELETE`) has had no `Content-Type` header since 4.2.3. It was `text/plain` before.
+
 ## 4.2.3
 
 Upgrading from 4.2.2. Security fixes and dependency updates; upgrading is recommended. No new options, and no defaults change.

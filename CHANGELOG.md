@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.2.3
+
+Upgrading from 4.2.2. Security fixes and dependency updates; upgrading is recommended. No new options, and no defaults change.
+
+- **SSE sessions.** A `sessionId` that isn't a session this gateway created is always an unknown session (`503`), whatever its value (#378 by @Teycir; reported by @orshih6).
+- **`--cors` applies to WebSocket.** With origins listed, a web page from another origin can no longer open a WebSocket (`403`, logged). Clients that aren't browsers send no origin and are unaffected; bare `--cors` and a gateway without `--cors` accept what they always have (#378 by @Teycir; reported by @Pst-itsl1, @amanverma-wsu, @swarnpriya, @gaopeng32, @basavesh, @HexMystic, @Liam-G).
+- **A warning when any web page can use a WebSocket server.** A stdio→WS gateway with neither `--cors` nor an API key prints one `WARNING: Neither --cors nor an API key is set` line on stderr at startup, even with `--logLevel none`, and logs each web page origin that connects. It changes nothing else.
+- **Remote servers that redirect.** A redirect is still followed. `--header` and `--oauth2Bearer` go with it on the same origin, or from `http` to `https` on the same host; to any other origin it is followed without them, and logged once (reported by @amanverma-wsu, @swarnpriya, @gaopeng32, @basavesh, @oralabteam).
+- **Several servers in one.** A server's capabilities are merged as plain data, whatever keys they contain (reported by @falhenaki).
+- **README: a Security section** on `--host`, `--apiKey` and `--cors`, and a safer WebSocket example (reported by @freyesperales, @GGGCI).
+- **Dependencies.** MCP SDK 1.32.2, `@modelcontextprotocol/server` and `client` 2.4.0, `node` 2.1.2, and fixed transitive packages (reported by @nfortea). With SDK 1.32.2 a JSON-RPC batch (protocol 2025-03-26) of more than 100 messages to Streamable HTTP output is refused with `400`, as on every server built on the SDK since 1.30.1; up to 100 are answered as before.
+
 ## 4.2.3-rc.1
 
 Upgrading from 4.2.2. Security fixes and dependency updates; upgrading is recommended. No new options, and no defaults change.

@@ -24,6 +24,7 @@ import { escapeSseJsonSeparators } from '../lib/escapeSseJsonSeparators.js'
 import bodyParser from 'body-parser'
 import { setResponseHeaders } from '../lib/headers.js'
 import { requireApiKey } from '../lib/apiKey.js'
+import { refuseRebinding } from '../lib/browserGuard.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { getVersion } from '../lib/getVersion.js'
@@ -125,6 +126,8 @@ export function stdioToSseMount(args: StdioToSseMountArgs): Mount {
   const sessions: SseSessions = new Map()
 
   const app = express()
+  // First: a page reaching this machine by DNS rebinding gets nothing.
+  app.use(refuseRebinding({ cors: corsOrigin, baseUrl, apiKeys, logger }))
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
     next()

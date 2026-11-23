@@ -21,8 +21,10 @@ import {
  * gateway checks `Origin` itself. A browser's handshake carries it; here the
  * client sets it.
  *
- * Without `--cors`, nothing changes: a client with any Origin still connects,
- * as every existing one does, and the operator is told which origins did.
+ * Without `--cors`, a client with no Origin, a page on this machine and an
+ * extension still connect, and the operator is told which origins did. A page
+ * on another site, reaching this machine's loopback address, is refused
+ * (browserGuard.ts); from another machine it still connects.
  */
 
 const options = { timeout: gatewayTimeout(30000) }
@@ -109,19 +111,20 @@ test(
 )
 
 test(
-  'without --cors, a page on any origin connects as before, and is logged',
+  'without --cors, a page on this machine connects, and is logged; a page on another site is refused',
   options,
   async (t) => {
     const { port, gateway } = await gatewayWith(t, [])
-    served(await connect(port, 'http://page.test'))
-    served(await connect(port, 'http://page.test'))
+    served(await connect(port, 'http://localhost:3000'))
+    served(await connect(port, 'http://localhost:3000'))
     served(await connect(port))
+    assert.equal((await connect(port, 'http://page.test')).status, 403)
     await gateway.waitFor(
       () =>
         gateway
           .output()
           .includes(
-            'A web page at http://page.test connected over WebSocket. --cors limits which origins can.',
+            'A web page at http://localhost:3000 connected over WebSocket. --cors limits which origins can.',
           ),
       'the origin to be logged',
     )
@@ -168,6 +171,7 @@ test(
       403,
     )
     served(await connect(port, 'http://allowed.test', '/strict/message'))
-    served(await connect(port, 'http://evil.test', '/open/message'))
+    // The other entry has no "cors": a page on this machine, as before.
+    served(await connect(port, 'http://localhost:3000', '/open/message'))
   },
 )

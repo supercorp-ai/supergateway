@@ -6,10 +6,13 @@ it does not follow the moving `next` tag. Installation keeps normal npm dependen
 resolution and archives the resolved production lockfile.
 
 The **Published release soak** workflow is manual. Select `canary` first.
-Only select `five-hours`, `twenty-five-hours` or `forty-eight-hours` after
-reviewing the canary results and receiving approval for the long run.
-`five-hours` is one phase; the 25-hour campaign is five of them, one after
-another; the 48-hour campaign is nine and a last one of three hours. A push does
+Only select `five-hours`, `fifteen-hours`, `twenty-five-hours` or
+`forty-eight-hours` after reviewing the canary results and receiving approval
+for the long run. `five-hours` is one phase; the 15-hour campaign is three of
+them, one after another; the 25-hour campaign is five; the 48-hour campaign is
+nine and a last one of three hours. A release soaks for 15 hours: no gateway
+lives longer than a phase, so later phases repeat the same five hours, and
+three phases are the fewest that give each lane of `macos: one` its turn. A push does
 not start this workflow.
 
 A phase has five macOS jobs, and five is every macOS job the account may run

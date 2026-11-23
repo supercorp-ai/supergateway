@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       duration:
-        description: Run canaries only, one five-hour phase, or the 25- or 48-hour campaign
+        description: Run canaries only, one five-hour phase, or the 15-, 25- or 48-hour campaign. A release soaks for 15 hours
         type: choice
-        options: [canary, five-hours, twenty-five-hours, forty-eight-hours]
+        options: [canary, five-hours, fifteen-hours, twenty-five-hours, forty-eight-hours]
         default: canary
       macos:
         description: macOS jobs per phase. "all" is five, every macOS job the account may run at once, so pull requests wait for a Mac while a campaign runs. "fewer" is three (Node 20, Node 26 and the scenarios) and leaves two. "one" is one, taking turns phase by phase (Node 26, Node 20, the scenarios), and leaves four.
@@ -56,9 +56,10 @@ jobs:
 
   # With `macos: one` the phases take turns at the one macOS job: Node 26,
   # Node 20, then the scenarios, round again. Every macOS lane still runs in
-  # a 25-hour campaign, for five or ten of its hours instead of all of them.
-  # The campaigns continue from the first phase, one phase after another:
-  # five phases for 25 hours, ten for 48 (nine of five hours and one of three).
+  # a 15-hour campaign, for five of its hours, and in a 25-hour one for five
+  # or ten. The campaigns continue from the first phase, one phase after
+  # another: three phases for 15 hours, five for 25, ten for 48 (nine of five
+  # hours and one of three).
   # Phases run one at a time: a lane has five macOS jobs, which is as many
   # as the account runs at once (three with `macos: fewer`). A phase runs whether or not the one before it passed: one flaky
   # test used to stop every later phase and throw away the rest of the
@@ -89,7 +90,7 @@ jobs:
 
   fourth:
     needs: [canary, third]
-    if: ${{ !cancelled() && inputs.duration != 'canary' && inputs.duration != 'five-hours' && needs.canary.result == 'success' }}
+    if: ${{ !cancelled() && inputs.duration != 'canary' && inputs.duration != 'five-hours' && inputs.duration != 'fifteen-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 18000
@@ -100,7 +101,7 @@ jobs:
 
   fifth:
     needs: [canary, fourth]
-    if: ${{ !cancelled() && inputs.duration != 'canary' && inputs.duration != 'five-hours' && needs.canary.result == 'success' }}
+    if: ${{ !cancelled() && inputs.duration != 'canary' && inputs.duration != 'five-hours' && inputs.duration != 'fifteen-hours' && needs.canary.result == 'success' }}
     uses: ./.github/workflows/release-soak-lane.yaml
     with:
       seconds: 18000

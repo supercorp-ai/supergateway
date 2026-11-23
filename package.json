@@ -90,8 +90,5 @@
   },
   "files": [
     "dist"
-  ],
-  "overrides": {
-    "@hono/node-server": "1.19.18"
-  }
+  ]
 }

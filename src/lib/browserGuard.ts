@@ -43,10 +43,10 @@ export const localName = (hostname: string) =>
   isIP(unbracketed(hostname)) !== 0
 
 /** The host name in a `Host` header or an origin, lower case; or undefined. */
-export const hostnameOf = (value: string | undefined, scheme = 'http://') => {
+export const hostnameOf = (value: string | undefined) => {
   if (!value) return undefined
   try {
-    return new URL(value.includes('://') ? value : scheme + value).hostname
+    return new URL(value.includes('://') ? value : 'http://' + value).hostname
   } catch {
     return undefined
   }

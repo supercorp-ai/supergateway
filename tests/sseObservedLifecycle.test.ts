@@ -56,11 +56,12 @@ test('SSE gateway preserves routing, reports peer events and removes ended sessi
     b.signals.map(({ logger, drainStdin }) => ({ logger, drainStdin })),
     [{ logger: b.logger, drainStdin: true }],
   )
+  // [0] is the DNS rebinding check, [1] SSE-safe JSON, [2] CORS, [3] bodies.
   let next = 0
-  b.middleware[2]({ path: '/messages' }, new Response(), () => next++)
+  b.middleware[3]({ path: '/messages' }, new Response(), () => next++)
   // map: raw-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 0, next: 1 })
-  b.middleware[2]({ path: '/other' }, new Response(), () => next++)
+  b.middleware[3]({ path: '/other' }, new Response(), () => next++)
   // map: json-body
   assert.deepEqual({ parses: b.parses(), next }, { parses: 1, next: 2 })
   for (const path of ['/health', '/ready']) {

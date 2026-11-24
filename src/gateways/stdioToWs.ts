@@ -23,6 +23,7 @@ import express from 'express'
 import { spawn } from 'child_process'
 import { requireApiKey } from '../lib/apiKey.js'
 import { verifyWebSocket } from '../lib/websocketOrigin.js'
+import { refuseRebinding } from '../lib/browserGuard.js'
 import { WebSocketServerTransport } from '../server/websocket.js'
 
 interface StdioToWsOptions extends ListenerOptions {
@@ -102,6 +103,9 @@ export function stdioToWsMount(args: StdioToWsMountArgs): Required<Mount> {
   )
 
   const app = express()
+  // First: a page reaching this machine by DNS rebinding gets nothing. The
+  // upgrade is checked the same way by `verifyClient`.
+  app.use(refuseRebinding({ cors: corsOrigin, apiKeys, logger }))
 
   if (corsOrigin) {
     app.use(cors({ origin: corsOrigin }))

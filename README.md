@@ -35,7 +35,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
 - **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs except the [startup warnings](#security).
 - **`--logFormat text | json`**: Log line format (default: `text`). `json` writes one JSON object per line with `time`, `level`, `msg` and, when a log call carries values, `data`, for ELK and similar log pipelines. Logs go to the same streams as `text`, so stdio output still carries only MCP messages.
-- **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching). With origins, a web page from any other origin can't open a WebSocket either (`403`); clients that aren't browsers send no origin and are unaffected.
+- **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching). With origins, a web page from any other origin can't open a WebSocket either (`403`); clients that aren't browsers send no origin and are unaffected. Without `--cors` or a key, a page on another site can't open a WebSocket to this machine's loopback address (see [Security](#security)).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (every mode but stdio output; can be used multiple times) that respond with `"ok"`
 - **`--healthCheck gateway | server`**: What the health endpoints check (default: `gateway`). `gateway` answers `"ok"` while the gateway is up. `server` also checks the MCP server: it starts one (or, for `--sse`/`--streamableHttp`, opens a session with the remote server), initializes and pings it, and stops it. It answers `"ok"` if the server responded within 10 seconds, and `503` with the reason otherwise (e.g. `unhealthy: the server exited (code=1, signal=null)`). The answer is reused for 10 seconds, so polling every second starts at most one server per 10 seconds. The startup log says when health turns bad and when it recovers
 - **`--toolPrefix "github_"`**: Put this before every tool name the server lists, so `search` becomes `github_search` (all modes). Clients call the tool by that name, and the server still gets its own. It is used as given, so include a separator. Tool names may be letters, digits, `_`, `-` and `.`, at most 128 characters; the gateway warns about a prefix or name outside that
@@ -185,10 +185,15 @@ curl -H "Authorization: Bearer $MCP_API_KEY" ...   # or: -H "X-API-Key: $MCP_API
 The defaults keep every existing setup working, so they are open: a gateway listens on every interface and serves anyone who reaches it. Lock it down to what you need:
 
 - **Only this machine?** Add `--host 127.0.0.1`.
-- **Anything else can reach it** (other machines, containers, a reverse proxy)? Add `--apiKey`. A key is also the one thing a web page can't supply, so it stops browsers too, DNS rebinding included.
+- **Anything else can reach it** (other machines, containers, a reverse proxy)? Add `--apiKey`. A key is also the one thing a web page can't supply, so it stops browsers too.
 - **A web app uses it over WebSocket?** List the app's origins with `--cors`; pages from other origins are refused.
 
 Two startup warnings on stderr say when one of these is missing, even with `--logLevel none`: `WARNING: No API key is set` (see [Requiring an API key](#requiring-an-api-key)), and, for stdio→WS without `--cors` or a key, `WARNING: Neither --cors nor an API key is set`. Neither changes what the gateway does. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+Without a key, the gateway also refuses two things a web page in its visitor's browser could try against a gateway on that visitor's own machine. Both apply only to a browser's requests that reach this machine on a loopback address (`127.0.0.1`, `::1`); clients that aren't browsers send no `Origin`, and other machines' connections aren't loopback, so neither is ever affected:
+
+- **DNS rebinding.** A page at a name of its own that now points at this machine, asking same-origin, gets `403` (`Forbidden: host not allowed`), logged once per name. Names of this machine (`localhost`, `*.localhost`, any address) are never refused. If you serve a web page on a public name through a tunnel or proxy on this machine and it uses the gateway on that same name, allow it with `--cors` and its origin (or `--baseUrl` with that name, for SSE).
+- **A page on another site over WebSocket, without `--cors`.** Gets `403` (`Forbidden: origin not allowed`), logged with the `--cors` that would allow it. Pages on this machine (`localhost`, `*.localhost`, an address) and browser extensions still connect.
 
 ## Several servers from a config file
 

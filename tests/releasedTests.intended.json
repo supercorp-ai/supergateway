@@ -56,5 +56,13 @@
   "4.2.2": {
     "tests/batchLengthE2e.test.ts: stateless HTTP answers a 101-message batch in full": "SDK 1.32.2: a JSON-RPC batch of more than 100 messages is now refused with 400 -32600, as on every server built on the SDK since 1.30.1.",
     "tests/batchLengthE2e.test.ts: stateful HTTP answers a 101-message batch in full": "SDK 1.32.2: as above."
+  },
+  "4.2.3": {
+    "tests/websocketOriginE2e.test.ts: without --cors, a page on any origin connects as before, and is logged": "A web page on another site, reaching this machine on loopback, can no longer open a WebSocket without --cors or a key (403, logged with the --cors that allows it). Pages on this machine, extensions, clients without an Origin and other machines connect as before.",
+    "tests/websocketOriginE2e.test.ts: a config file entry: its \"cors\" applies to its WebSocket, another entry is unaffected": "A web page on another site, reaching this machine on loopback, can no longer open a WebSocket without --cors or a key (403, logged with the --cors that allows it). Pages on this machine, extensions, clients without an Origin and other machines connect as before."
+  },
+  "4.2.4": {
+    "tests/websocketOriginE2e.test.ts: without --cors, a page on any origin connects as before, and is logged": "A web page on another site, reaching this machine on loopback, can no longer open a WebSocket without --cors or a key (403, logged with the --cors that allows it). Pages on this machine, extensions, clients without an Origin and other machines connect as before.",
+    "tests/websocketOriginE2e.test.ts: a config file entry: its \"cors\" applies to its WebSocket, another entry is unaffected": "A web page on another site, reaching this machine on loopback, can no longer open a WebSocket without --cors or a key (403, logged with the --cors that allows it). Pages on this machine, extensions, clients without an Origin and other machines connect as before."
   }
 }

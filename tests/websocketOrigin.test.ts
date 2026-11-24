@@ -5,7 +5,8 @@ import type { CorsOptions } from 'cors'
 import { verifyWebSocket } from '../src/lib/websocketOrigin.js'
 
 // The check on a WebSocket upgrade, decision by decision: the API key as
-// before, then `--cors`, and what is logged.
+// before, then DNS rebinding, `--cors`, a page on another site, and what is
+// logged. Upgrades arrive on loopback unless a test says otherwise.
 
 const KEY = 'k1'
 
@@ -16,7 +17,10 @@ const check = (corsOrigin: CorsOptions['origin'], apiKeys: string[] = []) => {
     error: (line: string) => lines.push(`error: ${line}`),
   }
   const verify = verifyWebSocket(corsOrigin, apiKeys, logger)
-  const upgrade = (headers: Record<string, string>) =>
+  const upgrade = (
+    headers: Record<string, string>,
+    localAddress = '127.0.0.1',
+  ) =>
     new Promise<{ accepted: boolean; status?: number; body?: string }>(
       (resolve) =>
         verify(
@@ -27,6 +31,7 @@ const check = (corsOrigin: CorsOptions['origin'], apiKeys: string[] = []) => {
               method: 'GET',
               url: '/message',
               headers,
+              socket: { localAddress },
             } as unknown as IncomingMessage,
           },
           (accepted, status, body) => resolve({ accepted, status, body }),
@@ -42,20 +47,68 @@ const forbidden = {
   body: '{"jsonrpc":"2.0","error":{"code":-32001,"message":"Forbidden: origin not allowed"},"id":null}',
 }
 
-test('without --cors or a key, every upgrade is accepted, and each web page origin logged once', async () => {
+test('without --cors or a key, from another machine, every upgrade is accepted, and each web page origin logged once', async () => {
   const { upgrade, lines } = check(false)
-  assert.deepEqual(await upgrade({}), {
+  assert.deepEqual(await upgrade({}, '192.168.1.5'), {
     accepted: true,
     status: undefined,
     body: undefined,
   })
   assert.deepEqual(lines, [])
   for (const origin of ['https://a.test', 'https://a.test', 'null'])
-    assert.equal((await upgrade({ origin })).accepted, true)
+    assert.equal((await upgrade({ origin }, '192.168.1.5')).accepted, true)
   assert.deepEqual(lines, [
     'A web page at https://a.test connected over WebSocket. --cors limits which origins can.',
     'A web page at null connected over WebSocket. --cors limits which origins can.',
   ])
+})
+
+test("without --cors or a key, on loopback, a page on another site is refused; this machine's pages and extensions are not", async () => {
+  const { upgrade, lines } = check(false)
+  assert.equal((await upgrade({})).accepted, true)
+  for (const origin of ['https://a.test', 'https://a.test', 'null'])
+    assert.deepEqual(await upgrade({ origin }), forbidden, origin)
+  for (const origin of ['http://localhost:3000', 'chrome-extension://abc'])
+    assert.equal((await upgrade({ origin })).accepted, true, origin)
+  assert.deepEqual(lines, [
+    "Refused a WebSocket connection from https://a.test: a web page on another site, on this machine's loopback address, and no --cors. Add --cors https://a.test to allow it.",
+    "Refused a WebSocket connection from null: a web page on another site, on this machine's loopback address, and no --cors. Add --cors null to allow it.",
+    'A web page at http://localhost:3000 connected over WebSocket. --cors limits which origins can.',
+    'A web page at chrome-extension://abc connected over WebSocket. --cors limits which origins can.',
+  ])
+})
+
+const rebound = {
+  host: 'evil.test:8000',
+  origin: 'http://evil.test:8000',
+}
+const hostForbidden = {
+  accepted: false,
+  status: 403,
+  body: '{"jsonrpc":"2.0","error":{"code":-32001,"message":"Forbidden: host not allowed"},"id":null}',
+}
+
+test('DNS rebinding is refused without a key, whatever --cors lists, unless it lists that origin', async () => {
+  for (const cors of [false, ['https://app.test']] as CorsOptions['origin'][]) {
+    const { upgrade, lines } = check(cors)
+    assert.deepEqual(await upgrade(rebound), hostForbidden)
+    assert.deepEqual(await upgrade(rebound), hostForbidden)
+    assert.equal(lines.length, 1)
+    assert.match(
+      lines[0],
+      /^Refused a web page's request for evil\.test, which reached this machine on a loopback address \(DNS rebinding\)/,
+    )
+  }
+  assert.equal(
+    (await check(['http://evil.test:8000']).upgrade(rebound)).accepted,
+    true,
+  )
+  assert.equal((await check('*').upgrade(rebound)).accepted, true)
+  // A key decides instead: a page can't supply one.
+  assert.equal(
+    (await check(false, [KEY]).upgrade({ ...rebound, ...keyed })).accepted,
+    true,
+  )
 })
 
 test('without --cors but with a key, the key decides and nothing is logged', async () => {

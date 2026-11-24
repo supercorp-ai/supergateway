@@ -5,11 +5,12 @@ import { escapeSseJsonSeparators } from './escapeSseJsonSeparators.js'
 import { setResponseHeaders } from './headers.js'
 import { jsonBodyErrors } from './jsonBodyErrors.js'
 import { requireApiKey } from './apiKey.js'
+import { refuseRebinding } from './browserGuard.js'
 import { healthHandler, type ServerHealth } from './serverHealth.js'
 
 /**
  * The Express app both Streamable HTTP gateways start from, with everything
- * that comes before their routes: SSE-safe JSON, --header on every response,
+ * that comes before their routes: the DNS rebinding check, SSE-safe JSON, --header on every response,
  * body parsing, CORS, the health endpoints and the API key check, in that
  * order.
  *
@@ -39,6 +40,8 @@ export function streamableHttpApp(
   },
 ): Express {
   const app = express()
+  // First: a page reaching this machine by DNS rebinding gets nothing.
+  app.use(refuseRebinding({ cors: corsOrigin, apiKeys, logger }))
   app.use((_req, res, next) => {
     escapeSseJsonSeparators(res)
     // --header applies to every response, as it does in SSE mode. It used to

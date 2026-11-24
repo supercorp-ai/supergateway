@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.3.0
+
+Upgrading from 4.2.4. Two refusals for web pages, without an API key; nothing changes for clients that aren't browsers, nor for connections from other machines. No new options.
+
+- **DNS rebinding.** Without a key, a browser's same-origin request that reaches this machine on a loopback address for a name that isn't this machine's (`localhost`, `*.localhost` and addresses are) gets `403` (`Forbidden: host not allowed`), logged once per name. A page served on such a name through a tunnel or proxy on this machine, using the gateway on that same name, is allowed with `--cors` and its origin, or `--baseUrl` for SSE (#387; reported by @freyesperales, @GGGCI).
+- **WebSocket without `--cors`.** Without a key, a web page on another site can no longer open a WebSocket to this machine's loopback address (`403`, logged with the `--cors` that allows it). Clients that send no origin, pages on this machine (`localhost`, `*.localhost`, an address), browser extensions and connections from other machines connect as before (#378 by @Teycir; #387; reported by @HexMystic, @amanverma-wsu, @swarnpriya, @gaopeng32, @basavesh).
+
 ## 4.3.0-rc.1
 
 Upgrading from 4.2.4. Two refusals for web pages, without an API key; nothing changes for clients that aren't browsers, nor for connections from other machines. No new options.

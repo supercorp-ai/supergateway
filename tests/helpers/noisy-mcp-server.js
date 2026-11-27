@@ -2,7 +2,7 @@
 // must ignore blank/non-JSON stdout and keep stderr out of protocol responses.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 import { setTimeout } from 'node:timers/promises'
 
 const server = new McpServer(

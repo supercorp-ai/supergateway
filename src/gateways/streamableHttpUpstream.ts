@@ -15,7 +15,7 @@ import { readAsDrained } from '../lib/outputBackpressure.js'
 import { redirectSafeFetch } from '../lib/redirects.js'
 import { relayServerMessages } from '../lib/relayServerMessages.js'
 import { rejectMalformedInitialize, upstreamLost } from './upstreamFailures.js'
-import { z } from 'zod'
+import { anyResult } from '../lib/anyResult.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -193,7 +193,7 @@ export class Upstream {
     }
     const { client, transport } = this.connection!
     attempt.transport = transport
-    return client.request(req, z.any(), {
+    return client.request(req, anyResult, {
       signal,
       timeout: MAX_TIMEOUT_MS,
     })

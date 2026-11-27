@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CreateMessageResultSchema } from '@modelcontextprotocol/sdk/types.js'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 
 const stats = { opened: 0, closed: 0, sseTeam: null }
 

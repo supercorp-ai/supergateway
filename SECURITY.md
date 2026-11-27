@@ -17,6 +17,8 @@ Anything that lets someone get past what the gateway is set up to allow, for exa
 
 The MCP servers you run behind the gateway, and what they can do, are out of scope: report those to their authors.
 
+Without `--apiKey`, anyone who can reach the gateway's port can use it: that is by design, not a vulnerability. By default it listens on every interface, and it prints a warning when it serves MCP without a key on an address other machines can reach. Set `--apiKey` whenever other machines, containers or a published Docker port can reach it, or `--host 127.0.0.1` to keep it to this machine. Without a key, the browser protections (see the README's Security section) cover web pages in a browser on this machine reaching it on a loopback address.
+
 ## Maintainers
 
 Security reports are handled by [@Nedomas](https://github.com/Nedomas) (Domas Bitvinskas, [domas@supercorp.ai](mailto:domas@supercorp.ai)), Supergateway's creator and maintainer.

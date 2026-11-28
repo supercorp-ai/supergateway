@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.3.1-rc.1
+
+Upgrading from 4.3.0. Dependency updates; nothing changes for clients. No new options, and no defaults change.
+
+- **Docker images.** npm in the images moves from 10.8.2 to 10.9.11, which bundles a fixed `tar` for `npx -y <server>` to unpack packages with. The images stay on Node 20 (reported by @allthatjazzleo).
+- **zod 4.** Supergateway and the MCP SDK it uses now run on zod 4.6.7 instead of zod 3 (reported by @nfortea).
+- **SECURITY.md** states that without `--apiKey` the gateway is open to anyone who can reach its port, by design, and when to set a key or `--host 127.0.0.1`.
+
 ## 4.3.0
 
 Upgrading from 4.2.4. Two refusals for web pages, without an API key; nothing changes for clients that aren't browsers, nor for connections from other machines. No new options.

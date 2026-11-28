@@ -4,7 +4,7 @@
 // the middle of a call.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 
 const mcp = new McpServer(
   { name: 'soak-peer', version: '1.0.0' },

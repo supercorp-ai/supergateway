@@ -1,7 +1,7 @@
 // A peer that talks back: everything in MCP that travels server -> client.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 
 const mcp = new McpServer(
   { name: 'reverse-peer', version: '1.0.0' },

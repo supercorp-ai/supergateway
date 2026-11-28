@@ -3,7 +3,7 @@
 // completed. Lets a test see whether a cancellation reached the server.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 
 const mcp = new McpServer(
   { name: 'slow-peer', version: '1.0.0' },

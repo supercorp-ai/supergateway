@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import type { Logger } from '../types.js'
 import type { JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
-import { z } from 'zod'
+import { anyResult } from '../lib/anyResult.js'
 import { MAX_TIMEOUT_MS } from '../lib/longTimeout.js'
 import {
   upstreamClientIdentity,
@@ -136,7 +136,7 @@ export class Upstream {
   /** A stdio request, answered by the upstream server. */
   request(req: JSONRPCRequest, signal: AbortSignal) {
     if (!this.client) return this.connectFor(req, signal)
-    return this.client.request(req, z.any(), {
+    return this.client.request(req, anyResult, {
       signal,
       timeout: MAX_TIMEOUT_MS,
     })
@@ -171,7 +171,7 @@ export class Upstream {
       this.client = await this.connectedFallbackClient()
       // The request that triggered the fallback still has to be
       // answered. Creating the client was never the point of it.
-      result = await this.client.request(req, z.any(), {
+      result = await this.client.request(req, anyResult, {
         signal,
         timeout: MAX_TIMEOUT_MS,
       })
